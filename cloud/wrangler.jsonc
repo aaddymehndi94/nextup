@@ -21,10 +21,8 @@
     {
       "binding": "DB",
       "database_name": "nexttupp",
-      // PLACEHOLDER. Filled in at first deploy, after the owner approves: run `wrangler d1 create nexttupp`
-      // and paste the database_id it prints here. Until then this id matches no database, so a deploy
-      // fails instead of silently creating one.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Created on 2026-11-11 with `wrangler d1 create nexttupp`, after the owner approved the deploy.
+      "database_id": "674a7ec2-3807-41f4-ba0e-860ceb7035db",
       "migrations_dir": "migrations"
     }
   ]
