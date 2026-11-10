@@ -622,7 +622,7 @@ h1, h2, h3, p { margin: 0; }
 .live-dot { width: 0.4375rem; height: 0.4375rem; border-radius: 50%; background: var(--text-3); flex: none; }
 .live-dot.is-live { background: var(--good); }
 
-.source-list { --cols: 4.25rem minmax(0, 1fr) 5.25rem 5.25rem 4.5rem 8rem 2.25rem; }
+.source-list { --cols: 4.25rem minmax(0, 1fr) 5.25rem 5.25rem 4.5rem 8rem 5rem; }
 .sources-header {
   display: grid; grid-template-columns: var(--cols); gap: 1.25rem; align-items: center;
   padding: 0.5rem 1rem 0.625rem; border-bottom: 1px solid var(--line);
@@ -677,6 +677,18 @@ h1, h2, h3, p { margin: 0; }
 }
 .source-go svg { width: 0.875rem; height: 0.875rem; margin-left: 0.0625rem; }
 .source:hover .source-go, .source:focus-visible .source-go { opacity: 1; transform: none; }
+/* Download sits over the row's last column, left of the play disc (the column is wide enough for both). */
+.source-row { position: relative; }
+.source-save {
+  position: absolute; top: 50%; right: calc(1rem + 2.25rem + 0.5rem); transform: translateY(-50%);
+  display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%;
+  color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-2);
+  transition: background var(--dur) var(--ease), color var(--dur), box-shadow var(--dur);
+}
+.source-save svg { width: 1rem; height: 1rem; }
+.source-save:hover, .source-save:focus-visible { color: var(--text); background: rgb(255 255 255 / 0.12); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.4); }
+.source-save.is-saved { color: var(--on-light); background: #fff; box-shadow: none; }
+.source-save[data-tip]::after { top: auto; bottom: calc(100% + 0.5rem); }
 .show-more { margin-top: 1.25rem; }
 
 /* ---------- Player ---------- */
@@ -1054,6 +1066,8 @@ h1, h2, h3, p { margin: 0; }
   .stat .unit { display: inline; }
   .stat.seeds .num { min-width: 0; }
   .stat.provider, .source-go { display: none; }
+  .source { padding-right: 3.5rem; }
+  .source-save { top: 0.75rem; right: 0.75rem; transform: none; }
   .source-title { white-space: normal; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
 }
 

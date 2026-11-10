@@ -150,18 +150,47 @@ app.get<{ Params: { id: string }; Querystring: { caps?: string; audio?: string }
 
 // ---- Library (downloads kept for offline viewing) -----------------------------
 
-app.get('/api/library', async () => library.list().map(e => {
-  const s = engine.get(e.id)
-  return { ...e, stats: s ? engine.stats(s) : null }
-}))
+app.get('/api/library', async () => Promise.all(library.list().map(async e => {
+  const s = e.pending ? undefined : engine.get(e.id)
+  return { ...e, stats: s ? engine.stats(s) : null, swarm: e.pending || !s ? await engine.swarm(e.infoHash) : null }
+})))
 
-app.post<{ Body: { sessionId?: string; type?: string; imdbId?: string; streamId?: string; title?: string } }>('/api/library', async req => {
-  const { sessionId, type, imdbId, streamId, title } = req.body ?? {}
-  if (!sessionId || !type || !isType(type) || !imdbId || !IMDB_ID.test(imdbId) || !streamId || !STREAM_ID.test(streamId)) throw new HttpError(400, 'sessionId, type, imdbId and streamId are required')
+interface KeepBody {
+  /** Keep the file of an open session (the Download button in the player)… */
+  sessionId?: string
+  /** …or a source straight from the list, without playing it first. */
+  infoHash?: string; fileIdx?: number; fileName?: string; trackers?: string[]
+  type?: string; imdbId?: string; streamId?: string; title?: string
+}
+
+app.post<{ Body: KeepBody }>('/api/library', async (req, reply) => {
+  const { sessionId, infoHash, type, imdbId, streamId, title } = req.body ?? {}
+  if (!type || !isType(type) || !imdbId || !IMDB_ID.test(imdbId) || !streamId || !STREAM_ID.test(streamId)) throw new HttpError(400, 'type, imdbId and streamId are required')
+  if (!sessionId) {
+    if (!infoHash || !/^[0-9a-fA-F]{40}$/.test(infoHash)) throw new HttpError(400, 'sessionId or infoHash is required')
+    const { fileIdx, fileName, trackers } = req.body
+    const idx = Number.isInteger(fileIdx) && (fileIdx as number) >= 0 && (fileIdx as number) < 100_000 ? fileIdx as number : -1
+    const id = `${infoHash.toLowerCase()}-${Math.max(0, idx)}`
+    const existing = library.get(id)
+    if (existing) return existing
+    const open = engine.get(id)
+    if (open) {
+      engine.pin(open)
+      library.add({ id, infoHash: open.infoHash, fileIdx: Number(id.split('-')[1]), fileName: open.file.name, title: (title ?? open.file.name).slice(0, 200), type, imdbId, streamId, addedAt: Date.now() })
+      return library.get(id)
+    }
+    reply.code(202)
+    return library.download({
+      id, infoHash: infoHash.toLowerCase(), fileIdx: idx,
+      fileName: typeof fileName === 'string' ? fileName.slice(0, 500) : '',
+      title: (title ?? fileName ?? 'Download').slice(0, 200), type, imdbId, streamId, addedAt: Date.now(),
+      trackers: Array.isArray(trackers) ? trackers.filter(t => typeof t === 'string' && /^(udp|https?|wss?):\/\//.test(t)).slice(0, 30) : [],
+    })
+  }
   const s = session(sessionId)
   engine.pin(s)
-  const [infoHash, fileIdx] = s.id.split('-')
-  library.add({ id: s.id, infoHash, fileIdx: Number(fileIdx), fileName: s.file.name, title: (title ?? s.title ?? s.file.name).slice(0, 200), type, imdbId, streamId, addedAt: Date.now() })
+  const [hash, fileIdx] = s.id.split('-')
+  library.add({ id: s.id, infoHash: hash, fileIdx: Number(fileIdx), fileName: s.file.name, title: (title ?? s.title ?? s.file.name).slice(0, 200), type, imdbId, streamId, addedAt: Date.now() })
   return engine.stats(s)
 })
 

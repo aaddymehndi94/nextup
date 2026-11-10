@@ -8,6 +8,13 @@ import { StreamReader } from './reader.ts'
 const VIDEO_RE = /\.(mkv|mp4|m4v|avi|webm|mov|ts|m2ts|wmv|mpg|mpeg|flv)$/i
 const METADATA_TIMEOUT_MS = 90_000
 
+function withTimeout<T> (p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new EngineError('Could not get torrent metadata from any peer within 90s. The swarm may be dead; try another source, or download it to watch later.', 504)), ms)
+    p.then(v => { clearTimeout(timer); resolve(v) }, err => { clearTimeout(timer); reject(err) })
+  })
+}
+
 /** One playable video file inside a torrent. Several sessions may share a torrent (season packs). */
 export interface Session {
   id: string
@@ -57,6 +64,8 @@ export class TorrentEngine {
   private readonly sessions = new Map<string, Session>()
   /** In-flight opens, so concurrent requests for the same torrent share one add. */
   private readonly pending = new Map<string, Promise<Torrent>>()
+  /** Info hashes a kept download is waiting on; a player's metadata timeout must not drop them. */
+  private readonly patient = new Set<string>()
   private readonly downloadsDir: string
   private readonly torrentsDir: string
   private readonly sweeper: NodeJS.Timeout
@@ -76,11 +85,17 @@ export class TorrentEngine {
     this.sweeper.unref()
   }
 
-  async open (req: OpenSessionRequest): Promise<Session> {
+  /**
+   * `patient` waits for metadata as long as it takes instead of giving up after 90s. A kept download
+   * uses it, because a sparse swarm can take minutes to produce one peer.
+   */
+  async open (req: OpenSessionRequest, opts: { patient?: boolean } = {}): Promise<Session> {
     const infoHash = req.infoHash.toLowerCase()
     if (!/^[0-9a-f]{40}$/.test(infoHash)) throw new EngineError('Invalid info hash', 400)
 
-    const torrent = await this.getTorrent(infoHash, req.trackers ?? [])
+    if (opts.patient) this.patient.add(infoHash)
+    const torrent = await this.getTorrent(infoHash, req.trackers ?? [], opts.patient === true)
+    this.patient.delete(infoHash)
     const idx = pickFile(torrent.files, req.fileIdx, req.fileName)
     if (idx < 0) throw new EngineError('No video file found in this torrent', 422)
 
@@ -104,14 +119,14 @@ export class TorrentEngine {
     return [...this.sessions.values()].filter(s => !s.torrent.destroyed)
   }
 
-  private async getTorrent (infoHash: string, trackers: string[]): Promise<Torrent> {
+  private async getTorrent (infoHash: string, trackers: string[], patient: boolean): Promise<Torrent> {
     const existing = await this.client.get(infoHash)
     if (existing && !existing.destroyed) {
       if (existing.ready) return existing
-      return this.waitReady(existing)
+      return this.waitReady(existing, patient)
     }
     const inflight = this.pending.get(infoHash)
-    if (inflight) return inflight
+    if (inflight) return patient ? inflight : withTimeout(inflight, METADATA_TIMEOUT_MS)
 
     const p = (async () => {
       // Reuse saved metadata when we've seen this torrent before: no peer round-trip needed.
@@ -126,7 +141,7 @@ export class TorrentEngine {
         announce,
         strategy: 'sequential',
       })
-      const ready = await this.waitReady(torrent)
+      const ready = await this.waitReady(torrent, patient)
       if (!existsSync(saved) && ready.torrentFile) writeFileSync(saved, ready.torrentFile)
       return ready
     })()
@@ -134,12 +149,13 @@ export class TorrentEngine {
     try { return await p } finally { this.pending.delete(infoHash) }
   }
 
-  private waitReady (torrent: Torrent): Promise<Torrent> {
+  private waitReady (torrent: Torrent, patient = false): Promise<Torrent> {
     return new Promise((resolve, reject) => {
       if (torrent.ready) return resolve(torrent)
-      const timer = setTimeout(() => {
+      const timer = patient ? undefined : setTimeout(() => {
         cleanup()
-        this.client.remove(torrent, { destroyStore: false }).catch(() => {})
+        // A kept download may be waiting on the same swarm; only give up on it if nobody is.
+        if (!this.patient.has(torrent.infoHash)) this.client.remove(torrent, { destroyStore: false }).catch(() => {})
         reject(new EngineError('Could not get torrent metadata from any peer within 90s. The swarm may be dead; try another source.', 504))
       }, METADATA_TIMEOUT_MS)
       const onReady = () => { cleanup(); resolve(torrent) }
@@ -257,6 +273,20 @@ export class TorrentEngine {
       this.client.remove(torrent, { destroyStore: false }).catch(() => {})
       console.log(`[engine] stopped idle torrent ${torrent.name}`)
     }
+  }
+
+  /** Peers connected to a torrent that may still be waiting for metadata; null if it isn't loaded. */
+  async swarm (infoHash: string): Promise<{ peers: number; downloadSpeed: number } | null> {
+    const t = await this.client.get(infoHash)
+    return t && !t.destroyed ? { peers: t.numPeers, downloadSpeed: t.downloadSpeed } : null
+  }
+
+  /** Drops a torrent nobody is using any more (a kept download removed before it got metadata). */
+  async abandon (infoHash: string): Promise<void> {
+    this.patient.delete(infoHash)
+    if ([...this.sessions.values()].some(s => s.infoHash === infoHash)) return
+    const t = await this.client.get(infoHash)
+    if (t && !t.destroyed) await this.client.remove(t, { destroyStore: false }).catch(() => {})
   }
 
   async close (session: Session): Promise<void> {

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Play } from 'lucide-react'
+import { Check, Download, Play } from 'lucide-react'
 import type { Episode, HealthResponse, MediaType, RecItem, Source, SourcesResponse, TitleDetail, TitleState, WatchProgress } from '../../../shared/types.ts'
 import { api } from '../api.ts'
 import { RES_LABEL } from '../format.ts'
@@ -25,6 +25,18 @@ export function watchSource (s: Source, ctx: { type: MediaType; imdbId: string; 
   if (s.fileIdx !== undefined) q.set('f', String(s.fileIdx))
   if (s.fileName) q.set('fn', s.fileName)
   navigate(`/watch?${q}`, opts)
+}
+
+/** Keep a source to watch later without playing it. Resolves once the server has it on the list. */
+export function downloadSource (s: Source, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }): Promise<void> {
+  return api.download({ infoHash: s.infoHash, fileIdx: s.fileIdx, fileName: s.fileName, trackers: s.trackers, type: ctx.type, imdbId: ctx.imdbId, streamId: ctx.streamId, title: ctx.name })
+    .then(item => {
+      const home = { label: 'Downloads', run: () => navigate('/') }
+      toast(item.pending
+        ? `Downloading ${ctx.name}. Peers are scarce, so it will keep looking, even after a restart.`
+        : `Downloading ${ctx.name} to watch later.`, home)
+    })
+    .catch(err => { toast(`Couldn’t start the download. ${(err as Error).message}`); throw err })
 }
 
 const released = (e: Episode) => !e.released || new Date(e.released) <= new Date()
@@ -169,6 +181,8 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
   const taste = useTitleState(type, id)
   const chosenFor = useRef<string | null>(null)
   const autoplayed = useRef(false)
+  // Sources kept from this page (infoHash:fileIdx), so their buttons show they're on the way.
+  const [saved, setSaved] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => {
     api.title(type, id)
@@ -232,6 +246,14 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
   const searching = load?.state === 'loading' || !load
   const resume = resumable(taste.state, streamId)
   const verb = resume ? 'Resume' : 'Play'
+  const keyOf = (s: Source) => `${s.infoHash}:${s.fileIdx ?? ''}`
+  const download = (s: Source) => {
+    const key = keyOf(s)
+    if (saved.has(key)) { toast(`${ctx.name} is already downloading.`, { label: 'Downloads', run: () => navigate('/') }); return }
+    setSaved(prev => new Set(prev).add(key))
+    downloadSource(s, ctx).catch(() => setSaved(prev => { const next = new Set(prev); next.delete(key); return next }))
+  }
+  const bestSaved = best ? saved.has(keyOf(best)) : false
 
   return (
     <main className="title-page">
@@ -252,6 +274,9 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
             <button className="button primary" disabled={!best} aria-busy={searching || undefined} onClick={() => best && watchSource(best, ctx)}>
               {searching ? <span className="spinner" aria-hidden /> : <Play aria-hidden fill="currentColor" />}
               {searching ? 'Finding sources…' : best ? (episode ? `${verb} S${episode.season} E${episode.episode}` : verb) : 'No sources found'}
+            </button>
+            <button type="button" className="round-button" disabled={!best} aria-pressed={bestSaved} aria-label={bestSaved ? 'Downloading' : 'Download to watch later'} data-tip={bestSaved ? 'Downloading' : 'Download'} onClick={() => best && download(best)}>
+              {bestSaved ? <Check aria-hidden /> : <Download aria-hidden />}
             </button>
             <TasteButtons actions={taste} name={t.name} />
           </div>
@@ -295,7 +320,7 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
                     <p className="notice">It may be too new or too obscure for the public indexes.</p>
                   </div>
                   )
-                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} />}
+                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} onDownload={download} isSaved={s => saved.has(keyOf(s))} />}
               {Object.keys(load.data.errors).length > 0 && (
                 <p className="fine-print">Some indexes didn’t answer: {Object.entries(load.data.errors).map(([k, v]) => `${k} (${v})`).join(', ')}</p>
               )}

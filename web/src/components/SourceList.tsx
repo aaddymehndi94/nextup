@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, Check, ChevronDown, Play } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, Download, Play } from 'lucide-react'
 import type { HealthResponse, Source } from '../../../shared/types.ts'
 import { bytes, languageName, RES_LABEL } from '../format.ts'
 
@@ -35,7 +35,13 @@ function tags (s: Source): string[] {
   return out
 }
 
-export function SourceList ({ sources, health, onPick }: { sources: Source[]; health: HealthResponse; onPick: (s: Source) => void }) {
+export function SourceList ({ sources, health, onPick, onDownload, isSaved }: {
+  sources: Source[]
+  health: HealthResponse
+  onPick: (s: Source) => void
+  onDownload: (s: Source) => void
+  isSaved: (s: Source) => boolean
+}) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all')
   const [sort, setSort] = useState<Sort>('best')
   const [showAll, setShowAll] = useState(false)
@@ -99,8 +105,9 @@ export function SourceList ({ sources, health, onPick }: { sources: Source[]; he
           const recommended = sort === 'best' && filter === 'all' && i === 0
           const langs = s.languages.map(languageName)
           const facts = tags(s)
+          const kept = isSaved(s)
           return (
-            <li key={s.infoHash}>
+            <li key={s.infoHash} className="source-row">
               <button className={`source${recommended ? ' recommended' : ''}`} onClick={() => onPick(s)} title={s.title}>
                 <span className={`res res-${s.release.resolution}`}>{RES_LABEL[s.release.resolution]}</span>
                 <span className="source-main">
@@ -128,6 +135,10 @@ export function SourceList ({ sources, health, onPick }: { sources: Source[]; he
                   <span className="stat provider">{s.providers.join(', ')}</span>
                 </span>
                 <span className="source-go" aria-hidden><Play fill="currentColor" /></span>
+              </button>
+              {/* A sibling, not inside the row's button: buttons can't nest. */}
+              <button type="button" className={`source-save${kept ? ' is-saved' : ''}`} onClick={() => onDownload(s)} aria-label={kept ? `Downloading ${s.title}` : `Download ${s.title} to watch later`} data-tip={kept ? 'Downloading' : 'Download'}>
+                {kept ? <Check aria-hidden /> : <Download aria-hidden />}
               </button>
             </li>
           )

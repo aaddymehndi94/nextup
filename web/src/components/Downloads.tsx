@@ -23,7 +23,9 @@ export function Downloads () {
   if (!items || items.length === 0) return null
 
   const play = (it: LibraryItem) => {
-    const q = new URLSearchParams({ ih: it.infoHash, f: String(it.fileIdx), fn: it.fileName, type: it.type, id: it.imdbId, s: it.streamId, n: it.title })
+    const q = new URLSearchParams({ ih: it.infoHash, type: it.type, id: it.imdbId, s: it.streamId, n: it.title })
+    if (it.fileIdx >= 0) q.set('f', String(it.fileIdx))
+    if (it.fileName) q.set('fn', it.fileName)
     navigate(`/watch?${q}`)
   }
 
@@ -48,11 +50,11 @@ export function Downloads () {
             <div className="download-text">
               <span className="download-title">{it.title}</span>
               <span className="download-status">
-                {done
+                {it.pending || !s
+                  ? <>{waiting(it.swarm)}</>
+                  : done
                   ? <><Check size={14} aria-hidden />Ready offline · {bytes(s?.fileSize)}</>
-                  : s
-                    ? <>{Math.floor(progress * 100)}% of {bytes(s.fileSize)} · {speed(s.downloadSpeed)} · {s.peers} {s.peers === 1 ? 'peer' : 'peers'}</>
-                    : 'Waiting to resume…'}
+                  : <>{Math.floor(progress * 100)}% of {bytes(s.fileSize)} · {speed(s.downloadSpeed)} · {s.peers} {s.peers === 1 ? 'peer' : 'peers'}</>}
               </span>
             </div>
             {confirming === it.id
@@ -72,6 +74,12 @@ export function Downloads () {
       })}
     </Row>
   )
+}
+
+/** A source kept before anyone could send its file list: we keep asking (and retry every few minutes). */
+function waiting (swarm: LibraryItem['swarm']): string {
+  if (!swarm || swarm.peers === 0) return 'Looking for peers…'
+  return `Connecting · ${swarm.peers} ${swarm.peers === 1 ? 'peer' : 'peers'} found`
 }
 
 function DownloadArt ({ imdbId, title }: { imdbId: string; title: string }) {

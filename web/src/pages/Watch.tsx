@@ -57,6 +57,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const [info, setInfo] = useState<ProbeResponse | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [phaseStarted, setPhaseStarted] = useState(Date.now())
+  // "Download to watch later" for a slow swarm, before the player has a session to pin.
+  const [later, setLater] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   // Playback timeline. A converted stream's <video> clock restarts at 0, so `origin` maps it to film
   // time: exactly the requested time when transcoding, or the keyframe before it when copying video
@@ -98,6 +100,14 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       .catch(err => { if (live) { setError(err.message); setPhase('error') } })
     return () => { live = false }
   }, [infoHash, fileIdx, fileName, name, attempt])
+
+  // While waiting on the swarm nothing else re-renders; tick so the elapsed time (and the slow-source offer) show.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (phase !== 'connecting' && phase !== 'probing') return
+    const id = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [phase])
 
   // 2. Live swarm stats.
   useEffect(() => {
@@ -401,6 +411,18 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     else api.keep({ sessionId, type, imdbId, streamId, title: name }).then(setStats).catch(() => {})
   }
 
+  const downloadLater = () => {
+    let trackers: string[] = []
+    try { trackers = JSON.parse(readSessionKey(`trackers:${infoHash}`) ?? '[]') } catch { /* none */ }
+    setLater('saving')
+    api.download({ infoHash, fileIdx, fileName, trackers, type, imdbId, streamId, title: name })
+      .then(() => setLater('saved'))
+      .catch(() => setLater('idle'))
+  }
+  const laterButton = later === 'saved'
+    ? <button className="button primary" onClick={leave}>Back</button>
+    : <button className="button secondary" disabled={later === 'saving'} onClick={downloadLater}><Download aria-hidden />Download to watch later</button>
+
   const showOverlay = phase !== 'ready' || (buffering && !error)
   const elapsed = Math.round((Date.now() - phaseStarted) / 1000)
   const backdrop = imdbId ? `https://images.metahub.space/background/large/${imdbId}/img` : undefined
@@ -427,11 +449,13 @@ export function Watch ({ query }: { query: URLSearchParams }) {
           <div className="overlay-card" role="status">
             {phase === 'error' ? (
               <>
-                <p className="overlay-title">This source didn’t work</p>
-                <p className="overlay-detail">{error}</p>
+                <p className="overlay-title">{later === 'saved' ? 'Saved to Downloads' : 'This source didn’t work'}</p>
+                <p className="overlay-detail">{later === 'saved' ? 'No peer has sent the file yet. nexttupp keeps trying in the background, even after a restart.' : error}</p>
                 <div className="overlay-actions">
                   <button className="button primary" onClick={() => { setInfo(null); setStats(null); setAttempt(a => a + 1) }}>Try again</button>
                   <button className="button secondary" onClick={leave}>Pick another source</button>
+                  {/* Never got a session: the swarm is the problem, so keeping it for later can still pay off. */}
+                  {!stats && later !== 'saved' && laterButton}
                 </div>
               </>
             ) : phase === 'ready' ? (
@@ -453,6 +477,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
                   {phase === 'connecting' && (elapsed > 20 ? `Still asking peers for the torrent info (${elapsed}s). Slow swarms can take a minute.` : 'Asking peers for the torrent info…')}
                   {phase !== 'connecting' && stats && <>{stats.peers} peers · {speed(stats.downloadSpeed)}</>}
                 </p>
+                {phase === 'connecting' && later === 'saved' && <p className="overlay-hint">Saved to Downloads. You can leave; it keeps going.</p>}
+                {phase === 'connecting' && elapsed > 15 && <div className="overlay-actions">{laterButton}</div>}
               </>
             )}
           </div>

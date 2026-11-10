@@ -20,13 +20,24 @@ export interface LibraryEntry {
   /** Movie id or `tt…:season:episode` */
   streamId: string
   addedAt: number
+  /** Extra trackers from the source listing; helps a sparse swarm find peers. */
+  trackers?: string[]
+  /**
+   * Kept straight from the source list and still waiting for torrent metadata. Until then `fileIdx` is the
+   * listing's hint (-1 when it gave none) and `id` is provisional.
+   */
+  pending?: boolean
 }
+
+const RETRY_MS = 3 * 60_000
 
 export class Library {
   private readonly file: string
   private readonly engine: TorrentEngine
   private readonly downloadsDir: string
   private entries: LibraryEntry[]
+  private readonly starting = new Set<string>()
+  private log: (msg: string) => void = () => {}
 
   constructor (dataDir: string, engine: TorrentEngine) {
     this.engine = engine
@@ -66,6 +77,7 @@ export class Library {
     this.save()
     const session = this.engine.get(id)
     if (session) this.engine.unpin(session)
+    if (entry.pending || !session) await this.engine.abandon(entry.infoHash) // still waiting for peers
     if (!deleteFiles) return
     if (session) await this.engine.close(session)
     const shared = this.entries.some(e => e.infoHash === entry.infoHash)
@@ -73,16 +85,47 @@ export class Library {
     if (!shared && !inUse) await rm(join(this.downloadsDir, entry.infoHash), { recursive: true, force: true })
   }
 
-  /** Re-opens and resumes every kept download. Failures are logged, never fatal. */
-  async resumeAll (log: (msg: string) => void): Promise<void> {
-    for (const e of this.entries) {
-      try {
-        const session = await this.engine.open({ infoHash: e.infoHash, fileIdx: e.fileIdx, fileName: e.fileName, title: e.title })
-        this.engine.pin(session)
-        log(`resumed download: ${e.title}`)
-      } catch (err) {
-        log(`could not resume ${e.title}: ${(err as Error).message}`)
-      }
+  /**
+   * Keeps a download without playing it first. Returns at once: the entry is saved as pending and the
+   * torrent waits for peers as long as it takes (retried every few minutes and after restarts).
+   */
+  download (entry: Omit<LibraryEntry, 'pending'>): LibraryEntry {
+    const pending: LibraryEntry = { ...entry, pending: true }
+    this.add(pending)
+    void this.start(pending.id)
+    return pending
+  }
+
+  private async start (id: string): Promise<void> {
+    const e = this.get(id)
+    if (!e || this.starting.has(id)) return
+    this.starting.add(id)
+    try {
+      const session = await this.engine.open(
+        { infoHash: e.infoHash, fileIdx: e.fileIdx >= 0 ? e.fileIdx : undefined, fileName: e.fileName || undefined, title: e.title, trackers: e.trackers },
+        { patient: true },
+      )
+      if (!this.get(id)) return // deleted while we were waiting for peers
+      this.engine.pin(session)
+      const ready: LibraryEntry = { ...e, id: session.id, fileIdx: Number(session.id.split('-')[1]), fileName: session.file.name }
+      delete ready.pending
+      this.entries = [...this.entries.filter(x => x.id !== id && x.id !== session.id), ready]
+      this.save()
+      this.log(`downloading: ${e.title}`)
+    } catch (err) {
+      this.log(`still waiting to download ${e.title}: ${(err as Error).message}`)
+    } finally {
+      this.starting.delete(id)
     }
+  }
+
+  /**
+   * Re-opens and resumes every kept download, patiently and side by side: a dead swarm must not hold up the
+   * others, and anything not yet open (still waiting for peers, or dropped) is tried again every few minutes.
+   */
+  async resumeAll (log: (msg: string) => void): Promise<void> {
+    this.log = log
+    setInterval(() => { for (const e of this.entries) if (e.pending || !this.engine.get(e.id)) void this.start(e.id) }, RETRY_MS).unref()
+    for (const e of this.entries) void this.start(e.id)
   }
 }

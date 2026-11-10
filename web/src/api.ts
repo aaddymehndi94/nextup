@@ -11,6 +11,13 @@ export interface LibraryItem {
   id: string; infoHash: string; fileIdx: number; fileName: string; title: string
   type: MediaType; imdbId: string; streamId: string; addedAt: number
   stats: Stats | null
+  /** Saved from the source list and still waiting for the torrent's metadata from peers. */
+  pending?: boolean
+  swarm?: { peers: number; downloadSpeed: number } | null
+}
+export interface DownloadRequest {
+  infoHash: string; fileIdx?: number; fileName?: string; trackers?: string[]
+  type: MediaType; imdbId: string; streamId: string; title: string
 }
 
 export class ApiError extends Error {
@@ -98,6 +105,8 @@ export const api = {
   streamStart: (id: string, t: number) => req<{ start: number; exact: boolean }>(`/api/sessions/${id}/stream-start?t=${t.toFixed(2)}`),
   library: () => req<LibraryItem[]>('/api/library'),
   keep: (body: { sessionId: string; type: MediaType; imdbId: string; streamId: string; title: string }) => req<Stats>('/api/library', json('POST', body)),
+  /** Keep a source without playing it; the server keeps asking peers until it can start. */
+  download: (body: DownloadRequest) => req<LibraryItem>('/api/library', json('POST', body)),
   unkeep: (id: string, deleteFiles: boolean) => req<void>(`/api/library/${id}${deleteFiles ? '?deleteFiles=1' : ''}`, json('DELETE')),
   subtitles: (type: MediaType, streamId: string, fileName?: string) =>
     req<SubtitleOption[]>(`/api/subtitles/${type}/${encodeURIComponent(streamId)}${fileName ? `?file=${encodeURIComponent(fileName)}` : ''}`),
