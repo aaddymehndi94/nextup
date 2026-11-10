@@ -3,7 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, ci-setup] # TEMPORARY: ci-setup only while setting up CI
   pull_request:
 
 permissions:
