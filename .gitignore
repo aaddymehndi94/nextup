@@ -5,3 +5,4 @@ data
 *.log
 .claude/settings.local.json
 .claude/skills/impeccable/scripts/bin/
+__pycache__/

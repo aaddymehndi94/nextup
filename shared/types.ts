@@ -175,3 +175,157 @@ export interface SubtitleTrack {
   /** URL on our server returning WebVTT. */
   url: string
 }
+
+// ---- Profiles, taste and recommendations -----------------------------------------
+// Every /api/me/* route acts on the profile named by the `x-nexttupp-profile` request header
+// (falls back to the first profile when absent, and a "Me" profile is created when none exists).
+
+export interface Profile {
+  /** UUIDv7. */
+  id: string
+  name: string
+  /** Free-form avatar key chosen by the client (a colour, an emoji, an image name). */
+  avatar?: string
+  createdAt: number
+}
+
+export interface CreateProfileRequest { name: string; avatar?: string }
+export interface UpdateProfileRequest { name?: string; avatar?: string | null }
+
+/** 1 = like, -1 = dislike, 0 = no rating. */
+export type Rating = 1 | -1 | 0
+export type DismissReason = 'not_interested' | 'seen'
+
+export interface WatchProgress {
+  /** Movie id, or `tt…:season:episode` for an episode. */
+  streamId: string
+  season?: number
+  episode?: number
+  /** Seconds. */
+  position: number
+  duration: number
+  /** position / duration, 0..1 */
+  fraction: number
+  completed: boolean
+  updatedAt: number
+}
+
+/** What this profile has done with one title. */
+export interface TitleState {
+  rating: Rating
+  inList: boolean
+  /** Latest progress (for a series: the most recently watched episode). Use it to offer "Resume". */
+  progress: WatchProgress | null
+  /** Series only: every episode this profile has started, in episode order (for watched marks). */
+  episodes?: WatchProgress[]
+  dismissed: DismissReason | null
+}
+
+export interface RatingRequest { value: Rating; /** Where the rating was given, e.g. 'title', 'player', 'onboarding'. */ source?: string }
+export interface DismissRequest { reason: DismissReason }
+/** Sent by the player every ~10 s while playing, and on pause/exit. */
+export interface ProgressRequest { type: MediaType; id: string; streamId: string; position: number; duration: number }
+export interface ProgressResponse { progress: WatchProgress }
+
+export type ReasonKind =
+  | 'liked' | 'person' | 'genre' | 'cf' | 'quality' | 'explore' | 'continue' | 'list' | 'similar' | 'popular'
+
+export interface RecReason {
+  kind: ReasonKind
+  /** Ready to show: "Because you liked Arrival", "More from Denis Villeneuve", "Romantic dramas you rate highly". */
+  text: string
+  /** The title the reason points at, when there is one. */
+  seed?: { id: string; type: MediaType; name: string }
+}
+
+export interface RecItem extends TitleSummary {
+  background?: string
+  logo?: string
+  /** Trimmed to ~240 characters. */
+  description?: string
+  genres: string[]
+  imdbRating?: string
+  runtime?: string
+  reason: RecReason
+  /** Continue watching: where the viewer is. */
+  progress?: WatchProgress
+  /** Continue watching: what Play should open (an episode id for series, possibly the next episode). */
+  streamId?: string
+}
+
+export type HomeRowKind =
+  | 'continue' | 'list' | 'onboarding' | 'top' | 'because' | 'genre' | 'series' | 'movies' | 'different'
+  | 'popular' | 'acclaimed'
+
+export interface HomeRow {
+  /** Stable within a rotation window; use as a React key. */
+  id: string
+  kind: HomeRowKind
+  title: string
+  subtitle?: string
+  items: RecItem[]
+}
+
+export interface HomeResponse {
+  profile: Profile
+  /** Too few signals to personalise: rows are quality-weighted popular titles and onboarding is offered. */
+  coldStart: boolean
+  /** Background work (metadata, candidate expansion) is still filling in; refetch in a few seconds for fuller rows. */
+  warming: boolean
+  rows: HomeRow[]
+}
+
+export interface SimilarResponse { items: RecItem[] }
+
+export interface OnboardingResponse {
+  /** Diverse, well-known titles this profile hasn't rated; reason.text is a short descriptor ("Crime · 1994"). */
+  items: RecItem[]
+  /** Titles this profile has rated so far. */
+  rated: number
+  /** Positive signals needed before the home screen personalises. */
+  target: number
+}
+
+export type TasteFeatureKind = 'genre' | 'genres' | 'era' | 'decade' | 'director' | 'writer' | 'cast' | 'country'
+
+export interface TasteFeature {
+  /** Stable key such as "d:denis villeneuve" or "g:Sci-Fi"; pass it to PUT /api/me/taste/feature. */
+  key: string
+  kind: TasteFeatureKind
+  /** "Denis Villeneuve", "Romantic dramas", "90s action". */
+  label: string
+  /** -1..1: how strongly this shows up in the profile's likes (or dislikes). */
+  weight: number
+  /** Names of the titles behind it. */
+  evidence: string[]
+  /** The viewer's own override: 1 = more of this, -1 = never show it. */
+  pref?: 1 | -1
+}
+
+export interface TasteSignal {
+  item: TitleSummary
+  /** Current weight after decay, -1..1.25. */
+  weight: number
+  /** "Liked", "Disliked", "Finished", "Watched 4 episodes", "On your list", "Stopped early", "Not interested", "Played briefly". */
+  label: string
+  at: number
+}
+
+export interface TasteSummary {
+  profile: Profile
+  coldStart: boolean
+  /** 0..1, how much the home screen leans on this profile's signals versus general quality. */
+  confidence: number
+  counts: { positive: number; negative: number; total: number }
+  /** One readable sentence. */
+  summary: string
+  likes: TasteFeature[]
+  dislikes: TasteFeature[]
+  /** Features the viewer has explicitly boosted or blocked. */
+  prefs: TasteFeature[]
+  /** Strongest signals first. Each can be undone with the rating/list/progress/dismiss routes. */
+  signals: TasteSignal[]
+  cf: { available: boolean; covered: number }
+}
+
+export interface FeaturePrefRequest { feature: string; value: 1 | -1 | 0 }

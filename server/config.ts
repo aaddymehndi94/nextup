@@ -2,16 +2,19 @@ import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 
+/** `NEXTTUPP_*` env var, falling back to the pre-rebrand `NEXTUP_*` name. */
+const env = (name: string): string | undefined => process.env[`NEXTTUPP_${name}`] ?? process.env[`NEXTUP_${name}`]
+
 export const config = {
   port: Number(process.env.PORT ?? 4545),
   host: process.env.HOST ?? '127.0.0.1',
-  dataDir: resolve(process.env.NEXTUP_DATA ?? join(root, 'data')),
+  dataDir: resolve(env('DATA') ?? join(root, 'data')),
   webDist: join(root, 'dist'),
-  preferredLanguages: (process.env.NEXTUP_LANGS ?? 'en').split(',').map(s => s.trim()).filter(Boolean),
+  preferredLanguages: (env('LANGS') ?? 'en').split(',').map(s => s.trim()).filter(Boolean),
   /** Minutes a torrent may sit unused before we stop it (data stays on disk). */
-  idleMinutes: Number(process.env.NEXTUP_IDLE_MIN ?? 15),
+  idleMinutes: Number(env('IDLE_MIN') ?? 15),
   /** Torrentio base URL. Can include Torrentio config segments, e.g. https://torrentio.strem.fun/providers=yts,1337x */
-  torrentioUrl: process.env.NEXTUP_TORRENTIO ?? 'https://torrentio.strem.fun',
+  torrentioUrl: env('TORRENTIO') ?? 'https://torrentio.strem.fun',
   cinemetaUrl: 'https://v3-cinemeta.strem.io',
   openSubtitlesUrl: 'https://opensubtitles-v3.strem.io',
 }

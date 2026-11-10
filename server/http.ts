@@ -2,6 +2,15 @@
 
 const cache = new Map<string, { at: number; value: unknown }>()
 
+/** An error with an HTTP status for the client (4xx) — the message is shown to the user. */
+export class HttpError extends Error {
+  readonly status: number
+  constructor (status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 export class UpstreamError extends Error {
   readonly status?: number
   constructor (message: string, status?: number) {
@@ -18,7 +27,7 @@ export async function fetchJson<T> (url: string, opts: { timeoutMs?: number; cac
   try {
     res = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { 'user-agent': 'Mozilla/5.0 (nextup)', accept: 'application/json' },
+      headers: { 'user-agent': 'Mozilla/5.0 (nexttupp)', accept: 'application/json' },
     })
   } catch (err) {
     const name = (err as Error).name

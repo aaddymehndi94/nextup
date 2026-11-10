@@ -1,25 +1,37 @@
 import Fastify, { type FastifyReply } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { Readable, pipeline } from 'node:stream'
 import type { ClientCaps, MediaType, OpenSessionRequest, ProbeResponse, ProbeResult } from '../shared/types.ts'
 import * as cinemeta from './catalog/cinemeta.ts'
 import { config } from './config.ts'
 import { EngineError, TorrentEngine, type Session } from './engine/engine.ts'
 import { contentType, parseRange } from './engine/range.ts'
-import { UpstreamError } from './http.ts'
+import { HttpError, UpstreamError } from './http.ts'
 import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
 import { buildFfmpegArgs, choosePlan } from './playback/plan.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
 import { fetchCues, listSubtitles } from './subtitles.ts'
 import { Library } from './library.ts'
+import { openDb } from './db.ts'
+import { loadCf } from './reco/cf.ts'
+import { SqliteTasteStore } from './store.ts'
+import { ItemCache } from './taste/items.ts'
+import { registerTasteRoutes } from './taste/routes.ts'
+import { RecoService } from './taste/service.ts'
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
 const transcodes = new TranscodeRegistry()
 const library = new Library(config.dataDir, engine)
 const encoder = await detectEncoder()
+const db = openDb(join(config.dataDir, 'nexttupp.db'))
+const tasteStore = new SqliteTasteStore(db)
+const itemCache = new ItemCache(db, { baseUrl: config.cinemetaUrl })
+const loadCfSafe = () => loadCf(config.dataDir).catch(err => { app.log.warn(`CF model not loaded: ${(err as Error).message}`); return null })
+const reco = new RecoService({ store: tasteStore, items: itemCache, cf: await loadCfSafe(), log: msg => app.log.info(msg) })
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
 const streamStarts = new Map<string, Promise<number>>()
@@ -29,14 +41,6 @@ const IMDB_ID = /^tt\d{1,10}$/
 const STREAM_ID = /^tt\d{1,10}(:\d{1,4}:\d{1,5})?$/
 const SESSION_ID = /^[0-9a-f]{40}-\d{1,6}$/
 const isType = (t: string): t is MediaType => t === 'movie' || t === 'series'
-
-class HttpError extends Error {
-  readonly status: number
-  constructor (status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
 
 app.setErrorHandler((err: Error & { status?: number; statusCode?: number }, req, reply) => {
   const status = err instanceof HttpError || err instanceof EngineError ? err.status
@@ -279,6 +283,10 @@ app.get<{ Querystring: { url?: string } }>('/api/subtitle-cues', async req => {
   return fetchCues(req.query.url)
 })
 
+// ---- Profiles, taste and recommendations ----------------------------------------
+
+registerTasteRoutes(app, tasteStore, reco)
+
 // ---- Web app (production build) ----------------------------------------------
 
 if (existsSync(config.webDist)) {
@@ -293,11 +301,24 @@ const shutdown = async () => {
   transcodes.killAll()
   await app.close()
   await engine.destroy()
+  db.close()
   process.exit(0)
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
 await app.listen({ port: config.port, host: config.host })
-app.log.info(`nextup server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
+app.log.info(`nexttupp server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
 library.resumeAll(msg => app.log.info(msg)).catch(err => app.log.error(err))
+
+// Candidate pool for recommendations: Cinemeta catalogs, refreshed twice a day (pages within TTL are skipped).
+const crawl = () => itemCache.crawl(msg => app.log.info(msg)).catch(err => app.log.warn(`catalog crawl: ${(err as Error).message}`))
+void crawl()
+setInterval(crawl, 12 * 3600_000).unref()
+setImmediate(() => reco.prewarm())
+// The CF model may be built after the server starts; pick it up when it appears.
+setInterval(async () => {
+  if (reco.cfAvailable) return
+  const cf = await loadCfSafe()
+  if (cf) { reco.setCf(cf); app.log.info(`CF model loaded: ${cf.size} movies`) }
+}, 10 * 60_000).unref()
