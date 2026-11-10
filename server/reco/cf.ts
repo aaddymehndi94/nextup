@@ -21,8 +21,8 @@ export interface CfModel {
    * Unknown seed ids are ignored; seeds themselves are excluded from the result. Best first.
    *
    * Scores are Σ weight·B[seed][movie] / Σ|weight| (EASE item weights), so they don't grow with profile size;
-   * only movies with a positive score are returned. The model was trained with liked = 1, watched but
-   * middling = 0.5; see the ADR for what negative weights cost and buy.
+   * only movies with a positive score are returned. Best input: liked = 1; middling ratings add nothing (0);
+   * disliked -0.5 costs ~2% recall for ~28% fewer picks the user would dislike (numbers in the ADR).
    */
   score (seeds: Array<{ id: string; weight: number }>, k?: number): Scored[]
 }

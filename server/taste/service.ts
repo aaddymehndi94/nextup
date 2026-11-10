@@ -111,9 +111,12 @@ export class RecoService {
   private cfData (signals: Signal[]): CfData | null {
     const cf = this.cf
     if (!cf) return null
-    // cf.ts: dislikes tested best at 0 to -0.5 offline, so negatives are halved; positives cap at 1.
-    const seeds = signals.filter(s => s.type === 'movie' && Math.abs(s.weight) >= 0.1 && safe(() => cf.has(s.id), false))
-      .map(s => ({ id: s.id, weight: s.weight > 0 ? Math.min(1, s.weight) : Math.max(-0.5, s.weight * 0.5) }))
+    // As evaluated offline (ADR 0002): explicit likes at 1, dislikes at -0.5. Merely watched or finished films
+    // cost recall when counted as likes, so they only stand in while there are fewer than 3 explicit likes.
+    const known = signals.filter(s => s.type === 'movie' && Math.abs(s.weight) >= 0.1 && safe(() => cf.has(s.id), false))
+    const liked = known.filter(s => s.explicit && s.weight > 0)
+    const seeds = (liked.length >= 3 ? known.filter(s => s.explicit) : known)
+      .map(s => ({ id: s.id, weight: s.weight > 0 ? (s.explicit ? 1 : Math.min(1, s.weight)) : -0.5 }))
     if (!seeds.some(s => s.weight > 0)) return null
     const scores = safe(() => cf.score(seeds, 400), [])
     const neighbors = new Map(seeds.filter(s => s.weight >= 0.3).slice(0, 10).map(s => [s.id, safe(() => cf.neighbors(s.id, 60), [])]))
