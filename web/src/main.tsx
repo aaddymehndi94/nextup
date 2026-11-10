@@ -17,7 +17,8 @@ function Route () {
   if (path === '/watch') return <Watch key={query.toString()} query={query} />
   if (path === '/taste') return <Taste />
   if (path === '/profiles') return <Profiles mode="manage" />
-  return <Home initialQuery={query.get('q') ?? ''} />
+  if (path === '/films' || path === '/series') return <Home key={path} initialQuery={query.get('q') ?? ''} tab={path === '/films' ? 'movie' : 'series'} />
+  return <Home key="/" initialQuery={query.get('q') ?? ''} />
 }
 
 function App () {

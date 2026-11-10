@@ -145,7 +145,10 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
 
   // ---- Recommendations -------------------------------------------------------------
 
-  app.get('/api/me/home', async req => reco.home(profileOf(req)))
+  app.get<{ Querystring: { type?: string } }>('/api/me/home', async req => {
+    const { type } = req.query
+    return reco.home(profileOf(req), type === 'movie' || type === 'series' ? type : undefined)
+  })
 
   app.get<TitleParams>('/api/title/:type/:id/similar', async req => ({ items: await reco.similar(profileOf(req), title(req.params)) }))
 

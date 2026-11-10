@@ -87,6 +87,9 @@ export function rawFeatures (it: ItemMeta): Array<[string, FeatureGroup, number]
   for (const c of it.countries.slice(0, 3)) out.push([`c:${norm(c)}`, 'c', 1])
   for (const [t, tf] of terms(it.description)) out.push([`t:${t}`, 't', (tf * 2.2) / (tf + 1.2)])
   out.push([`ty:${it.type}`, 'ty', 1])
+  // Half-hour series (sitcoms, mostly) and hour-long ones are different things to sit down to; without this a
+  // 1990s telenovela looks like a 1990s sitcom, since both are filed under Comedy, Drama and Romance.
+  if (it.type === 'series' && it.runtime) out.push([it.runtime <= 35 ? 'ty:series-short' : 'ty:series-long', 'ty', 1])
   return out
 }
 
@@ -199,6 +202,23 @@ export class ContentIndex {
   item (i: number): ItemMeta { return this.items[i] }
   vector (i: number): SparseVec { return this.vecs[i] }
 
+  private typeDf: Map<string, { n: number; df: Map<string, number> }> | null = null
+
+  /** Fraction of titles of one type (films or series) that have this feature. */
+  docFreqIn (key: string, type: string): number {
+    if (!this.typeDf) {
+      this.typeDf = new Map()
+      this.items.forEach((it, i) => {
+        let t = this.typeDf!.get(it.type)
+        if (!t) { t = { n: 0, df: new Map() }; this.typeDf!.set(it.type, t) }
+        t.n++
+        for (const k of this.features(i)) t.df.set(k, (t.df.get(k) ?? 0) + 1)
+      })
+    }
+    const t = this.typeDf.get(type)
+    return t ? (t.df.get(key) ?? 0) / Math.max(1, t.n) : 0
+  }
+
   /** Fraction of titles that have this feature (0 when unknown). */
   docFreq (key: string): number {
     const k = this.keyIdx.get(key)
@@ -246,7 +266,7 @@ export class ContentIndex {
       case 'g': return genrePlural(rest)
       case 'gg': { const [a, b] = rest.split('+'); return pairLabel(a, b) }
       case 'gd': { const [g, d] = rest.split('@'); return eraLabel(g, d) }
-      case 'dec': return `Films from the ${rest}`
+      case 'dec': return `The ${rest}`
       default: return this.labels.get(key) ?? rest
     }
   }

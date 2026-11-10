@@ -1,4 +1,4 @@
-import type { RecItem, RecReason } from '../../shared/types.ts'
+import type { MediaType, RecItem, RecReason } from '../../shared/types.ts'
 import { type ContentIndex, splitKey } from './content.ts'
 import type { Signal } from './signals.ts'
 import type { CfData, Impression, ItemMeta } from './types.ts'
@@ -136,16 +136,20 @@ export interface Shape {
   /** Share of positive weight per type. */
   movie: number
   series: number
+  /** Share of positive weight per production country (lower-cased). */
+  countries: Map<string, number>
 }
 
 export function shapeOf (index: ContentIndex, pos: Seed[]): Shape {
   const seeds = pos.filter(s => s.signal.weight >= 0.3)
   let w = 0; let wr = 0; let r = 0; let wp = 0; let lp = 0; let lp2 = 0; let movie = 0
+  const countries = new Map<string, number>()
   for (const s of seeds) {
     const it = index.item(s.i)
     const sw = s.signal.weight
     w += sw
     if (it.type === 'movie') movie += sw
+    for (const c of new Set(it.countries.map(x => x.toLowerCase()))) countries.set(c, (countries.get(c) ?? 0) + sw)
     if (it.imdbRating !== undefined) { wr += sw; r += sw * it.imdbRating }
     if (it.popularity !== undefined) { const x = Math.log10(1 + it.popularity); wp += sw; lp += sw * x; lp2 += sw * x * x }
   }
@@ -157,6 +161,7 @@ export function shapeOf (index: ContentIndex, pos: Seed[]): Shape {
     logPopSd: logPop !== undefined ? Math.sqrt(Math.max(0, lp2 / wp - logPop * logPop)) : 0,
     movie: w ? movie / w : 0.5,
     series: w ? 1 - movie / w : 0.5,
+    countries: new Map([...countries].map(([c, v]) => [c, v / w])),
   }
 }
 
@@ -167,8 +172,16 @@ export function shapeFit (shape: Shape, it: ItemMeta): number {
   const ratingFit = shape.rating === undefined ? 1 : it.imdbRating === undefined ? 0.45 : clamp01(1 - Math.max(0, shape.rating - 0.7 - it.imdbRating) / 1.5)
   const sd = Math.max(0.35, shape.logPopSd)
   const popFit = shape.logPop === undefined || it.popularity === undefined ? 0.7 : Math.exp(-((Math.log10(1 + it.popularity) - shape.logPop) ** 2) / (2 * sd * sd))
-  const typeFit = ((it.type === 'movie' ? shape.movie : shape.series) + 0.25) / 1.25
-  return (0.4 + 0.6 * ratingFit) * (0.65 + 0.35 * popFit) * (0.6 + 0.4 * typeFit)
+  // From a country none of the likes come from (a Brazilian telenovela for someone who only likes US and UK
+  // shows): marked down, not out. Liking a few titles from there lifts it.
+  let countryShare = 1
+  if (shape.n >= 5 && it.countries.length) {
+    countryShare = 0
+    for (const c of it.countries) countryShare = Math.max(countryShare, shape.countries.get(c.toLowerCase()) ?? 0)
+  }
+  const countryFit = 0.7 + 0.3 * Math.min(1, 5 * countryShare)
+  // No films-vs-series term: with mostly-film likes it marked every series down. Rows mix the two by quota instead.
+  return (0.4 + 0.6 * ratingFit) * (0.65 + 0.35 * popFit) * countryFit
 }
 
 export interface Candidate {
@@ -190,14 +203,19 @@ export interface Candidate {
 const PERSON = new Set(['d', 'w', 'p'])
 const TASTE_KINDS = new Set(['g', 'gg', 'gd', 'd', 'w', 'p', 'c', 'dec'])
 
-/** Which features run through this profile's likes (and dislikes), with evidence. */
-export function affinities (index: ContentIndex, signals: Signal[]): Map<string, Affinity> {
+/**
+ * Which features run through this profile's likes (and dislikes), with evidence. With `type`, only signals
+ * on that kind of title count, against how common each feature is among that kind: someone whose films are
+ * sci-fi and whose series are sitcoms has two tastes, and one blended profile only shows the larger.
+ */
+export function affinities (index: ContentIndex, signals: Signal[], type?: MediaType): Map<string, Affinity> {
   const out = new Map<string, Affinity>()
   let totalP = 0
   let totalN = 0
   for (const s of signals) {
     const i = index.indexOf(s.id)
     if (i === undefined || Math.abs(s.weight) < 0.05) continue
+    if (type && index.item(i).type !== type) continue
     const name = index.item(i).name
     if (s.weight > 0) totalP += s.weight
     else totalN -= s.weight
@@ -219,7 +237,7 @@ export function affinities (index: ContentIndex, signals: Signal[]): Map<string,
   const floor = 1 / Math.max(1, index.size)
   for (const a of out.values()) {
     const kind = splitKey(a.key)[0]
-    const df = Math.max(index.docFreq(a.key), floor)
+    const df = Math.max(type ? index.docFreqIn(a.key, type) : index.docFreq(a.key), floor)
     a.evidence.sort((x, y) => y.w - x.w)
     a.negEvidence.sort((x, y) => y.w - x.w)
     a.lift = totalP ? a.P / totalP / df : 0
@@ -295,12 +313,16 @@ export function scoreAll (p: Prepared, filter?: (it: ItemMeta) => boolean): Cand
     }
   })
   const raw = new Float32Array(n)
-  let maxRaw = 0
+  // Normalised per type: films share directors, cast and franchises far more than series do, so on one
+  // scale the best series match would look weak next to an ordinary film one.
+  const maxRaw = new Map<string, number>()
   for (let i = 0; i < n; i++) {
     if (!p.eligible[i]) continue
     raw[i] = CONTENT_TOP[0] * t[0][i] + CONTENT_TOP[1] * t[1][i] + CONTENT_TOP[2] * t[2][i]
-    if (raw[i] > maxRaw) maxRaw = raw[i]
+    const ty = index.item(i).type
+    if (raw[i] > (maxRaw.get(ty) ?? 0)) maxRaw.set(ty, raw[i])
   }
+  const globalMax = Math.max(0, ...maxRaw.values())
   const boosts = [...prefs].filter(([, v]) => v === 1).map(([k]) => k)
   const useCf = p.cfScore.size > 0
   const out: Candidate[] = []
@@ -310,7 +332,9 @@ export function scoreAll (p: Prepared, filter?: (it: ItemMeta) => boolean): Cand
     if (filter && !filter(item)) continue
     let neg = 0
     for (const s of p.neg) neg = Math.max(neg, -s.signal.weight * s.sims[i])
-    const content = maxRaw > 0 ? raw[i] / maxRaw : 0
+    // At most a 2x lift, so a profile with no series likes doesn't get its faint film-to-series matches inflated.
+    const top = Math.max(maxRaw.get(item.type) ?? 0, 0.5 * globalMax)
+    const content = top > 0 ? raw[i] / top : 0
     const cfv = p.cfScore.get(item.id) ?? 0
     const known = useCf && cf!.known.has(item.id)
     const fit = shapeFit(p.shape, item)
@@ -321,9 +345,9 @@ export function scoreAll (p: Prepared, filter?: (it: ItemMeta) => boolean): Cand
     const imp = impressions.get(item.id)
     if (imp && imp.count >= 3 && now - imp.lastAt < 21 * 86_400_000) score -= Math.min(BLEND.fatigueMax, BLEND.fatiguePerShow * (imp.count - 2))
     score += (hash01(`${seed}:${item.id}`) - 0.5) * BLEND.jitter
-    const top: Candidate['top'] = []
-    for (let r = 0; r < 3; r++) if (ts[r][i] >= 0 && t[r][i] > 0) top.push({ seed: p.pos[ts[r][i]], c: t[r][i] })
-    out.push({ i, item, score, personal, content, cf: cfv, prior: pr, neg, fit, top })
+    const nearest: Candidate['top'] = []
+    for (let r = 0; r < 3; r++) if (ts[r][i] >= 0 && t[r][i] > 0) nearest.push({ seed: p.pos[ts[r][i]], c: t[r][i] })
+    out.push({ i, item, score, personal, content, cf: cfv, prior: pr, neg, fit, top: nearest })
   }
   return out
 }

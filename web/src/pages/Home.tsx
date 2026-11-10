@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Info, Search, SlidersHorizontal, X } from 'lucide-react'
-import type { HomeResponse, HomeRow, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
+import type { HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
 import { api } from '../api.ts'
 import { useDocumentTitle, useLoaded, useScrolled } from '../hooks.ts'
 import { navigate, onLinkClick } from '../router.ts'
@@ -40,7 +40,7 @@ function useQueryResults (query: string): Load<TitleSummary[]> | null {
 const WARM_RETRY_MS = 4000
 const WARM_RETRIES = 8
 
-function useHomeFeed () {
+function useHomeFeed (tab?: MediaType) {
   const [load, setLoad] = useState<Load<HomeResponse>>({ state: 'loading' })
   const retries = useRef(0)
   const generation = useRef(0)
@@ -48,10 +48,10 @@ function useHomeFeed () {
   /** Fetches the feed. The rows on screen stay until the new ones arrive, so nothing flashes or jumps. */
   const refresh = useCallback(() => {
     const mine = ++generation.current
-    return api.home()
+    return api.home(tab)
       .then(data => { if (generation.current === mine) setLoad({ state: 'ok', data }) })
       .catch(err => { if (generation.current === mine) setLoad(prev => (prev.state === 'ok' ? prev : { state: 'error', message: err.message })) })
-  }, [])
+  }, [tab])
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -70,14 +70,14 @@ const isRecRow = (row: HomeRow) => !['continue', 'list', 'onboarding'].includes(
 
 /** The billboard's title: the top pick once picks are personal, otherwise the most popular film. */
 function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId: string } | null {
-  const row = data.coldStart ? data.rows.find(r => r.id === 'popular:movie') : data.rows.find(r => r.kind === 'top')
+  const row = data.coldStart ? data.rows.find(r => r.id.startsWith('popular:')) : data.rows.find(r => r.kind === 'top')
   const item = row?.items.find(i => i.background)
   if (!row || !item) return null
   return { item, label: data.coldStart ? 'Popular now' : item.reason.text, rowId: row.id }
 }
 
-function Feed () {
-  const { load, refresh } = useHomeFeed()
+function Feed ({ tab }: { tab?: MediaType }) {
+  const { load, refresh } = useHomeFeed(tab)
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
   // The billboard stays put while rows refresh underneath it.
   const pinned = useRef<{ cold: boolean; pick: ReturnType<typeof billboardOf> } | null>(null)
@@ -121,9 +121,9 @@ function Feed () {
       <>
         <section className="billboard pending" aria-hidden />
         <div className="shelves">
-          <Downloads />
+          {!tab && <Downloads />}
           {[0, 1].map(i => (
-            <Row key={i} title={i ? 'Popular series' : 'Popular films'} id={`row-loading-${i}`}>
+            <Row key={i} title={tab === 'series' || (!tab && i) ? 'Popular series' : 'Popular films'} id={`row-loading-${i}`}>
               {Array.from({ length: 10 }, (_, j) => <PosterSkeleton key={j} />)}
             </Row>
           ))}
@@ -151,7 +151,7 @@ function Feed () {
   // Downloads sit after what the viewer is in the middle of (or, for a new profile, after rating a few).
   const anchor = rows.find(r => r.kind === 'continue') ?? rows.find(r => r.kind === 'onboarding')
   const shelves: React.ReactNode[] = []
-  if (!anchor) shelves.push(<Downloads key="downloads" />)
+  if (!anchor && !tab) shelves.push(<Downloads key="downloads" />)
   for (const row of rows) {
     if (row.kind === 'continue') {
       shelves.push(
@@ -181,7 +181,7 @@ function Feed () {
         </Row>,
       )
     }
-    if (row === anchor) shelves.push(<Downloads key="downloads" />)
+    if (row === anchor && !tab) shelves.push(<Downloads key="downloads" />)
   }
 
   return (
@@ -371,22 +371,30 @@ function PopularBillboard ({ load }: { load: Load<TitleSummary[]> }) {
 // TV it would trap the remote's arrow keys inside the input.
 const FINE_POINTER = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches
 
-export function Home ({ initialQuery }: { initialQuery: string }) {
+const TABS: Array<{ href: string; label: string; tab?: MediaType }> = [
+  { href: '/', label: 'Home' },
+  { href: '/films', label: 'Films', tab: 'movie' },
+  { href: '/series', label: 'Series', tab: 'series' },
+]
+
+/** Home (films and series together), or the Films or Series tab: the same page, one kind of title. */
+export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: MediaType }) {
+  const base = TABS.find(t => t.tab === tab)?.href ?? '/'
   const [query, setQuery] = useState(initialQuery)
   const results = useQueryResults(query)
   const input = useRef<HTMLInputElement>(null)
   const scrolled = useScrolled()
   const q = query.trim()
-  useDocumentTitle(q ? `Results for “${q}”` : undefined)
+  useDocumentTitle(q ? `Results for “${q}”` : tab ? TABS.find(t => t.tab === tab)?.label : undefined)
 
   // Keep the query in the URL so Back from a title returns to the same results.
   useEffect(() => {
     const t = setTimeout(() => {
-      const url = query.trim() ? `/?q=${encodeURIComponent(query.trim())}` : '/'
+      const url = query.trim() ? `${base}?q=${encodeURIComponent(query.trim())}` : base
       if (url !== location.pathname + location.search) history.replaceState(null, '', url)
     }, 300)
     return () => clearTimeout(t)
-  }, [query])
+  }, [query, base])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -400,7 +408,14 @@ export function Home ({ initialQuery }: { initialQuery: string }) {
     <main className={`home${results ? ' is-searching' : ''}`}>
       <h1 className="sr-only">nexttupp</h1>
       <header className={`masthead${scrolled || results ? ' is-solid' : ''}`}>
-        <Wordmark />
+        <div className="masthead-start">
+          <Wordmark />
+          <nav className="tabs" aria-label="Browse">
+            {TABS.map(t => (
+              <a key={t.href} href={t.href} onClick={e => { setQuery(''); onLinkClick(e) }} aria-current={t.tab === tab ? 'page' : undefined}>{t.label}</a>
+            ))}
+          </nav>
+        </div>
         <div className="masthead-end">
           <form className="search" role="search" onSubmit={e => {
             e.preventDefault()
@@ -447,7 +462,7 @@ export function Home ({ initialQuery }: { initialQuery: string }) {
             <div className="grid">{results.data.map(t => <PosterCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
           )}
         </section>
-      ) : <Feed />}
+      ) : <Feed key={tab ?? 'all'} tab={tab} />}
     </main>
   )
 }

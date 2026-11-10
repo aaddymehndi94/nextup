@@ -1,9 +1,9 @@
-import type { HomeRow, RecItem } from '../../shared/types.ts'
+import type { HomeRow, MediaType, RecItem } from '../../shared/types.ts'
 import type { Scored } from './cf.ts'
 import type { ContentIndex } from './content.ts'
 import { decadeOf, joinNames } from './labels.ts'
 import {
-  type Candidate, chooseReason, describeItem, diversify, dupKey, explore, hash01, isRecommendable, popNorm, type Prepared, prepare,
+  affinities, type Candidate, chooseReason, describeItem, diversify, dupKey, explore, hash01, isRecommendable, popNorm, type Prepared, prepare,
   type RankInput, ratingNorm, reasonOptions, type Seed, scoreAll, seedReasonOptions, toRecItem,
 } from './rank.ts'
 import { ACCIDENTAL_SEC, DAY, strength } from './signals.ts'
@@ -131,7 +131,14 @@ function becauseRow (p: Prepared, s: Seed, cands: Candidate[], taken: Set<string
   const pool = cands.filter(c => s.sims[c.i] >= 0.12 || nb.has(c.item.id))
   const seedType = p.input.index.item(s.i).type
   // Close to the seed first, but still a good pick for this profile overall (quality, shape, other likes).
-  const rel = (c: Candidate) => (0.6 * s.sims[c.i] / maxSim + 0.15 * (nb.get(c.item.id) ?? 0) / maxNb + 0.25 * c.score + (c.item.type === seedType ? 0.08 : 0)) * (0.5 + 0.5 * c.fit)
+  // Shared genres too: a director's animated comedy isn't "because you liked" their space drama.
+  const seedGenres = new Set(p.input.index.item(s.i).genres)
+  const genreFit = (it: ItemMeta) => {
+    if (!seedGenres.size || !it.genres.length) return 1
+    const shared = it.genres.filter(g => seedGenres.has(g)).length
+    return 0.5 + 0.5 * shared / new Set([...seedGenres, ...it.genres]).size
+  }
+  const rel = (c: Candidate) => (0.6 * s.sims[c.i] / maxSim + 0.15 * (nb.get(c.item.id) ?? 0) / maxNb + 0.25 * c.score + (c.item.type === seedType ? 0.08 : 0)) * (0.5 + 0.5 * c.fit) * genreFit(c.item)
   const picks = diversify(p.input.index, pool, ROW - 2, 0.8, { taken, relevance: rel })
   if (picks.length < 6) return null
   return {
@@ -190,8 +197,21 @@ function boostedRows (p: Prepared, cands: Candidate[], taken: Set<string>): Home
   return rows
 }
 
-function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: number, boosted: HomeRow[] = []): HomeRow[] {
-  const feats = [...p.affinity.values()]
+/** Genres named by a feature key, without decades ("gd:Sci-Fi@2010s" → Sci-Fi). Drama is too broad to count. */
+function genreNames (key: string): string[] {
+  return [...featureTokens(key)].filter(t => !/^\d{4}s$/.test(t) && t !== 'Drama')
+}
+
+/**
+ * Rows for the genres (and genre mixes) running through the likes. With `type`, from the likes of that kind
+ * only and filled with that kind only ("Comedy series" for someone whose films are mostly sci-fi).
+ * `usedGenres` is shared between calls so the screen shows each genre once, not "Sci-Fi" three ways.
+ */
+function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: number, boosted: HomeRow[] = [], opts: { type?: MediaType; usedGenres?: Set<string> } = {}): HomeRow[] {
+  const { type } = opts
+  const used = opts.usedGenres ?? new Set<string>()
+  const affinity = type ? affinities(p.input.index, p.input.signals, type) : p.affinity
+  const feats = [...affinity.values()]
     .filter(a => {
       const kind = a.key.slice(0, a.key.indexOf(':'))
       return (kind === 'gg' || kind === 'gd' || kind === 'g') && a.nPos >= (kind === 'g' ? 3 : 2) && a.lift >= 1.25 && a.score > 0
@@ -207,19 +227,24 @@ function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: nu
     // "Romance" adds nothing next to "Romantic dramas"; "80s action" and "Action thrillers" both do.
     const tk = featureTokens(a.key)
     if (tokens.some(t => isSubset(tk, t) || isSubset(t, tk))) continue
-    const pool = cands.filter(c => hasFeature(c.item, a.key))
-    const picks = diversify(p.input.index, pool, ROW, 0.7, { taken })
+    const genres = genreNames(a.key)
+    if (genres.some(g => used.has(g))) continue
+    const pool = cands.filter(c => (!type || c.item.type === type) && hasFeature(c.item, a.key))
+    const picks = byMix(p, pool, ROW, 0.7, taken)
     if (picks.length < 6) continue
     const ids = new Set(picks.slice(0, 10).map(c => c.item.id))
     if (prev.some(s => [...ids].filter(x => s.has(x)).length > 0.5 * ids.size)) continue
     prev.push(ids)
     tokens.push(tk)
+    for (const g of genres) used.add(g)
     for (const c of picks.slice(0, VISIBLE)) taken.add(c.item.id)
+    const [kind, rest] = [a.key.slice(0, a.key.indexOf(':')), a.key.slice(a.key.indexOf(':') + 1)]
+    const like = joinNames(a.evidence.slice(0, 2).map(e => e.name))
     rows.push({
-      id: `genre:${a.key}`,
+      id: type ? `genre:${type}:${a.key}` : `genre:${a.key}`,
       kind: 'genre',
-      title: p.input.index.label(a.key),
-      subtitle: `Like ${joinNames(a.evidence.slice(0, 2).map(e => e.name))}`,
+      title: type === 'series' && kind === 'g' ? `${rest} series` : p.input.index.label(a.key),
+      subtitle: type === 'series' ? `Series like ${like}` : type === 'movie' ? `Films like ${like}` : `Like ${like}`,
       items: rowItems(picks, (c, used) => chooseReason(p, reasonOptions(p, c, a.key), used)),
     })
   }
@@ -230,6 +255,56 @@ const exploreReason = (it: ItemMeta): RecItem['reason'] => ({
   kind: 'explore',
   text: `Something different · ${it.genres[0]}${it.imdbRating ? ` · IMDb ${it.imdbRating.toFixed(1)}` : ''}`,
 })
+
+/** Share of the profile's positive weight on series, and whether both films and series have been liked. */
+function typeMix (p: Prepared): { series: number; both: boolean } {
+  let movie = 0
+  let series = 0
+  for (const s of p.pos) {
+    if (s.signal.weight < 0.3) continue
+    if (p.input.index.item(s.i).type === 'series') series += s.signal.weight
+    else movie += s.signal.weight
+  }
+  return { series: movie + series ? series / (movie + series) : 0, both: movie > 0 && series > 0 }
+}
+
+/** Two ranked lists interleaved so that about `share` of the result comes from the second, spread evenly. */
+function interleave<T> (a: T[], b: T[], share: number, k: number): T[] {
+  const out: T[] = []
+  let i = 0
+  let j = 0
+  while (out.length < k && (i < a.length || j < b.length)) {
+    const wantB = j < Math.round((out.length + 1) * share)
+    if ((wantB && j < b.length) || i >= a.length) out.push(b[j++])
+    else out.push(a[i++])
+  }
+  return out
+}
+
+/** Diversified picks; once both films and series have been liked, the two in proportion to the likes. */
+function byMix (p: Prepared, pool: Candidate[], k: number, lambda: number, taken: Set<string>): Candidate[] {
+  const mix = typeMix(p)
+  if (!mix.both || pool.every(c => c.item.type === pool[0].item.type)) return diversify(p.input.index, pool, k, lambda, { taken })
+  const share = Math.min(0.8, Math.max(0.2, mix.series))
+  const nSeries = Math.ceil(k * share)
+  const movies = diversify(p.input.index, pool.filter(c => c.item.type === 'movie'), k - nSeries + 2, lambda, { taken })
+  const series = diversify(p.input.index, pool.filter(c => c.item.type === 'series'), nSeries + 2, lambda, { taken })
+  return interleave(movies, series, share, k)
+}
+
+/** "Because you liked" seeds, taking turns between films and series (or, in a tab, that kind first). */
+function orderSeeds (p: Prepared, seeds: Seed[], only?: MediaType): Seed[] {
+  const ty = (s: Seed) => p.input.index.item(s.i).type
+  if (only) return [...seeds.filter(s => ty(s) === only), ...seeds.filter(s => ty(s) !== only)]
+  const left = [...seeds]
+  const out: Seed[] = []
+  while (left.length) {
+    const last = out.at(-1)
+    const j = last ? left.findIndex(s => ty(s) !== ty(last)) : 0
+    out.push(left.splice(Math.max(0, j), 1)[0])
+  }
+  return out
+}
 
 /** Films and series picked separately and interleaved two to one, so series' larger popularity numbers can't crowd films out. */
 function mixed (p: Prepared, pool: Candidate[], k: number, lambda: number, opts: Parameters<typeof diversify<Candidate>>[4]): Candidate[] {
@@ -261,12 +336,19 @@ function popularRow (p: Prepared, cands: Candidate[], id: string, title: string,
 
 const SHOWCASE = ['Comedy', 'Thriller', 'Sci-Fi', 'Romance', 'Animation', 'Crime', 'Horror', 'Drama', 'Mystery', 'Fantasy', 'Action', 'Documentary']
 
-export function buildHome (input: HomeInput): HomeOutput {
+/**
+ * The home screen. With `only`, the Films or Series tab: the same rows, built from that kind of title, and
+ * from the taste shown on that kind (likes of the other kind still help, they just don't dominate).
+ */
+export function buildHome (input: HomeInput, only?: MediaType): HomeOutput {
   const { index, snapshot: snap, now, seed } = input
   const st = strength(input.signals)
   const listIds = new Set(snap.list.map(l => l.id))
   const p = prepare({ ...input, exclude: new Set([...input.exclude, ...listIds]) })
-  const cands = scoreAll(p)
+  if (only) p.affinity = affinities(index, input.signals, only)
+  const cands = scoreAll(p, only ? it => it.type === only : undefined)
+  const ofType = (it: RecItem) => !only || it.type === only
+  const kinds = only === 'series' ? 'series' : only === 'movie' ? 'films' : 'films and series'
   const rows: HomeRow[] = []
   const taken = new Set<string>()
   const shown: string[] = []
@@ -280,26 +362,30 @@ export function buildHome (input: HomeInput): HomeOutput {
     }
   }
 
-  const cont = continueWatching(index, snap, now)
+  const cont = continueWatching(index, snap, now).filter(ofType)
   if (cont.length) add({ id: 'continue', kind: 'continue', title: 'Continue watching', items: cont })
-  const list = myList(index, snap)
+  const list = myList(index, snap).filter(ofType)
   if (list.length) add({ id: 'list', kind: 'list', title: 'My List', items: list })
 
   if (st.coldStart) {
-    const needed = Math.max(1, 3 - st.positives)
-    add({ id: 'onboarding', kind: 'onboarding', title: 'Rate a few to get started', subtitle: `Like ${needed} more and picks will start to follow your taste`, items: onboardingItems(index, snap, now, seed, 16) })
-    for (const s of becauseSeeds(p, 2, 0.3).slice(0, 2)) add(becauseRow(p, s, cands, taken))
-    add(popularRow(p, cands, 'popular:movie', 'Popular films', it => it.type === 'movie', taken, 0))
-    add(popularRow(p, cands, 'popular:series', 'Popular series', it => it.type === 'series', taken, 0))
+    if (!only) {
+      const needed = Math.max(1, 3 - st.positives)
+      add({ id: 'onboarding', kind: 'onboarding', title: 'Rate a few to get started', subtitle: `Like ${needed} more and picks will start to follow your taste`, items: onboardingItems(index, snap, now, seed, 16) })
+    }
+    for (const s of orderSeeds(p, becauseSeeds(p, 2, 0.3), only).slice(0, 2)) add(becauseRow(p, s, cands, taken))
+    if (only !== 'series') add(popularRow(p, cands, 'popular:movie', 'Popular films', it => it.type === 'movie', taken, 0))
+    if (only !== 'movie') add(popularRow(p, cands, 'popular:series', 'Popular series', it => it.type === 'series', taken, 0))
     const acclaimed = mixed(p, cands.filter(c => (c.item.imdbRating ?? 0) >= 7.8), ROW, 0.6, { taken, relevance: c => 0.75 * ratingNorm(c.item) + 0.25 * popNorm(c.item) })
-    if (acclaimed.length >= 6) add({ id: 'acclaimed', kind: 'acclaimed', title: 'Acclaimed', subtitle: 'Highly rated films and series', items: rowItems(acclaimed, c => ({ kind: 'quality', text: `IMDb ${c.item.imdbRating!.toFixed(1)} · ${describeItem(c.item)}` })) })
-    const genres = [...SHOWCASE].sort((a, b) => hash01(`${seed}:${a}`) - hash01(`${seed}:${b}`)).slice(0, 3)
-    for (const g of genres) add(popularRow(p, cands, `showcase:${g}`, index.label(`g:${g}`), it => it.genres.includes(g), taken, 0))
+    if (acclaimed.length >= 6) add({ id: 'acclaimed', kind: 'acclaimed', title: 'Acclaimed', subtitle: `Highly rated ${kinds}`, items: rowItems(acclaimed, c => ({ kind: 'quality', text: `IMDb ${c.item.imdbRating!.toFixed(1)} · ${describeItem(c.item)}` })) })
+    const genres = [...SHOWCASE].sort((a, b) => hash01(`${seed}:${a}`) - hash01(`${seed}:${b}`)).slice(0, only ? 4 : 3)
+    for (const g of genres) add(popularRow(p, cands, `showcase:${g}`, only === 'series' ? `${g} series` : index.label(`g:${g}`), it => it.genres.includes(g), taken, 0))
     return { coldStart: true, rows, shown }
   }
 
-  // Top picks, with a bounded exploration slot (about 1 in 10).
-  const picks = diversify(index, cands, 22, 0.75, { taken })
+  // Top picks, with a bounded exploration slot (about 1 in 10). On the mixed home, films and series are ranked
+  // apart and shown in proportion to the likes (never under a fifth each once both have been liked).
+  const mix = typeMix(p)
+  const picks = byMix(p, cands, 22, 0.75, taken)
   const pickIds = new Set(picks.map(c => c.item.id))
   const wild = explore(p, cands, 2, new Set([...taken, ...pickIds]))
   const used = new Map<string, number>()
@@ -309,36 +395,37 @@ export function buildHome (input: HomeInput): HomeOutput {
   for (const it of top.slice(VISIBLE, 16)) taken.add(it.id)
 
   let because = 0
-  for (const s of becauseSeeds(p, 2, 0.45)) {
-    if (because >= 2) break
+  for (const s of orderSeeds(p, becauseSeeds(p, 4, 0.45), only)) {
+    if (because >= (only ? 3 : 2)) break
     const row = becauseRow(p, s, cands, taken)
     if (row) { add(row); because++ }
   }
   const boosted = boostedRows(p, cands, taken)
   for (const row of boosted) add(row)
-  for (const row of genreRows(p, cands, taken, 3, boosted)) add(row)
-
-  // Keep series and films both in view: series rely on content features alone (CF covers movies).
-  const seriesShare = picks.filter(c => c.item.type === 'series').length / Math.max(1, picks.length)
-  const balance = seriesShare < 0.25 ? 'series' : seriesShare > 0.75 ? 'movie' : null
-  if (balance) {
-    const pool = cands.filter(c => c.item.type === balance)
-    const items = diversify(index, pool, ROW, 0.75, { taken })
-    if (items.length >= 6) {
-      const u = new Map<string, number>()
-      add({ id: balance, kind: balance === 'series' ? 'series' : 'movies', title: balance === 'series' ? 'Series for you' : 'Films for you', items: items.map(c => toRecItem(c.item, chooseReason(p, reasonOptions(p, c), u))) })
+  const usedGenres = new Set<string>()
+  if (only) {
+    for (const row of genreRows(p, cands, taken, 4, boosted, { type: only, usedGenres })) add(row)
+  } else {
+    for (const row of genreRows(p, cands, taken, 2, boosted, { usedGenres })) add(row)
+    // Then one row from each kind's own taste, the smaller one first, so a sitcom habit isn't lost under sci-fi films.
+    const order: MediaType[] = mix.series < 0.5 ? ['series', 'movie'] : ['movie', 'series']
+    for (const ty of order) {
+      if (p.pos.filter(s => index.item(s.i).type === ty && s.signal.weight >= 0.3).length < 3) continue
+      for (const row of genreRows(p, cands, taken, 1, boosted, { type: ty, usedGenres })) add(row)
     }
   }
 
-  const different = explore(p, cands, 14, taken)
+  const wide = explore(p, cands, 24, taken)
+  const share = Math.min(0.8, Math.max(0.2, mix.series))
+  const different = only || !mix.both ? wide.slice(0, 14) : interleave(wide.filter(c => c.item.type === 'movie'), wide.filter(c => c.item.type === 'series'), share, 14)
   if (different.length >= 6) add({ id: 'different', kind: 'different', title: 'Something different', subtitle: 'Highly rated, outside your usual', items: different.map(c => toRecItem(c.item, exploreReason(c.item))) })
 
   const recent = new Date(now).getUTCFullYear() - 1
   add(popularRow(p, cands, 'popular', 'New & popular', it => (it.year ?? 0) >= recent, taken, 0.4))
+  if (only) add(popularRow(p, cands, `popular:${only}`, only === 'series' ? 'Popular series' : 'Popular films', () => true, taken, 0.2))
   return { coldStart: false, rows, shown }
 }
 
-/** "More like this" for one title, lightly tilted towards the profile. */
 export function similarItems (input: RankInput, targetId: string, cfNeighbors: Scored[] | null, k = 20): RecItem[] {
   const { index } = input
   const target = index.indexOf(targetId)

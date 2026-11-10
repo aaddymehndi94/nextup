@@ -135,7 +135,7 @@ export const api = {
   undismiss: (type: MediaType, id: string) => req<TitleState>(`/api/me/dismiss/${t(type, id)}`, json('DELETE')),
 
   // Recommendations.
-  home: () => req<HomeResponse>('/api/me/home'),
+  home: (type?: MediaType) => req<HomeResponse>(`/api/me/home${type ? `?type=${type}` : ''}`),
   similar: (type: MediaType, id: string) => req<SimilarResponse>(`/api/title/${t(type, id)}/similar`),
   onboarding: () => req<OnboardingResponse>('/api/me/onboarding'),
   taste: () => req<TasteSummary>('/api/me/taste'),

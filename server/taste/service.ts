@@ -1,4 +1,4 @@
-import type { HomeResponse, OnboardingResponse, Profile, RecItem, TasteSummary } from '../../shared/types.ts'
+import type { HomeResponse, MediaType, OnboardingResponse, Profile, RecItem, TasteSummary } from '../../shared/types.ts'
 import type { CfModel } from '../reco/cf.ts'
 import { ContentIndex } from '../reco/content.ts'
 import { buildHome, myList, onboardingItems, similarItems } from '../reco/home.ts'
@@ -140,17 +140,19 @@ export class RecoService {
 
   // ---- Public ------------------------------------------------------------------------
 
-  home (profile: Profile): HomeResponse {
+  /** The home screen, or with `type` the Films or Series tab. */
+  home (profile: Profile, type?: MediaType): HomeResponse {
     const now = this.now()
     const index = this.getIndex()
     const key = `${this.indexVersion}:${this.profileVersion.get(profile.id) ?? 0}:${Math.floor(now / ROTATION_MS)}`
-    const hit = this.homeCache.get(profile.id)
+    const cacheKey = type ? `${profile.id}:${type}` : profile.id
+    const hit = this.homeCache.get(cacheKey)
     if (hit && hit.key === key && now - hit.at < HOME_TTL_MS) return { ...hit.value, warming: this.isWarming(profile.id) }
     if (!this.warming.has(profile.id) && !hit) this.scheduleWarm(profile.id, 0)
-    const out = buildHome(this.input(profile.id))
+    const out = buildHome(this.input(profile.id), type)
     this.store.recordImpressions(profile.id, out.shown)
     const value: HomeResponse = { profile, coldStart: out.coldStart, warming: this.isWarming(profile.id) || index.size < 500, rows: out.rows }
-    this.homeCache.set(profile.id, { key, at: now, value })
+    this.homeCache.set(cacheKey, { key, at: now, value })
     return value
   }
 
