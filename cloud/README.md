@@ -21,7 +21,19 @@ npm install
 npm test                   # vitest inside workerd, against a local D1 with the real migrations
 npm run typecheck
 npm run db:migrate:local   # wrangler d1 migrations apply nexttupp --local
-npm run dev                # wrangler dev --local on http://localhost:8799
+npm run dev                # wrangler dev --local on http://localhost:8799 (invite links point at its own /join)
+```
+
+End to end on one machine, with a local Worker and two nexttupp servers standing in for two laptops
+(each with its own scratch data dir, never the real one):
+
+```bash
+npm run db:migrate:local && npm run dev              # here, in cloud/
+node scripts/bootstrap-invite.ts --local              # run the INSERT it prints; keep the code
+# from the repo root, one shell each:
+PORT=4550 NEXTTUPP_DATA=/tmp/nx-a NEXTTUPP_CLOUD_URL=http://127.0.0.1:8799 npm start
+PORT=4551 NEXTTUPP_DATA=/tmp/nx-b NEXTTUPP_CLOUD_URL=http://127.0.0.1:8799 npm start
+CODE=nxi_… node scripts/sync-e2e.mjs                  # 26 checks: sign-in, merge, both directions, tombstones, invites
 ```
 
 ## Bootstrap: the first admin

@@ -38,11 +38,11 @@ All state lives in `<NEXTTUPP_DATA>/nexttupp.db`:
 | `feature_prefs` | yes | "More of this" / "never show this" on a genre, person, era. 0 = cleared |
 | `impressions` | no | How often a title was on screen without being acted on |
 | `items`, `catalog_pages` | no | Cinemeta metadata cache and fetched catalog/search pages, with TTLs |
-| `sync_state` | n/a | Key/value, reserved for a future sync cursor. Empty |
+| `sync_state` | n/a | Key/value: the sync cursor ([0004](0004-accounts-and-sync.md)) |
 
 **Sync shape.** Each user runs nexttupp locally, and streaming never leaves their machine. Accounts and taste
-are meant to sync later to a small cloud service, probably Workers + D1, which is also SQLite. To make that
-trivial:
+sync to a small cloud service, Workers + D1, which is also SQLite ([0004](0004-accounts-and-sync.md)). To make
+that trivial:
 
 - Everything that syncs has a globally unique key: UUIDv7, or profile id + IMDb/stream id. Nothing uses
   autoincrement.

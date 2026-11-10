@@ -5,7 +5,7 @@
   "type": "module",
   "description": "nexttupp accounts, invites and taste sync: one Cloudflare Worker + D1",
   "scripts": {
-    "dev": "wrangler dev --local --port 8799",
+    "dev": "wrangler dev --local --port 8799 --var PUBLIC_URL:http://localhost:8799",
     "db:migrate:local": "wrangler d1 migrations apply nexttupp --local",
     "bootstrap-invite": "node scripts/bootstrap-invite.ts",
     "typecheck": "tsc --noEmit",
