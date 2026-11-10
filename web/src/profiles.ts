@@ -89,7 +89,7 @@ onProfileGone(() => {
   void loadProfiles({ forcePick: true, gone: true })
 })
 
-/** One or two letters for an avatar: "Aadarsh" → "A", "Mum & Dad" → "M". */
+/** One or two letters for an avatar: "Alex" → "A", "Mum & Dad" → "M". */
 export const initial = (name: string) => (name.trim().match(/[\p{L}\p{N}]/u)?.[0] ?? '?').toUpperCase()
 
 /** Neutral tones only: colour belongs to the artwork. Stable per profile. */
