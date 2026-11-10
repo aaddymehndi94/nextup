@@ -1,7 +1,9 @@
 # nexttupp cloud
 
 The only online piece of nexttupp: **accounts, invite-only sign-up, and syncing each user's taste data**
-(profiles, likes/dislikes, My List, watch progress and completion) between their own devices. One
+(profiles, likes/dislikes, My List, watch progress and completion) between their own devices, plus a small
+**device list** so a phone can find the user's computer on the home Wi-Fi (see
+[Devices and phone handoff](#devices-and-phone-handoff-watch-at-home)). One
 Cloudflare Worker and one D1 database, sized for the Workers free plan.
 
 Everything else stays on the user's machine. The API accepts only IMDb ids (`tt123`), episode ids
@@ -176,6 +178,40 @@ in the app. Or it can just show the code and say "paste this in nexttupp → Acc
 
 There's no email sending. The admin passes a reset link on themselves. Using it signs out every session.
 
+### Devices and phone handoff (Watch at home)
+
+A computer running nexttupp registers itself while signed in, so a phone signed in to the same account (on
+`https://nexttupp.com/watch`) can find it on the home Wi-Fi and open it without a QR or pairing code.
+
+| Method and path | Auth | Request | Response |
+|---|---|---|---|
+| `PUT /v1/devices/:id` | bearer | `{ name, platform: "linux"\|"mac"\|"windows"\|"other", lan: boolean, lanUrls: string[] }` | `200 { device: Device }` |
+| `GET /v1/devices` | bearer | | `200 { devices: Device[], serverTime }`, most recently seen first |
+| `DELETE /v1/devices/:id` | bearer | | `204` (also drops its pending codes; idempotent) |
+| `POST /v1/devices/:id/handoff` | bearer (the phone) | none | `201 { code: "nxh_…", expiresAt, lanUrls }` · `404` · `409 lan_off` · `409 device_offline` · `429` |
+| `POST /v1/handoff/redeem` | bearer (the computer) | `{ code, deviceId }` | `200 { ok: true }` · `400 invalid_handoff` |
+
+`Device` = `{ id, name, platform, lan, lanUrls, lastSeenAt, online, sameNetwork }`.
+
+- `:id` is a random UUID the app picks once per install. Devices are keyed by `(account, id)`, so the same
+  install signed in to another account is a separate row. The app calls `PUT` about once a minute (riding
+  the sync loop) and `DELETE` when it signs out. An account keeps its 20 most recently seen devices; a
+  device not seen for 90 days is deleted.
+- `lanUrls` (at most 4) must each be `http://<private IPv4>:<port>` (10/8, 172.16/12, 192.168/16), so a phone
+  is only ever sent to an address on a home network. `lan: false` (the person turned "Watch on phones and
+  TVs at home" off) requires an empty list: no addresses are sent then.
+- **Same network, without storing IPs.** Each `PUT` stores `net_hash = HMAC-SHA256(server key, "network:" +
+  the caller's CF-Connecting-IP)`, using the IPv6 /64 prefix for IPv6 addresses. `GET` computes the same for
+  the phone's request and sets `sameNetwork` when they match. The key is the `prelogin` key in
+  `server_keys` (domain-separated by the `network:` prefix). `online` means seen within 2 minutes. A phone on
+  IPv6 and a computer on IPv4 (or vice versa) won't match; the website then still lists the device.
+- **Handoff codes** are 256 random bits, stored only as SHA-256, valid for **60 seconds**, bound to one
+  account and one device, and refused for a device with `lan: false` or not seen for 10 minutes. At most
+  10 unexpired codes per account. Redeeming deletes the code whether or not the check passes (one
+  `DELETE … RETURNING`), so a code can be tried once. The computer redeems with its own session: a code
+  only works on a computer signed in to the same account, so an impostor at the same LAN address can't
+  use it.
+
 ### Health
 
 `GET /v1/health` → `{ ok: true, serverTime }`.
@@ -328,7 +364,7 @@ design. In short:
 
 ## D1 schema
 
-[`migrations/0001_init.sql`](migrations/0001_init.sql) and [`0002_client_kdf.sql`](migrations/0002_client_kdf.sql). All tables are `STRICT`.
+[`migrations/0001_init.sql`](migrations/0001_init.sql), [`0002_client_kdf.sql`](migrations/0002_client_kdf.sql) and [`0003_devices.sql`](migrations/0003_devices.sql). All tables are `STRICT`.
 
 | Table | Key | Purpose |
 |---|---|---|
@@ -337,7 +373,9 @@ design. In short:
 | `invites` | `id`, `token_hash` unique | `created_by` (NULL = bootstrap), role, note, `expires_at`, `used_at`/`used_by`, `revoked_at`/`revoked_by` |
 | `password_resets` | `token_hash` | admin-issued, single-use, 24 h |
 | `login_attempts` | `key` (SHA-256 of email or IP) | failure count, window, `locked_until` |
-| `server_keys` | `name` | random keys generated in D1: `prelogin` (the fake-salt HMAC key) |
+| `server_keys` | `name` | random keys generated in D1: `prelogin` (the fake-salt HMAC key, also used for `net_hash`) |
+| `devices` | `(account_id, id)` | name, platform, `lan`, `lan_urls` (private IPv4 URLs), `net_hash` (an HMAC, never an IP), `created_at`, `last_seen_at` |
+| `handoffs` | `code_hash` | one-time phone handoff codes: `account_id`, `device_id`, `expires_at` (60 s) |
 | `profiles` | `id` | + `account_id`, name, avatar, `created_at`, `updated_at`, `deleted_at`, `seq` |
 | `events` | `(account_id, id)` | kind, item, value, `at`, and the context as typed columns (`stream_id`, `position`, `duration`, `watched_sec`, `source`, `reason`, `feature`), `seq` |
 | `ratings`, `my_list`, `dismissals` | `(account_id, profile_id, item_id)` | the local columns + `seq` |
@@ -368,9 +406,17 @@ Nothing below has been run. Each step changes the owner's Cloudflare account.
 
 ```bash
 npx wrangler d1 create nexttupp                      # 1. creates the D1 database; paste its id into wrangler.jsonc
-npx wrangler d1 migrations apply nexttupp --remote   # 2. creates the tables (0001, 0002; 0002 also generates the prelogin key)
+npx wrangler d1 migrations apply nexttupp --remote   # 2. creates the tables (0001–0003; 0002 also generates the prelogin key)
 npx wrangler deploy                                  # 3. uploads the Worker and attaches api.nexttupp.com
 node scripts/bootstrap-invite.ts                     # 4. prints the --remote INSERT to run, then the invite code and link
+```
+
+**Updating the deployed service** (already running at `api.nexttupp.com`) for devices and phone handoff:
+apply the new migration first, then the Worker, since the new code reads the new tables.
+
+```bash
+npx wrangler d1 migrations apply nexttupp --remote   # applies 0003_devices.sql (two tables, no data changes)
+npx wrangler deploy
 ```
 
 What that creates:

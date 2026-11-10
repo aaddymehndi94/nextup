@@ -109,7 +109,7 @@ export async function createSession (env: Env, accountId: string, now: number): 
 /** Throttle keys are hashed so the table holds no emails or IP addresses. */
 const throttleKeys = async (mail: string, ip: string) => ({ email: await sha256Hex(`e:${mail}`), ip: await sha256Hex(`i:${ip}`) })
 
-function clientIp (req: Request): string {
+export function clientIp (req: Request): string {
   return req.headers.get('cf-connecting-ip') ?? 'unknown'
 }
 
@@ -141,7 +141,7 @@ function failure (env: Env, key: string, limit: number, now: number): D1Prepared
 // The prelogin key is a random value in D1 (migration 0002), read once per isolate.
 let preloginKey: string | null = null
 
-async function serverKey (env: Env): Promise<string> {
+export async function serverKey (env: Env): Promise<string> {
   if (preloginKey) return preloginKey
   const [, row] = await env.DB.batch<{ value: string }>([
     env.DB.prepare("INSERT OR IGNORE INTO server_keys (name, value) VALUES ('prelogin', lower(hex(randomblob(32))))"),

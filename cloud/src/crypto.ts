@@ -84,8 +84,13 @@ export const DUMMY_VERIFIER = 'nxk1$600000$-VTgvwoyWNcAEcWKFOUpYQ$znyDCYtkH5Hpcp
  * secret is needed.
  */
 export async function fakeSalt (serverKeyHex: string, email: string): Promise<string> {
+  return b64url((await keyedHash(serverKeyHex, `prelogin-salt:${email}`)).slice(0, SALT_BYTES))
+}
+
+/** HMAC-SHA256 under the hex server key. Callers prefix the message with its purpose ("prelogin-salt:", "network:"). */
+export async function keyedHash (serverKeyHex: string, message: string): Promise<Uint8Array> {
   const keyBytes = Uint8Array.from(serverKeyHex.match(/../g) ?? [], h => parseInt(h, 16))
-  return b64url((await hmac(keyBytes, enc.encode(`prelogin-salt:${email}`))).slice(0, SALT_BYTES))
+  return hmac(keyBytes, enc.encode(message))
 }
 
 export function timingSafeEqual (a: Uint8Array, b: Uint8Array): boolean {
@@ -98,11 +103,13 @@ export function timingSafeEqual (a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /** An opaque bearer secret: a type prefix plus 256 random bits. Only its SHA-256 is ever stored. */
-export function randomToken (prefix: 'nxs_' | 'nxi_' | 'nxr_'): string {
+export function randomToken (prefix: 'nxs_' | 'nxi_' | 'nxr_' | 'nxh_'): string {
   return prefix + b64url(crypto.getRandomValues(new Uint8Array(32)))
 }
 
 export const TOKEN = /^nx[sir]_[A-Za-z0-9_-]{43}$/
+/** A phone handoff code (devices.ts): single-use, 60 seconds. */
+export const HANDOFF_CODE = /^nxh_[A-Za-z0-9_-]{43}$/
 
 export async function sha256Hex (s: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))

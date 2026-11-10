@@ -1,4 +1,5 @@
 import { changePassword, getAccount, login, logout, patchAccount, prelogin, resetPassword } from './auth.ts'
+import { createHandoff, deleteDevice, listDevices, putDevice, redeemHandoff } from './devices.ts'
 import { type Env, json, Router } from './http.ts'
 import {
   acceptInvite, adminDisable, adminEnable, adminListAccounts, adminListInvites, adminResetLink, adminRevokeInvite, createInvite, listMyInvites, revokeMyInvite,
@@ -34,6 +35,12 @@ const router = new Router()
   .on('POST', '/v1/admin/accounts/:id/reset-link', adminResetLink)
   .on('GET', '/v1/admin/invites', adminListInvites)
   .on('DELETE', '/v1/admin/invites/:id', adminRevokeInvite)
+
+  .on('GET', '/v1/devices', listDevices)
+  .on('PUT', '/v1/devices/:id', putDevice)
+  .on('DELETE', '/v1/devices/:id', deleteDevice)
+  .on('POST', '/v1/devices/:id/handoff', createHandoff)
+  .on('POST', '/v1/handoff/redeem', redeemHandoff)
 
   .on('POST', '/v1/sync/push', push)
   .on('GET', '/v1/sync/pull', pull)
