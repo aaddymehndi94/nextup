@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, LogOut, RefreshCw } from 'lucide-react'
-import { type AccountStatus, api, getActiveProfile, type Invite, setActiveProfile } from '../api.ts'
+import { Copy, LogOut, RefreshCw, X } from 'lucide-react'
+import { type AccountStatus, api, getActiveProfile, type Invite, type LanStatus, setActiveProfile } from '../api.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { chooseProfile, loadProfiles } from '../profiles.ts'
 import { toast } from '../toast.ts'
@@ -155,8 +155,16 @@ export function syncLine (sync: NonNullable<AccountStatus['sync']>, now = Date.n
 function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: AccountStatus) => void }) {
   const [syncing, setSyncing] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  const [lan, setLan] = useState<LanStatus | null>(null)
   const account = status.account!
   const sync = status.sync!
+
+  const refreshLan = useCallback(() => api.lan().then(setLan).catch(() => {}), [])
+  useEffect(() => {
+    void refreshLan()
+    const t = setInterval(() => { void refreshLan() }, 15_000)
+    return () => clearInterval(t)
+  }, [refreshLan])
 
   const syncNow = async () => {
     setSyncing(true)
@@ -181,13 +189,92 @@ function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: 
           <button type="button" className="text-button" onClick={syncNow} disabled={syncing}><RefreshCw aria-hidden />Sync now</button>
         </p>
       </section>
-      <Invites />
-      <section className="account-section" aria-labelledby="leave-h">
+      {lan && !lan.local && (
+        <section className="account-section" aria-label="This phone">
+          <p className="account-note">You’re watching on <strong>{lan.name}</strong>. Account settings, invites and connected phones are changed on that computer.</p>
+        </section>
+      )}
+      {lan?.local && <PhonesAndTvs lan={lan} onLan={setLan} />}
+      {lan?.local !== false && <Invites />}
+      {lan?.local !== false && <section className="account-section" aria-labelledby="leave-h">
         <h2 id="leave-h" className="sr-only">Sign out</h2>
         <button type="button" className="text-button" onClick={signOut} disabled={leaving}><LogOut aria-hidden />{leaving ? 'Signing out…' : 'Sign out'}</button>
         <p className="fine-print">Your profiles and history stay on this computer. They sync again when you sign back in.</p>
-      </section>
+      </section>}
     </>
+  )
+}
+
+// ---- Phones and TVs at home -----------------------------------------------------------------
+
+function PhonesAndTvs ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void }) {
+  const [name, setName] = useState(lan.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { setName(lan.name) }, [lan.name])
+
+  const save = async (body: { enabled?: boolean; name?: string }) => {
+    setBusy(true)
+    setError(null)
+    try { onLan(await api.setLan(body)) } catch (err) { setError((err as Error).message) }
+    setBusy(false)
+  }
+  const saveName = () => { if (name.trim() !== lan.name) void save({ name: name.trim() }) }
+  const remove = async (id: string) => {
+    try {
+      await api.removeLanClient(id)
+      onLan({ ...lan, clients: lan.clients.filter(c => c.id !== id) })
+      toast('Removed. It can connect again through nexttupp.com.')
+    } catch (err) { toast(`Couldn’t remove it. ${(err as Error).message}`) }
+  }
+
+  const now = Date.now()
+  return (
+    <section className="account-section" aria-labelledby="lan-h">
+      <h2 id="lan-h" className="section-title">Phones and TVs</h2>
+      <label className="switch-row">
+        <span className="switch-text">
+          <span className="switch-label">Watch on phones and TVs at home</span>
+          <span className="account-note">Open nexttupp.com on a phone on the same Wi-Fi and sign in: it plays from this computer. The player can also cast to a TV.</span>
+        </span>
+        <input type="checkbox" role="switch" className="switch" checked={lan.enabled} disabled={busy} onChange={e => { void save({ enabled: e.target.checked }) }} />
+      </label>
+      {lan.enabled && (
+        <>
+          <label className="field lan-name">
+            <span className="field-label">This computer’s name, as phones see it</span>
+            <input value={name} maxLength={40} placeholder={lan.defaultName} onChange={e => setName(e.target.value)} onBlur={saveName}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+          </label>
+          <p className="fine-print">
+            {lan.urls.length
+              ? <>Connected phones can also bookmark <span className="lan-url">{lan.urls[0]}</span>.</>
+              : 'Not on a home network right now.'}
+          </p>
+        </>
+      )}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <h3 className="lan-list-title">Phones and TVs that can watch on this computer</h3>
+      {lan.clients.length === 0
+        ? <p className="account-note">None yet.</p>
+        : (
+          <ul className="invite-list" aria-label="Connected phones">
+            {lan.clients.map(c => (
+              <li key={c.id} className="invite-row lan-row">
+                <span className="lan-client">
+                  <span>{c.label}</span>
+                  <span className="invite-state">Connected {new Date(c.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · used {ago(c.lastUsedAt, now)}</span>
+                </span>
+                <button type="button" className="text-button" onClick={() => { void remove(c.id) }} aria-label={`Remove ${c.label}`}><X aria-hidden />Remove</button>
+              </li>
+            ))}
+          </ul>
+          )}
+      <p className="fine-print">
+        While this is on, this computer’s name and its address on your home network go to nexttupp’s service, so your phone can
+        find it. Nothing plays through the service: the video goes straight from this computer to the phone or TV.
+      </p>
+    </section>
   )
 }
 

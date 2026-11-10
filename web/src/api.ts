@@ -37,6 +37,13 @@ export interface Invite {
   createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { email: string; displayName: string | null } | null
 }
 
+// Phones and TVs at home (server/lan). Settings change only on the computer itself (`local`).
+export interface LanClient { id: string; label: string; createdAt: number; lastUsedAt: number; current: boolean }
+export interface LanStatus {
+  local: boolean; signedIn: boolean; enabled: boolean; phonesEnabled: boolean; listening: boolean
+  name: string; defaultName: string; urls: string[]; clients: LanClient[]
+}
+
 export class ApiError extends Error {
   readonly status: number
   constructor (message: string, status: number) {
@@ -159,6 +166,9 @@ export const api = {
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
   invites: () => req<{ invites: Invite[] }>('/api/account/invites'),
   createInvite: () => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', {})),
+  lan: () => req<LanStatus>('/api/lan'),
+  setLan: (body: { enabled?: boolean; name?: string }) => req<LanStatus>('/api/lan', json('PATCH', body)),
+  removeLanClient: (id: string) => req<void>(`/api/lan/clients/${id}`, json('DELETE')),
 
   // Recommendations.
   home: (type?: MediaType) => req<HomeResponse>(`/api/me/home${type ? `?type=${type}` : ''}`),

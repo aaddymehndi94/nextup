@@ -126,6 +126,17 @@ export class CloudClient {
     return this.request<{ applied: Record<string, number>; serverTime: number }>('POST', '/v1/sync/push', { token, body: batch, timeoutMs: 30_000 })
   }
 
+  // Devices and phone handoff (cloud/README.md, "Devices and phone handoff").
+  putDevice (token: string, device: { id: string; name: string; platform: string; lan: boolean; lanUrls: string[] }) {
+    const { id, ...body } = device
+    return this.request<{ device: unknown }>('PUT', `/v1/devices/${id}`, { token, body, timeoutMs: 10_000 })
+  }
+
+  deleteDevice (token: string, id: string) { return this.request<void>('DELETE', `/v1/devices/${id}`, { token, timeoutMs: 5000 }) }
+  redeemHandoff (token: string, code: string, deviceId: string) {
+    return this.request<{ ok: true }>('POST', '/v1/handoff/redeem', { token, body: { code, deviceId }, timeoutMs: 10_000 })
+  }
+
   pull (token: string, since: string, limit = 500) {
     return this.request<PullPage>('GET', `/v1/sync/pull?since=${encodeURIComponent(since)}&limit=${limit}`, { token, timeoutMs: 30_000 })
   }

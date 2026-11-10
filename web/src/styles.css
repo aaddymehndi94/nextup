@@ -1097,6 +1097,20 @@ h1, h2, h3, p { margin: 0; }
 .invite-list { list-style: none; width: 100%; margin: 0.5rem 0 0; padding: 0; border-bottom: 1px solid var(--line); }
 .invite-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 1rem; padding: 0.625rem 0; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .invite-state { color: var(--text-3); }
+.switch-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.25rem; width: 100%; cursor: pointer; }
+.switch-text { display: flex; flex-direction: column; gap: 0.25rem; }
+.switch-label { font-weight: 600; }
+.switch { appearance: none; flex: none; position: relative; width: 2.75rem; height: 1.625rem; margin: 0.125rem 0 0; border-radius: 999px; background: rgb(255 255 255 / 0.16); cursor: pointer; transition: background 0.15s; }
+.switch::after { content: ''; position: absolute; top: 0.1875rem; left: 0.1875rem; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--text); transition: transform 0.15s; }
+.switch:checked { background: #fff; }
+.switch:checked::after { background: var(--on-light); transform: translateX(1.125rem); }
+.switch:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.switch:disabled { opacity: 0.5; }
+.lan-name { width: 100%; }
+.lan-url { color: var(--text-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.lan-list-title { margin-top: 0.5rem; font-size: 0.9375rem; font-weight: 600; }
+.lan-row { align-items: center; }
+.lan-client { display: flex; flex-direction: column; gap: 0.125rem; }
 
 /* ---------- Tablet ---------- */
 @media (max-width: 900px) {

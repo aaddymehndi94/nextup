@@ -45,6 +45,10 @@ export interface SyncOptions {
   now?: () => number
   intervalMs?: number
   debounceMs?: number
+  /** This computer as the cloud's device list shows it; registered on every sync (about once a minute). */
+  device?: () => { id: string; name: string; platform: string; lan: boolean; lanUrls: string[] }
+  /** Called after signing in or out. */
+  onSignInChange?: () => void
 }
 
 const CURSOR_KEY = 'cloud_cursor'
@@ -69,6 +73,9 @@ export class SyncService {
   private running: Promise<void> | null = null
   private again = false
   private timers: { interval?: NodeJS.Timeout; debounce?: NodeJS.Timeout; retry?: NodeJS.Timeout } = {}
+  private readonly device?: SyncOptions['device']
+  private readonly onSignInChange: () => void
+  private deviceError: string | null = null
   /** Local profile → account profile, from the last sign-in's merge. */
   lastMerge: Record<string, string> = {}
 
@@ -81,6 +88,8 @@ export class SyncService {
     this.now = opts.now ?? Date.now
     this.intervalMs = opts.intervalMs ?? 60_000
     this.debounceMs = opts.debounceMs ?? 2000
+    this.device = opts.device
+    this.onSignInChange = opts.onSignInChange ?? (() => {})
     this.session = this.readSession()
   }
 
@@ -156,6 +165,7 @@ export class SyncService {
     this.lastSyncAt = null
     this.error = null
     this.log(`sync: signed in as ${email}`)
+    this.onSignInChange()
     // The first sync matches this device's profiles to the account's. Wait for it a while, so the app can
     // show the merged profiles straight away; a big account keeps going in the background.
     await Promise.race([this.syncNow(), new Promise(resolve => setTimeout(resolve, 20_000).unref())])
@@ -167,6 +177,8 @@ export class SyncService {
     const s = this.session
     if (!s) return this.status()
     await Promise.race([this.syncNow(), new Promise(resolve => setTimeout(resolve, 8000).unref())])
+    // Phones should stop finding this computer.
+    if (this.device) await this.cloud.deleteDevice(s.token, this.device().id).catch(() => {})
     await this.cloud.logout(s.token).catch(() => {})
     this.end(null)
     return this.status()
@@ -183,6 +195,14 @@ export class SyncService {
     clearTimeout(this.timers.debounce)
     rmSync(this.file, { force: true })
     this.db.prepare('DELETE FROM sync_state WHERE key = ?').run(CURSOR_KEY)
+    this.onSignInChange()
+  }
+
+  get signedIn (): boolean { return this.session !== null }
+
+  /** A phone arrived with a handoff code from nexttupp.com: the cloud checks it is for this account and device. */
+  async redeemHandoff (code: string, deviceId: string): Promise<void> {
+    await this.authed(t => this.cloud.redeemHandoff(t, code, deviceId))
   }
 
   private token (): string {
@@ -242,6 +262,8 @@ export class SyncService {
       await this.pushAll(s)
       await this.pullAll(s)
       if (this.session !== s) return
+      await this.heartbeat(s)
+      if (this.session !== s) return
       this.state = 'synced'
       this.lastSyncAt = this.now()
       this.error = null
@@ -260,6 +282,20 @@ export class SyncService {
       this.retryAt = this.now() + wait
       this.later('retry', wait)
       if (this.failures <= 3 || !transient) this.log(`sync: ${e.message}; retrying in ${Math.round(wait / 1000)} s`)
+    }
+  }
+
+  /** Registers this computer with the cloud (name, home-network addresses). Never fails the sync. */
+  private async heartbeat (s: Session): Promise<void> {
+    if (!this.device) return
+    try {
+      await this.cloud.putDevice(s.token, this.device())
+      if (this.deviceError) this.log('sync: device registered again')
+      this.deviceError = null
+    } catch (err) {
+      const message = (err as Error).message
+      if (message !== this.deviceError) this.log(`sync: couldn’t register this device: ${message}`)
+      this.deviceError = message
     }
   }
 

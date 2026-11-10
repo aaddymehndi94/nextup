@@ -23,6 +23,8 @@ import { registerTasteRoutes } from './taste/routes.ts'
 import { RecoService } from './taste/service.ts'
 import { registerAccountRoutes } from './sync/routes.ts'
 import { SyncService } from './sync/service.ts'
+import { registerLanGate, registerLanRoutes } from './lan/routes.ts'
+import { LanService } from './lan/service.ts'
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
@@ -35,7 +37,14 @@ const tasteStore = new SqliteTasteStore(db)
 const itemCache = new ItemCache(db, { baseUrl: config.cinemetaUrl })
 const loadCfSafe = () => loadCf(config.dataDir).catch(err => { app.log.warn(`CF model not loaded: ${(err as Error).message}`); return null })
 const reco = new RecoService({ store: tasteStore, items: itemCache, cf: await loadCfSafe(), log: msg => app.log.info(msg) })
-const sync = new SyncService({ db, store: tasteStore, dataDir: config.dataDir, cloudUrl: config.cloudUrl, log: msg => app.log.info(msg) })
+// Phones and TVs at home (server/lan): a second listener on the home network, behind a cookie gate.
+let lan: LanService | undefined
+const sync = new SyncService({
+  db, store: tasteStore, dataDir: config.dataDir, cloudUrl: config.cloudUrl, log: msg => app.log.info(msg),
+  device: () => lan!.deviceInfo(),
+  onSignInChange: () => { void lan?.refresh() },
+})
+lan = new LanService({ dataDir: config.dataDir, port: config.port, host: config.host, signedIn: () => sync.signedIn, log: msg => app.log.info(msg) })
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
 const streamStarts = new Map<string, Promise<number>>()
@@ -53,6 +62,9 @@ app.setErrorHandler((err: Error & { status?: number; statusCode?: number }, req,
   if (status >= 500) req.log.error(err)
   reply.code(status).send({ error: err.message })
 })
+
+// Before every route: localhost must say so (DNS rebinding), and anything from the network needs a phone's cookie.
+registerLanGate(app, lan)
 
 function session (id: string): Session {
   if (!SESSION_ID.test(id)) throw new HttpError(400, 'Bad session id')
@@ -319,6 +331,7 @@ app.get<{ Querystring: { url?: string } }>('/api/subtitle-cues', async req => {
 // ---- Account and sync (optional) ---------------------------------------------------
 
 registerAccountRoutes(app, sync)
+registerLanRoutes(app, lan, { signedIn: () => sync.signedIn, redeemHandoff: (code, id) => sync.redeemHandoff(code, id), nudge: () => sync.nudge() })
 
 // ---- Profiles, taste and recommendations ----------------------------------------
 
@@ -336,6 +349,7 @@ if (existsSync(config.webDist)) {
 
 const shutdown = async () => {
   sync.stop()
+  lan.stop()
   transcodes.killAll()
   await app.close()
   await engine.destroy()
@@ -349,6 +363,7 @@ await app.listen({ port: config.port, host: config.host })
 app.log.info(`nexttupp server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
 library.resumeAll(msg => app.log.info(msg)).catch(err => app.log.error(err))
 sync.start()
+await lan.start((req, res) => app.routing(req, res))
 
 // Candidate pool for recommendations: Cinemeta catalogs, refreshed twice a day (pages within TTL are skipped).
 const crawl = () => itemCache.crawl(msg => app.log.info(msg)).catch(err => app.log.warn(`catalog crawl: ${(err as Error).message}`))
