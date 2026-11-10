@@ -1,0 +1,7 @@
+node_modules
+dist
+data
+.scratch/*.tmp
+*.log
+.claude/settings.local.json
+.claude/skills/impeccable/scripts/bin/
