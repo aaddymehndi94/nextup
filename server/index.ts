@@ -26,7 +26,8 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, expose
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
 const transcodes = new TranscodeRegistry()
 const library = new Library(config.dataDir, engine)
-const encoder = await detectEncoder()
+const hw = await detectEncoder({ forced: config.encoder, vaapiDevice: config.vaapiDevice, log: msg => app.log.warn(msg) })
+const encoder = hw.device ? `${hw.encoder} (${hw.device})` : hw.encoder
 const db = openDb(join(config.dataDir, 'nexttupp.db'))
 const tasteStore = new SqliteTasteStore(db)
 const itemCache = new ItemCache(db, { baseUrl: config.cinemetaUrl })
@@ -233,7 +234,7 @@ app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; cap
   const audio = req.query.audio !== undefined ? Number(req.query.audio) : undefined
   const plan = choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio)
   const startSec = Math.max(0, Math.min(Number(req.query.t) || 0, Math.max(0, result.durationSec - 1)))
-  const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder })
+  const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder: hw.encoder, hwDevice: hw.device })
   if (plan.copyVideo && startSec > 0) {
     // Runs alongside ffmpeg; both need the same pieces, so this costs no extra waiting.
     const key = startKey(s.id, startSec)

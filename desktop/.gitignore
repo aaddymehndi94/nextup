@@ -1,0 +1,6 @@
+node_modules/
+# Downloaded third-party binaries (ffmpeg/ffprobe), fetched and checksum-verified by scripts/fetch-ffmpeg.mjs
+vendor/
+# Compiled app (main process, bundled server, web build) and installers
+build/
+release/

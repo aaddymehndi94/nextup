@@ -30,6 +30,13 @@ To use it from a phone or TV on the same network: `HOST=0.0.0.0 npm start`, then
 
 The old `NEXTUP_*` names still work as fallbacks.
 
+## Desktop app
+
+`desktop/` packages the server, web app and ffmpeg as an Electron app for people who shouldn't need a
+terminal. `cd desktop && npm install && npm run dist:linux` builds the AppImage and .deb (after `npm install`
+at the root). The server's `NEXTTUPP_WEB_DIR`, `NEXTTUPP_FFMPEG`/`NEXTTUPP_FFPROBE`, `NEXTTUPP_ENCODER` and
+`NEXTTUPP_VAAPI_DEVICE` overrides come from there. Details: [`docs/adr/0005`](docs/adr/0005-desktop-app.md).
+
 ## How it works
 
 ```

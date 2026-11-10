@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClientCaps, ProbeResult } from '../../shared/types.ts'
-import { buildFfmpegArgs, choosePlan } from './plan.ts'
+import { buildFfmpegArgs, choosePlan, encoderCandidates, type Encoder } from './plan.ts'
 
 const chrome: ClientCaps = { h264: true, hevc: false, hevc10: false, av1: true, vp9: true, aac: true, ac3: false, eac3: false, opus: true, mp3: true, flac: true }
 
@@ -94,5 +94,71 @@ describe('buildFfmpegArgs', () => {
     const pr = probe({ container: 'mkv', v: { codec: 'hevc' } })
     const args = buildFfmpegArgs({ ...base, startSec: 0, probe: pr, plan: choosePlan(pr, { ...chrome, hevc: true }, ['en']) })
     expect(args.join(' ')).toContain('-tag:v hvc1')
+  })
+})
+
+describe('encoderCandidates', () => {
+  const names = (platform: string, nodes: string[] = []) => encoderCandidates(platform, nodes).map(c => c.device ? `${c.encoder}@${c.device}` : c.encoder)
+
+  it('tries the hardware encoders for each OS in order, libx264 last', () => {
+    expect(names('darwin')).toEqual(['videotoolbox', 'x264'])
+    expect(names('win32')).toEqual(['nvenc', 'qsv', 'amf', 'x264'])
+    expect(names('linux', ['/dev/dri/renderD128', '/dev/dri/renderD129'])).toEqual(['nvenc', 'vaapi@/dev/dri/renderD128', 'vaapi@/dev/dri/renderD129', 'qsv', 'x264'])
+  })
+
+  it('skips VAAPI on Linux without render nodes', () => {
+    expect(names('linux')).toEqual(['nvenc', 'qsv', 'x264'])
+  })
+})
+
+describe('buildFfmpegArgs per encoder', () => {
+  const hdr4k = probe({ container: 'mkv', v: { codec: 'hevc', width: 3840, height: 2160, pixFmt: 'yuv420p10le', hdr: true } })
+  const plan = choosePlan(hdr4k, chrome, ['en'])
+  const build = (encoder: Encoder, hwDevice?: string) => buildFfmpegArgs({ input: 'http://127.0.0.1:1/raw', startSec: 30, probe: hdr4k, plan, encoder, hwDevice })
+  const vf = (args: string[]) => args[args.indexOf('-vf') + 1]
+
+  it('VAAPI opens the render node before the input and uploads NV12 after the tone-map', () => {
+    const args = build('vaapi', '/dev/dri/renderD129')
+    const i = args.indexOf('-i')
+    expect(args.indexOf('-init_hw_device')).toBeLessThan(i)
+    expect(args[args.indexOf('-init_hw_device') + 1]).toBe('vaapi=va:/dev/dri/renderD129')
+    expect(args.indexOf('-filter_hw_device')).toBeLessThan(i)
+    expect(vf(args)).toMatch(/tonemap=.*zscale=t=bt709:m=bt709:r=tv,format=nv12,hwupload$/)
+    expect(args).toContain('h264_vaapi')
+    expect(args).not.toContain('-hwaccel_output_format')
+  })
+
+  it('NVENC decodes with CUDA and encodes yuv420p', () => {
+    const args = build('nvenc')
+    expect(args.slice(0, args.indexOf('-i'))).toEqual(expect.arrayContaining(['-hwaccel', 'cuda']))
+    expect(vf(args)).toMatch(/format=yuv420p$/)
+    expect(args).toContain('h264_nvenc')
+  })
+
+  it.each([
+    ['qsv', 'h264_qsv', 'format=nv12'],
+    ['amf', 'h264_amf', 'format=nv12'],
+    ['videotoolbox', 'h264_videotoolbox', 'format=nv12'],
+    ['x264', 'libx264', 'format=yuv420p'],
+  ] as const)('%s takes system-memory frames: no device setup, ends the chain with %s', (encoder, codec, last) => {
+    const args = build(encoder)
+    expect(args).toContain(codec)
+    expect(vf(args).endsWith(last)).toBe(true)
+    expect(vf(args)).toContain('tonemap')
+    expect(args).not.toContain('-init_hw_device')
+    expect(args).not.toContain('-hwaccel')
+  })
+
+  it('every encoder keeps a keyframe every 2 s for seekable fragments', () => {
+    for (const e of ['nvenc', 'vaapi', 'qsv', 'amf', 'videotoolbox', 'x264'] as const) {
+      expect(build(e).join(' ')).toContain('-force_key_frames expr:gte(t,n_forced*2)')
+    }
+  })
+
+  it('adds no hardware setup when the video is only copied', () => {
+    const pr = probe({ container: 'mkv' })
+    const args = buildFfmpegArgs({ input: 'x', startSec: 0, probe: pr, plan: choosePlan(pr, chrome, ['en']), encoder: 'vaapi', hwDevice: '/dev/dri/renderD128' })
+    expect(args).not.toContain('-init_hw_device')
+    expect(args).not.toContain('-hwaccel')
   })
 })

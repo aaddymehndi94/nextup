@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import type { ProbeResult, StreamInfo } from '../../shared/types.ts'
-import type { Encoder } from './plan.ts'
+import { config } from '../config.ts'
+import { ENCODERS, encoderArgs, encoderCandidates, type Encoder, type EncoderChoice } from './plan.ts'
 
 interface FfprobeStream {
   index: number
@@ -54,7 +56,7 @@ export function parseProbe (json: { format?: { duration?: string; format_name?: 
 /** Runs ffprobe against a URL (our own range-capable torrent stream). */
 export function probe (url: string, fileName: string, timeoutMs = 120_000): Promise<ProbeResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-rw_timeout', String(timeoutMs * 1000), '-print_format', 'json', '-show_format', '-show_streams', '-i', url])
+    const p = spawn(config.ffprobe, ['-v', 'error', '-rw_timeout', String(timeoutMs * 1000), '-print_format', 'json', '-show_format', '-show_streams', '-i', url])
     let out = ''
     let err = ''
     const timer = setTimeout(() => { p.kill('SIGKILL'); reject(new Error('Timed out reading the video header from the swarm')) }, timeoutMs)
@@ -78,7 +80,7 @@ export function probe (url: string, fileName: string, timeoutMs = 120_000): Prom
 export function findKeyframe (url: string, t: number, container: string, timeoutMs = 60_000): Promise<number> {
   return new Promise((resolve, reject) => {
     const fast = ['mkv', 'mp4', 'webm'].includes(container) ? ['-probesize', '1000000', '-analyzeduration', '0'] : []
-    const p = spawn('ffprobe', ['-v', 'error', ...fast, '-read_intervals', `${t.toFixed(3)}%+#1`, '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', url])
+    const p = spawn(config.ffprobe, ['-v', 'error', ...fast, '-read_intervals', `${t.toFixed(3)}%+#1`, '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', url])
     let out = ''
     const timer = setTimeout(() => { p.kill('SIGKILL'); reject(new Error('keyframe lookup timed out')) }, timeoutMs)
     p.stdout.on('data', d => { out += d })
@@ -91,13 +93,53 @@ export function findKeyframe (url: string, t: number, container: string, timeout
   })
 }
 
-/** Checks once at startup whether NVENC actually works (the encoder can be listed but unusable). */
-export function detectEncoder (): Promise<Encoder> {
+/** A one-second test encode through the same arguments real playback uses: an encoder can be listed but unusable. */
+export function testEncoder (choice: EncoderChoice, ffmpeg = config.ffmpeg, timeoutMs = 15_000): Promise<boolean> {
+  const { global, filters, codec } = encoderArgs(choice)
+  const args = ['-hide_banner', '-loglevel', 'error', ...global, '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:r=24:d=1',
+    '-vf', filters.join(','), ...codec, '-f', 'null', '-']
   return new Promise(resolve => {
-    const p = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=black:s=256x144:d=0.2', '-c:v', 'h264_nvenc', '-f', 'null', '-'])
-    p.on('error', () => resolve('x264'))
-    p.on('close', code => resolve(code === 0 ? 'nvenc' : 'x264'))
+    const p = spawn(ffmpeg, args, { stdio: 'ignore' })
+    const timer = setTimeout(() => p.kill('SIGKILL'), timeoutMs)
+    p.on('error', () => { clearTimeout(timer); resolve(false) })
+    p.on('close', code => { clearTimeout(timer); resolve(code === 0) })
   })
+}
+
+const renderNodes = (): string[] => {
+  try { return readdirSync('/dev/dri').filter(f => /^renderD\d+$/.test(f)).sort().map(f => `/dev/dri/${f}`) } catch { return [] }
+}
+
+/**
+ * Picks the video encoder once at startup: the first hardware encoder for this OS that passes a test encode
+ * (macOS VideoToolbox; Windows NVENC, QSV, AMF; Linux NVENC, VAAPI on each render node, QSV), else libx264.
+ * `forced` (NEXTTUPP_ENCODER) restricts the search to one encoder and uses it even if its test fails.
+ */
+export async function detectEncoder ({ forced, vaapiDevice, platform = process.platform, log = () => {} }: {
+  forced?: string
+  vaapiDevice?: string
+  platform?: string
+  log?: (msg: string) => void
+} = {}): Promise<EncoderChoice> {
+  const nodes = vaapiDevice ? [vaapiDevice] : renderNodes()
+  let candidates = encoderCandidates(platform, nodes)
+  if (forced) {
+    if (!ENCODERS.includes(forced as Encoder)) log(`Unknown encoder "${forced}", ignoring. Known: ${ENCODERS.join(', ')}`)
+    else {
+      const own = candidates.filter(c => c.encoder === forced)
+      candidates = own.length ? own : [{ encoder: forced as Encoder, device: forced === 'vaapi' ? nodes[0] : undefined }]
+    }
+  }
+  for (const c of candidates) {
+    if (c.encoder === 'x264' && !forced) return c
+    if (await testEncoder(c)) return c
+    log(`Encoder ${c.encoder}${c.device ? ` (${c.device})` : ''} failed its test encode`)
+  }
+  if (forced && ENCODERS.includes(forced as Encoder)) {
+    log(`Using forced encoder ${forced} anyway`)
+    return candidates[0]
+  }
+  return { encoder: 'x264' }
 }
 
 /** Keeps a ceiling on concurrent ffmpeg processes; seeking spawns new ones and old ones must die. */
@@ -114,7 +156,7 @@ export class TranscodeRegistry {
       oldest.kill('SIGKILL')
       this.running.delete(oldest)
     }
-    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawn(config.ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     this.running.set(proc, sessionId)
     proc.on('close', () => this.running.delete(proc))
     return proc

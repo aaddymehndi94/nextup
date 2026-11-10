@@ -1,0 +1,38 @@
+# Installers: npm run dist:linux (AppImage + deb, built and tested), npm run dist:win (NSIS, untested).
+appId: app.nexttupp.desktop
+productName: nexttupp
+executableName: nexttupp
+copyright: nexttupp
+# Package the Electron runtime that npm install already fetched and checksum-verified (no second download).
+electronDist: node_modules/electron/dist
+directories:
+  output: release
+  buildResources: resources
+# The app is a handful of files (main.cjs, server.mjs, the web build), so no asar: the server is an ES
+# module run in a utility process and serves the web files with plain fs calls.
+asar: false
+files:
+  - build/**/*
+  - package.json
+extraResources:
+  # Pinned, checksum-verified ffmpeg/ffprobe from scripts/fetch-ffmpeg.mjs.
+  - from: vendor/ffmpeg/${platform}-${arch}
+    to: ffmpeg
+  # Collaborative-filtering model, when the build staged one (CF_BIN=… npm run build).
+  - from: vendor/reco
+    to: reco
+    filter: [cf.bin]
+publish: null
+linux:
+  target: [AppImage, deb]
+  category: AudioVideo
+  icon: resources/icon.png
+  synopsis: Search, pick a torrent, watch.
+  maintainer: nexttupp
+artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target: nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: true
+  perMachine: false

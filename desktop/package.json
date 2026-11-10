@@ -1,0 +1,27 @@
+{
+  "name": "nexttupp",
+  "productName": "nexttupp",
+  "version": "0.1.0",
+  "description": "Search a film or series, pick a torrent, watch it. Everything runs on your own computer.",
+  "private": true,
+  "main": "build/main.cjs",
+  "homepage": "https://example.invalid/nexttupp",
+  "author": "nexttupp",
+  "license": "UNLICENSED",
+  "scripts": {
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist:linux": "node scripts/fetch-ffmpeg.mjs linux-x64 && node scripts/build.mjs && node scripts/dist.mjs --linux",
+    "dist:win": "node scripts/fetch-ffmpeg.mjs win32-x64 && node scripts/build.mjs && node scripts/dist.mjs --win",
+    "verify": "node scripts/verify-appimage.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "electron": "44.9.3",
+    "electron-builder": "26.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
