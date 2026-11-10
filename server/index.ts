@@ -13,10 +13,12 @@ import { buildFfmpegArgs, choosePlan } from './playback/plan.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
 import { fetchCues, listSubtitles } from './subtitles.ts'
+import { Library } from './library.ts'
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
 const transcodes = new TranscodeRegistry()
+const library = new Library(config.dataDir, engine)
 const encoder = await detectEncoder()
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
@@ -141,16 +143,27 @@ app.get<{ Params: { id: string }; Querystring: { caps?: string; audio?: string }
   return { probe: result, plan: choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio) }
 })
 
-app.post<{ Params: { id: string } }>('/api/sessions/:id/pin', async req => {
-  const s = session(req.params.id)
+// ---- Library (downloads kept for offline viewing) -----------------------------
+
+app.get('/api/library', async () => library.list().map(e => {
+  const s = engine.get(e.id)
+  return { ...e, stats: s ? engine.stats(s) : null }
+}))
+
+app.post<{ Body: { sessionId?: string; type?: string; imdbId?: string; streamId?: string; title?: string } }>('/api/library', async req => {
+  const { sessionId, type, imdbId, streamId, title } = req.body ?? {}
+  if (!sessionId || !type || !isType(type) || !imdbId || !IMDB_ID.test(imdbId) || !streamId || !STREAM_ID.test(streamId)) throw new HttpError(400, 'sessionId, type, imdbId and streamId are required')
+  const s = session(sessionId)
   engine.pin(s)
+  const [infoHash, fileIdx] = s.id.split('-')
+  library.add({ id: s.id, infoHash, fileIdx: Number(fileIdx), fileName: s.file.name, title: (title ?? s.title ?? s.file.name).slice(0, 200), type, imdbId, streamId, addedAt: Date.now() })
   return engine.stats(s)
 })
 
-app.delete<{ Params: { id: string } }>('/api/sessions/:id/pin', async req => {
-  const s = session(req.params.id)
-  engine.unpin(s)
-  return engine.stats(s)
+app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/api/library/:id', async (req, reply) => {
+  if (!SESSION_ID.test(req.params.id)) throw new HttpError(400, 'Bad id')
+  await library.remove(req.params.id, req.query.deleteFiles === '1')
+  reply.code(204).send()
 })
 
 app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
@@ -287,3 +300,4 @@ process.on('SIGTERM', shutdown)
 
 await app.listen({ port: config.port, host: config.host })
 app.log.info(`nextup server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
+library.resumeAll(msg => app.log.info(msg)).catch(err => app.log.error(err))

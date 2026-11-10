@@ -300,7 +300,9 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
   const togglePin = () => {
     if (!sessionId || !stats) return
-    ;(stats.pinned ? api.unpin(sessionId) : api.pin(sessionId)).then(setStats).catch(() => {})
+    const done = () => api.stats(sessionId).then(setStats).catch(() => {})
+    if (stats.pinned) api.unkeep(sessionId, false).then(done).catch(() => {})
+    else api.keep({ sessionId, type, imdbId, streamId, title: name }).then(setStats).catch(() => {})
   }
 
   const showOverlay = phase !== 'ready' || (buffering && !error)

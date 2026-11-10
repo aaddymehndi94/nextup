@@ -5,6 +5,7 @@ import { api } from '../api.ts'
 import { navigate } from '../router.ts'
 import { PosterCard } from '../components/PosterCard.tsx'
 import { Wordmark } from '../components/Wordmark.tsx'
+import { Downloads } from '../components/Downloads.tsx'
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; message: string }
 
@@ -108,6 +109,7 @@ export function Home ({ initialQuery }: { initialQuery: string }) {
         </section>
       ) : (
         <>
+          <Downloads />
           <Row title="Popular films" load={movies} />
           <Row title="Popular series" load={series} />
         </>

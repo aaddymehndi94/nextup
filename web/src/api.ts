@@ -6,6 +6,11 @@ import type {
 export interface Stats extends SessionStats { ranges: Array<[number, number]> }
 export interface SubtitleOption { id: string; lang: string; label: string; release?: string; url: string; match: number }
 export interface Cue { start: number; end: number; text: string }
+export interface LibraryItem {
+  id: string; infoHash: string; fileIdx: number; fileName: string; title: string
+  type: MediaType; imdbId: string; streamId: string; addedAt: number
+  stats: Stats | null
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -48,8 +53,9 @@ export const api = {
   probe: (id: string, caps: ClientCaps, audio?: number) =>
     req<ProbeResponse>(`/api/sessions/${id}/probe?caps=${capsParam(caps)}${audio !== undefined ? `&audio=${audio}` : ''}`),
   streamStart: (id: string, t: number) => req<{ start: number; exact: boolean }>(`/api/sessions/${id}/stream-start?t=${t.toFixed(2)}`),
-  pin: (id: string) => req<Stats>(`/api/sessions/${id}/pin`, json('POST')),
-  unpin: (id: string) => req<Stats>(`/api/sessions/${id}/pin`, json('DELETE')),
+  library: () => req<LibraryItem[]>('/api/library'),
+  keep: (body: { sessionId: string; type: MediaType; imdbId: string; streamId: string; title: string }) => req<Stats>('/api/library', json('POST', body)),
+  unkeep: (id: string, deleteFiles: boolean) => req<void>(`/api/library/${id}${deleteFiles ? '?deleteFiles=1' : ''}`, json('DELETE')),
   subtitles: (type: MediaType, streamId: string, fileName?: string) =>
     req<SubtitleOption[]>(`/api/subtitles/${type}/${encodeURIComponent(streamId)}${fileName ? `?file=${encodeURIComponent(fileName)}` : ''}`),
   cues: (url: string) => req<Cue[]>(`/api/subtitle-cues?url=${encodeURIComponent(url)}`),
