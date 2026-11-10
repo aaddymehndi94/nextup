@@ -44,6 +44,29 @@ export interface LanStatus {
   name: string; defaultName: string; urls: string[]; clients: LanClient[]
 }
 
+// Casting to a TV (server/cast). The computer talks to the TV; any page of the app can follow and control it.
+export interface CastDevice { id: string; name: string; model: string }
+export type CastState = 'connecting' | 'loading' | 'buffering' | 'playing' | 'paused' | 'ended' | 'stopped' | 'error'
+export interface CastStatus {
+  active: boolean
+  device?: { id: string; name: string }
+  sessionId?: string
+  title?: string
+  streamId?: string
+  state?: CastState
+  position?: number
+  duration?: number
+  volume?: number | null
+  muted?: boolean
+  mode?: 'direct' | 'remux' | 'transcode'
+  error?: string
+}
+export interface CastStartRequest {
+  deviceId: string; sessionId: string; t: number; audio?: number
+  subtitle?: { url: string; lang?: string; label?: string; offset?: number } | null
+  title?: string; streamId?: string; image?: string
+}
+
 export class ApiError extends Error {
   readonly status: number
   constructor (message: string, status: number) {
@@ -166,6 +189,11 @@ export const api = {
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
   invites: () => req<{ invites: Invite[] }>('/api/account/invites'),
   createInvite: () => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', {})),
+  castDevices: (refresh = false) => req<{ devices: CastDevice[] }>(`/api/cast/devices${refresh ? '?refresh=1' : ''}`),
+  cast: () => req<CastStatus>('/api/cast'),
+  castStart: (body: CastStartRequest) => req<CastStatus>('/api/cast', json('POST', body)),
+  castControl: (body: { action: 'play' | 'pause' | 'seek' | 'volume'; t?: number; level?: number; muted?: boolean }) => req<CastStatus>('/api/cast/control', json('POST', body)),
+  castStop: () => req<CastStatus>('/api/cast/stop', json('POST', {})),
   lan: () => req<LanStatus>('/api/lan'),
   setLan: (body: { enabled?: boolean; name?: string }) => req<LanStatus>('/api/lan', json('PATCH', body)),
   removeLanClient: (id: string) => req<void>(`/api/lan/clients/${id}`, json('DELETE')),

@@ -797,6 +797,26 @@ h1, h2, h3, p { margin: 0; }
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.6);
 }
 
+/* Casting: the TV plays it; this screen is the remote. */
+.is-casting .player-video { visibility: hidden; }
+.cast-screen { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; padding: var(--gutter); background: #000; }
+.cast-screen::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(ellipse 70% 60% at 50% 45%, rgb(0 0 0 / 0.3), rgb(0 0 0 / 0.9));
+}
+.cast-card { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; max-width: 30rem; margin-bottom: 8rem; text-align: center; }
+.cast-tv { width: 3rem; height: 3rem; stroke-width: 1.5; color: rgb(255 255 255 / 0.85); }
+.cast-line { font-size: clamp(1.125rem, 2.4vw, 1.5rem); font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; }
+.cast-card .button { margin-top: 0.5rem; }
+/* Phones hide the bar's play and skip buttons (they sit mid-screen there), so the remote carries its own. */
+.cast-transport { display: none; align-items: center; gap: clamp(1.5rem, 8vw, 3rem); margin: 0.75rem 0 0.25rem; }
+.cast-transport .icon-button { width: 3.25rem; height: 3.25rem; }
+.cast-transport .icon-button svg { width: 1.75rem; height: 1.75rem; }
+.cast-transport .icon-button.play { width: 4.25rem; height: 4.25rem; background: rgb(255 255 255 / 0.16); }
+.cast-transport .icon-button.play svg { width: 2rem; height: 2rem; }
+.panel-icon { width: 1.25rem; height: 1.25rem; flex: none; color: var(--text-2); }
+.panel-item:disabled { opacity: 0.55; cursor: default; }
+.cast-scanning { display: flex; align-items: center; gap: 0.625rem; }
 .player-overlay { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; padding: var(--gutter); background: #000; }
 .player-overlay:not(.light)::before {
   content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
@@ -1216,6 +1236,7 @@ h1, h2, h3, p { margin: 0; }
 @media (pointer: coarse), (max-width: 640px) {
   .center-controls { display: flex; }
   .controls .play, .controls .skip { display: none; }
+  .cast-transport { display: flex; }
 }
 
 /* ---------- TV / large screens ---------- */

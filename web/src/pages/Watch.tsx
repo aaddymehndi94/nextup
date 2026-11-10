@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, AudioLines, Captions, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX, X,
+  ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Tv, Volume2, VolumeX, X,
 } from 'lucide-react'
 import type { MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
-import { api, capsParam, getActiveProfile, type Cue, type Stats, type SubtitleOption } from '../api.ts'
+import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption } from '../api.ts'
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { navigate } from '../router.ts'
 import { readKey, readSessionKey, writeKey } from '../storage.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
+import { toast } from '../toast.ts'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
@@ -49,6 +50,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const streamId = query.get('s') ?? imdbId
   const name = query.get('n') ?? ''
   const caps = useMemo(detectCaps, [])
+  const backdrop = imdbId ? `https://images.metahub.space/background/large/${imdbId}/img` : undefined
 
   const video = useRef<HTMLVideoElement>(null)
   const [phase, setPhase] = useState<Phase>('connecting')
@@ -72,7 +74,15 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const [volume, setVolume] = useState(1)
   const [fullscreen, setFullscreen] = useState(false)
   const [chrome, setChrome] = useState(true)
-  const [panel, setPanel] = useState<'none' | 'audio' | 'subs' | 'info'>('none')
+  const [panel, setPanel] = useState<'none' | 'audio' | 'subs' | 'info' | 'cast'>('none')
+  // Casting: the computer plays this on a TV and the page becomes its remote.
+  const [cast, setCast] = useState<CastStatus | null>(null)
+  const castRef = useRef<CastStatus | null>(null)
+  castRef.current = cast
+  // The TV being connected to, until the computer says it's playing there.
+  const [castPending, setCastPending] = useState<CastDevice | null>(null)
+  const [castDevices, setCastDevices] = useState<CastDevice[] | null>(null)
+  const [castScanning, setCastScanning] = useState(false)
   const [audioTrack, setAudioTrack] = useState<number | undefined>(undefined)
   const [resumedFrom, setResumedFrom] = useState<number | null>(null)
 
@@ -84,6 +94,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const sessionId = stats?.id
   const duration = info?.probe.durationSec ?? 0
   const mode = info?.plan.mode
+  const remote = Boolean(cast?.active && cast.sessionId === sessionId)
+  const casting = remote || castPending !== null
 
   // Where this profile left off, asked for straight away so it's known by the time the file is.
   const savedOnServer = useRef<Promise<WatchProgress | null | undefined> | null>(null)
@@ -135,7 +147,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const usesConversion = (audio: number | undefined) => mode !== 'direct' || (audio !== undefined && audio !== 0 && info!.probe.audio.length > 1)
 
   /** Starts (or restarts) the converted stream at film time t. */
-  const startStream = useCallback((t: number, audio: number | undefined) => {
+  const startStream = useCallback((t: number, audio: number | undefined, autoplay = true) => {
     const v = video.current
     if (!v || !sessionId) return
     streamStart.current = t
@@ -145,10 +157,26 @@ export function Watch ({ query }: { query: URLSearchParams }) {
         if (streamStart.current === t) { origin.current = r.start; setTime(r.start + v.currentTime) }
       }).catch(() => {})
     }
-    setBuffering(true)
+    setBuffering(autoplay)
     v.src = streamUrl(t, audio)
-    v.play().catch(() => {})
+    if (autoplay) v.play().catch(() => {})
   }, [sessionId, streamUrl, info])
+
+  /** Plays here at film time t: the file itself when the browser can, else the converted stream. */
+  const attachLocal = useCallback((t: number, audio: number | undefined, autoplay = true) => {
+    const v = video.current
+    if (!v || !sessionId || !info) return
+    if (info.plan.mode === 'direct' && !audio) {
+      origin.current = 0
+      v.src = `/stream/${sessionId}/raw`
+      if (t) v.currentTime = t
+      if (autoplay) v.play().catch(() => {})
+      else setTime(t)
+    } else {
+      startStream(t, audio, autoplay)
+      if (!autoplay) setTime(t)
+    }
+  }, [sessionId, info, startStream])
 
   // 4. Attach the source once we know the plan, resuming where the viewer left off: the profile's position on
   //    the server first; this browser's own record only when the server has none (and it was this profile's)
@@ -158,21 +186,17 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (phase !== 'ready' || !info || !v || !sessionId) return
     let live = true
     const wait = new Promise<undefined>(resolve => setTimeout(resolve, 1500, undefined))
-    Promise.race([savedOnServer.current!, wait]).then(server => {
+    // Already casting this (from another screen, or before a reload): be the remote, don't play here too.
+    const casting = api.cast().catch(() => null)
+    Promise.all([Promise.race([savedOnServer.current!, wait]), casting]).then(([server, c]) => {
       if (!live) return
+      if (c?.active && c.sessionId === sessionId) { played.current = true; follow(c); setBuffering(false); return }
       const local = loadProgress(streamId)
       const mine = local && (local.p === undefined || local.p === getActiveProfile())
       const at = server ? (server.completed ? 0 : server.position) : server === null ? (mine ? local!.t : 0) : local?.t ?? 0
       const resumeAt = at > 30 && at < info.probe.durationSec - 90 ? at : 0
       if (resumeAt) setResumedFrom(resumeAt)
-      if (info.plan.mode === 'direct') {
-        origin.current = 0
-        v.src = `/stream/${sessionId}/raw`
-        if (resumeAt) v.currentTime = resumeAt
-        v.play().catch(() => {})
-      } else {
-        startStream(resumeAt, info.plan.audioTrack)
-      }
+      attachLocal(resumeAt, info.plan.mode === 'direct' ? undefined : info.plan.audioTrack)
     })
     return () => { live = false }
     // Only when the plan first arrives.
@@ -195,7 +219,9 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     const d = durationRef.current
     if (!d || !IMDB_ID.test(imdbId) || !STREAM_ID.test(streamId)) return
     const v = video.current
-    if (v && v.src && v.readyState > 0) lastPosition.current = origin.current + v.currentTime
+    const c = castRef.current
+    if (c?.active && typeof c.position === 'number') lastPosition.current = c.position
+    else if (v && v.src && v.readyState > 0) lastPosition.current = origin.current + v.currentTime
     const position = Math.max(0, Math.min(lastPosition.current, d))
     const prev = lastSent.current
     if (prev && Math.abs(prev.position - position) < 1 && Date.now() - prev.at < 5000) return
@@ -210,6 +236,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => {
     if (phase !== 'ready') return
     const id = setInterval(() => {
+      const c = castRef.current
+      if (c?.active) { if (c.state === 'playing') report(); return }
       const v = video.current
       if (v && !v.paused && !v.seeking && !seekPending.current) report()
     }, REPORT_EVERY_MS)
@@ -229,13 +257,19 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     }
   }, [])
 
-  const now = () => origin.current + (video.current?.currentTime ?? 0)
+  const timeRef = useRef(0)
+  timeRef.current = time
+  const now = () => (castRef.current?.active ? timeRef.current : origin.current + (video.current?.currentTime ?? 0))
 
   const seekTo = useCallback((t: number) => {
     const v = video.current
     if (!v || !duration) return
     t = Math.max(0, Math.min(t, duration - 1))
     setTime(t)
+    if (castRef.current?.active) {
+      api.castControl({ action: 'seek', t }).then(c => { follow(c); played.current = true; reportRef.current() }).catch(err => toast(err.message))
+      return
+    }
     seekPending.current = true
     if (!usesConversion(audioTrack)) { v.currentTime = t; return }
     const local = t - origin.current
@@ -247,10 +281,111 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   }, [duration, audioTrack, startStream, mode])
 
   const togglePlay = useCallback(() => {
+    const c = castRef.current
+    if (c?.active) {
+      api.castControl({ action: c.state === 'paused' ? 'play' : 'pause' }).then(next => { follow(next); reportRef.current() }).catch(err => toast(err.message))
+      return
+    }
     const v = video.current
     if (!v) return
     if (v.paused) v.play().catch(() => {}); else v.pause()
   }, [])
+
+  // ---- Casting -----------------------------------------------------------------------------------------
+  const follow = useCallback((c: CastStatus) => {
+    setCast(c)
+    if (typeof c.position === 'number') setTime(c.position)
+    setPlaying(c.state === 'playing')
+    if (typeof c.volume === 'number') setVolume(c.volume)
+    setMuted(Boolean(c.muted))
+  }, [])
+
+  /** Back to playing here, paused where the TV was. */
+  const leaveRemote = useCallback((last: CastStatus, note?: string) => {
+    const at = typeof last.position === 'number' ? last.position : timeRef.current
+    setCast(null)
+    setCastPending(null)
+    lastPosition.current = at
+    reportRef.current()
+    const v = video.current
+    if (v) { setVolume(v.volume); setMuted(v.muted) }
+    setPlaying(false)
+    attachLocal(last.state === 'ended' ? 0 : at, audioTrack, false)
+    if (note) toast(note)
+  }, [attachLocal, audioTrack])
+
+  const castBody = (deviceId: string, t: number, audio: number | undefined, sub: SubtitleOption | null, offset: number) => ({
+    deviceId, sessionId: sessionId!, t, audio,
+    subtitle: sub ? { url: sub.url, lang: /^[a-z]{2,3}$/.test(sub.lang) ? sub.lang : undefined, label: sub.label.slice(0, 60), offset } : null,
+    title: name || undefined,
+    streamId: STREAM_ID.test(streamId) ? streamId : undefined,
+    image: backdrop,
+  })
+
+  const startCast = (device: CastDevice) => {
+    if (!sessionId) return
+    setPanel('none')
+    const v = video.current
+    const wasPlaying = Boolean(v && !v.paused)
+    const t = now()
+    if (v) { v.pause(); v.removeAttribute('src'); v.load() }
+    setBuffering(false)
+    setCastPending(device)
+    api.castStart(castBody(device.id, t, audioTrack, subChoice, subOffset))
+      .then(c => { played.current = true; follow(c); setCastPending(null) })
+      .catch(err => {
+        setCastPending(null)
+        attachLocal(t, audioTrack, wasPlaying)
+        toast(err.message || 'Couldn’t play on that TV')
+      })
+  }
+
+  /** Same TV, same place, new audio or subtitles: the TV reloads the film. */
+  const recast = (audio: number | undefined, sub: SubtitleOption | null) => {
+    const c = castRef.current
+    if (!c?.active || !c.device) return
+    const device = { id: c.device.id, name: c.device.name, model: '' }
+    setCastPending(device)
+    api.castStart(castBody(device.id, timeRef.current, audio, sub, 0))
+      .then(next => { follow(next); setCastPending(null) })
+      .catch(err => { setCastPending(null); leaveRemote(c, err.message || 'The TV stopped playing') })
+  }
+
+  const stopCast = () => {
+    api.castStop().then(last => leaveRemote(last)).catch(err => toast(err.message))
+  }
+
+  // While casting, follow the TV (and notice when it finishes, fails, or another screen stops it).
+  useEffect(() => {
+    if (!remote) return
+    const id = setInterval(() => {
+      if (document.hidden || castPending) return
+      api.cast().then(c => {
+        if (castRef.current?.sessionId !== sessionId || !castRef.current?.active) return
+        if (c.active && c.sessionId === sessionId) { follow(c); return }
+        const last = { ...castRef.current, ...(c.sessionId === sessionId ? c : {}) }
+        const tv = castRef.current.device?.name ?? 'the TV'
+        leaveRemote(last, c.state === 'ended' ? `Finished on ${tv}`
+          : c.state === 'error' ? (c.error || `${tv} stopped playing`)
+            : `Stopped playing on ${tv}`)
+      }).catch(() => {})
+    }, 1000)
+    return () => clearInterval(id)
+  }, [remote, castPending, sessionId, follow, leaveRemote])
+
+  const openCastPanel = () => {
+    if (panel === 'cast') { setPanel('none'); return }
+    setPanel('cast')
+    setCastScanning(true)
+    api.castDevices().then(r => setCastDevices(d => (d && d.length > r.devices.length ? d : r.devices))).catch(() => {})
+    api.castDevices(true).then(r => setCastDevices(r.devices)).catch(() => setCastDevices(d => d ?? [])).finally(() => setCastScanning(false))
+  }
+
+  const setRemoteVolume = (body: { level?: number; muted?: boolean }) => {
+    if (body.level !== undefined) setVolume(body.level)
+    if (body.muted !== undefined) setMuted(body.muted)
+    api.castControl({ action: 'volume', ...body }).then(follow).catch(err => toast(err.message))
+  }
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
@@ -337,6 +472,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     setSubOffset(0)
     writeKey('subs-lang', s ? s.lang : null)
     setPanel('none')
+    if (castRef.current?.active) recast(audioTrack, s)
   }
 
   const activeCue = useMemo(() => {
@@ -347,6 +483,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const chooseAudio = (i: number) => {
     setAudioTrack(i)
     setPanel('none')
+    if (castRef.current?.active) { recast(i, subChoice); return }
     const t = now()
     if (mode === 'direct' && i === 0) {
       const v = video.current!
@@ -383,6 +520,13 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       if (k === ' ' || k === 'k') { e.preventDefault(); togglePlay() }
       else if (k === 'arrowright' || k === 'l') { e.preventDefault(); seekTo(now() + 10) }
       else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); seekTo(now() - 10) }
+      else if (castRef.current?.active) {
+        const c = castRef.current
+        const level = typeof c.volume === 'number' ? c.volume : 0.5
+        if (k === 'm') setRemoteVolume({ muted: !c.muted })
+        else if (k === 'arrowup') { e.preventDefault(); setRemoteVolume({ level: Math.min(1, Math.round((level + 0.1) * 20) / 20) }) }
+        else if (k === 'arrowdown') { e.preventDefault(); setRemoteVolume({ level: Math.max(0, Math.round((level - 0.1) * 20) / 20) }) }
+      }
       else if (k === 'f') toggleFullscreen()
       else if (k === 'm') v.muted = !v.muted
       else if (k === 'arrowup') { e.preventDefault(); v.volume = Math.min(1, v.volume + 0.1) }
@@ -423,25 +567,48 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     ? <button className="button primary" onClick={leave}>Back</button>
     : <button className="button secondary" disabled={later === 'saving'} onClick={downloadLater}><Download aria-hidden />Download to watch later</button>
 
-  const showOverlay = phase !== 'ready' || (buffering && !error)
+  const showOverlay = phase !== 'ready' || (buffering && !error && !casting)
   const elapsed = Math.round((Date.now() - phaseStarted) / 1000)
-  const backdrop = imdbId ? `https://images.metahub.space/background/large/${imdbId}/img` : undefined
   const logo = imdbId ? `https://images.metahub.space/logo/medium/${imdbId}/img` : undefined
   // "Show · S1E1 Pilot" → title and episode line.
   const [mainTitle, ...rest] = name.split(' · ')
   const episodeLine = rest.join(' · ')
   useDocumentTitle(mainTitle || undefined)
   const togglePanel = (p: 'audio' | 'subs' | 'info') => setPanel(cur => (cur === p ? 'none' : p))
+  const castName = castPending?.name ?? cast?.device?.name ?? 'the TV'
+  const castLine = castPending ? `Connecting to ${castName}…`
+    : cast?.state === 'paused' ? `Paused on ${castName}`
+      : cast?.state === 'loading' || cast?.state === 'buffering' || cast?.state === 'connecting' ? `Loading on ${castName}…`
+        : `Playing on ${castName}`
 
   return (
     <div
-      className={`player${chrome || !playing || panel !== 'none' ? ' show-chrome' : ''}${phase === 'ready' ? ' is-ready' : ''}`}
+      className={`player${chrome || !playing || panel !== 'none' || casting ? ' show-chrome' : ''}${phase === 'ready' ? ' is-ready' : ''}${casting ? ' is-casting' : ''}`}
       onMouseMove={poke}
       onTouchStart={poke}
     >
       <video ref={video} className="player-video" playsInline onClick={() => { if (panel !== 'none') setPanel('none'); else togglePlay() }} onDoubleClick={toggleFullscreen} />
 
-      {activeCue && <div className="subtitle" aria-live="off"><span>{activeCue.text}</span></div>}
+      {activeCue && !casting && <div className="subtitle" aria-live="off"><span>{activeCue.text}</span></div>}
+
+      {casting && (
+        <div className="cast-screen">
+          {backdrop && <img className="overlay-backdrop" src={backdrop} alt="" />}
+          <div className="cast-card" role="status">
+            <Tv className="cast-tv" aria-hidden />
+            <p className="cast-line">{castLine}</p>
+            <div className="cast-transport">
+              <button className="icon-button" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds" disabled={castPending !== null}><RotateCcw aria-hidden /></button>
+              <button className="icon-button play" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'} disabled={castPending !== null}>
+                {playing ? <Pause aria-hidden fill="currentColor" /> : <Play aria-hidden fill="currentColor" />}
+              </button>
+              <button className="icon-button" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds" disabled={castPending !== null}><RotateCw aria-hidden /></button>
+            </div>
+            {cast?.mode && cast.mode !== 'direct' && !castPending && <p className="overlay-hint">{cast.mode === 'transcode' ? 'Converting the video for the TV' : 'Repackaging the file for the TV'}</p>}
+            <button className="button secondary" onClick={stopCast} disabled={Boolean(castPending)}>Stop casting</button>
+          </div>
+        </div>
+      )}
 
       {showOverlay && (
         <div className={`player-overlay${phase === 'ready' ? ' light' : ''}`}>
@@ -489,14 +656,14 @@ export function Watch ({ query }: { query: URLSearchParams }) {
         <button className="round-button" onClick={leave} aria-label="Back"><ArrowLeft aria-hidden /></button>
       </div>
 
-      {resumedFrom !== null && phase === 'ready' && time - resumedFrom < 8 && (
+      {resumedFrom !== null && phase === 'ready' && !casting && time - resumedFrom < 8 && (
         <div className="toast" role="status">
           Resumed at <span className="tabular">{clock(resumedFrom)}</span>
           <button className="link" onClick={() => { setResumedFrom(null); seekTo(0) }}>Start over</button>
         </div>
       )}
 
-      {phase === 'ready' && !showOverlay && (
+      {phase === 'ready' && !showOverlay && !casting && (
         <div className="center-controls">
           <button className="icon-button" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds"><RotateCcw aria-hidden /></button>
           <button className="icon-button play" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
@@ -527,12 +694,16 @@ export function Watch ({ query }: { query: URLSearchParams }) {
                 <button className="icon-button skip" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds"><RotateCcw aria-hidden /></button>
                 <button className="icon-button skip" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds"><RotateCw aria-hidden /></button>
                 <div className="volume">
-                  <button className="icon-button" onClick={() => { if (video.current) video.current.muted = !video.current.muted }} aria-label={muted ? 'Unmute' : 'Mute'}>
+                  <button className="icon-button" onClick={() => { if (remote) setRemoteVolume({ muted: !muted }); else if (video.current) video.current.muted = !video.current.muted }} aria-label={muted ? 'Unmute' : 'Mute'} disabled={castPending !== null}>
                     {muted || volume === 0 ? <VolumeX aria-hidden /> : <Volume2 aria-hidden />}
                   </button>
-                  <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="Volume"
+                  <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label={remote ? 'TV volume' : 'Volume'}
                     style={{ '--fill': `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties}
-                    onChange={e => { const v = video.current; if (v) { v.volume = Number(e.target.value); v.muted = false } }} />
+                    onChange={e => {
+                      const level = Number(e.target.value)
+                      if (remote) { setRemoteVolume({ level, ...(muted ? { muted: false } : {}) }); return }
+                      const v = video.current; if (v) { v.volume = level; v.muted = false }
+                    }} />
                 </div>
                 <span className="time">{clock(time)} <span className="muted">/ {clock(duration)}</span></span>
               </div>
@@ -550,9 +721,12 @@ export function Watch ({ query }: { query: URLSearchParams }) {
                 )}
                 <button className={`icon-button${subChoice ? ' on' : ''}${panel === 'subs' ? ' open' : ''}`} onClick={() => togglePanel('subs')} aria-label="Subtitles" aria-expanded={panel === 'subs'}><Captions aria-hidden /></button>
                 <button className={`icon-button${panel === 'info' ? ' open' : ''}`} onClick={() => togglePanel('info')} aria-label="Stream info" aria-expanded={panel === 'info'}><Info aria-hidden /></button>
-                <button className="icon-button" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}>
-                  {fullscreen ? <Minimize aria-hidden /> : <Maximize aria-hidden />}
-                </button>
+                <button className={`icon-button${casting ? ' on' : ''}${panel === 'cast' ? ' open' : ''}`} onClick={openCastPanel} aria-label={casting ? `Casting to ${castName}` : 'Cast to a TV'} aria-expanded={panel === 'cast'}><Cast aria-hidden /></button>
+                {!casting && (
+                  <button className="icon-button" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}>
+                    {fullscreen ? <Minimize aria-hidden /> : <Maximize aria-hidden />}
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -595,7 +769,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </button>
             ))}
           </div>
-          {subChoice && (
+          {subChoice && !casting && (
             <div className="sub-offset">
               <span>Timing</span>
               <span className="stepper">
@@ -605,6 +779,38 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {panel === 'cast' && (
+        <div className="panel" role="dialog" aria-label="Cast to a TV">
+          <PanelHead title="Play on a TV" onClose={() => setPanel('none')} />
+          <div className="panel-body">
+            {casting && (
+              <button className="panel-item" onClick={() => { setPanel('none'); stopCast() }} disabled={Boolean(castPending)}>
+                <span className="panel-item-main">
+                  <span className="panel-item-label">Stop casting</span>
+                  <span className="panel-item-sub">Keep watching here, from the same place</span>
+                </span>
+              </button>
+            )}
+            {(castDevices ?? []).map(d => {
+              const current = casting && (castPending?.id ?? cast?.device?.id) === d.id
+              return (
+                <button key={d.id} className={`panel-item${current ? ' active' : ''}`} onClick={() => { if (!current) startCast(d) }} aria-pressed={current} disabled={Boolean(castPending)}>
+                  <Tv className="panel-icon" aria-hidden />
+                  <span className="panel-item-main">
+                    <span className="panel-item-label">{d.name}</span>
+                    {d.model && <span className="panel-item-sub">{d.model}</span>}
+                  </span>
+                  {current && <Check className="panel-check" aria-hidden />}
+                </button>
+              )
+            })}
+            {castScanning
+              ? <p className="panel-empty cast-scanning"><span className="spinner" aria-hidden />Looking for TVs…</p>
+              : castDevices && castDevices.length === 0 && <p className="panel-empty">No TVs found. Turn the TV on and check it's on the same Wi-Fi as this computer.</p>}
+          </div>
         </div>
       )}
 
