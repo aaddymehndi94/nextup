@@ -2,7 +2,7 @@
 // cold start → health → search → play Night of the Living Dead (public domain) → a converted stream through
 // the bundled ffmpeg → data in the app-data directory → closing the window stops the server and ffmpeg.
 //
-//   node scripts/verify-appimage.mjs [release/nexttupp-0.1.0-x86_64.AppImage]
+//   node scripts/verify-appimage.mjs [release/nexttupp-linux-x86_64.AppImage]
 //
 // Uses a throwaway XDG_CONFIG_HOME, so app.getPath('userData') is <scratch>/config/nexttupp and the owner's
 // real ~/.config is untouched. puppeteer-core resolves from the repo root's node_modules.
