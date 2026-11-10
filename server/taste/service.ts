@@ -172,6 +172,7 @@ export class RecoService {
     return {
       items: onboardingItems(input.index, input.snapshot, input.now, input.seed, 24),
       rated: input.snapshot.ratings.length,
+      positives: strength(input.signals).positives,
       target: COLD_START_POSITIVES,
     }
   }

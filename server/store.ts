@@ -1,7 +1,7 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite'
 import type { DismissReason, MediaType, Profile, Rating, TitleState, WatchProgress } from '../shared/types.ts'
 import { transaction, uuidv7 } from './db.ts'
-import { isCompleted } from './reco/signals.ts'
+import { ACCIDENTAL_SEC, isCompleted } from './reco/signals.ts'
 import type { Impression, ItemRef, ProgressRow, TasteSnapshot } from './reco/types.ts'
 
 export type { Impression, ItemRef, ProgressRow, TasteSnapshot }
@@ -176,6 +176,7 @@ export class SqliteTasteStore implements TasteStore {
     const season = s !== undefined ? Number(s) : null
     const episode = e !== undefined ? Number(e) : null
     let completedNow = false
+    let continuesNow = false
     let row: ProgressRow
     transaction(this.db, () => {
       const prev = this.q('SELECT * FROM progress WHERE profile_id = ? AND stream_id = ?').get(profileId, input.streamId) as Row | undefined
@@ -191,6 +192,11 @@ export class SqliteTasteStore implements TasteStore {
       const wasCompleted = !fresh && prev.completed_at !== null
       const completed = wasCompleted || isCompleted(position, input.duration, watched)
       completedNow = completed && !wasCompleted
+      // Continue watching lists a title once it has two minutes of real playback and 1% of it, which is
+      // usually a later ping than the first; Home needs to hear about that one too.
+      const continues = (w: number, pos: number, dur: number) => w >= ACCIDENTAL_SEC && dur > 0 && pos / dur >= 0.01
+      continuesNow = continues(watched, position, input.duration) &&
+        (fresh || Number(prev.hidden) === 1 || !continues(Number(prev.watched_sec), Number(prev.position), Number(prev.duration)))
       const completedAt = wasCompleted ? Number(prev.completed_at) : completed ? at : null
       const startedAt = fresh ? at : Number(prev.started_at)
       if (fresh && prev) maxPos = position
@@ -214,7 +220,7 @@ export class SqliteTasteStore implements TasteStore {
       row = this.progressRow(this.q('SELECT * FROM progress WHERE profile_id = ? AND stream_id = ?').get(profileId, input.streamId) as Row)
     })
     // Pings are frequent; only state changes that matter to recommendations notify.
-    if (completedNow || row!.startedAt === at) this.changed(profileId)
+    if (completedNow || continuesNow || row!.startedAt === at) this.changed(profileId)
     return progressOf(row!)
   }
 

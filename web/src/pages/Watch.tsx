@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, AudioLines, Captions, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX, X,
 } from 'lucide-react'
-import type { MediaType, ProbeResponse } from '../../../shared/types.ts'
-import { api, capsParam, type Cue, type Stats, type SubtitleOption } from '../api.ts'
+import type { MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
+import { api, capsParam, getActiveProfile, type Cue, type Stats, type SubtitleOption } from '../api.ts'
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
 import { useDocumentTitle } from '../hooks.ts'
@@ -13,7 +13,8 @@ import { TitleArt } from '../components/TitleArt.tsx'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
-interface Progress { t: number; d: number; at: number }
+/** `p` is the profile that saved it; positions saved before profiles existed have none. */
+interface Progress { t: number; d: number; at: number; p?: string }
 // Saved as `nexttupp:progress:<streamId>`; positions saved under the old `nextup:` prefix are still read.
 const progressKey = (streamId: string) => `progress:${streamId}`
 function loadProgress (streamId: string): Progress | null {
@@ -21,6 +22,22 @@ function loadProgress (streamId: string): Progress | null {
 }
 function saveProgress (streamId: string, p: Progress) {
   writeKey(progressKey(streamId), JSON.stringify(p))
+}
+
+const IMDB_ID = /^tt\d+$/
+const STREAM_ID = /^tt\d+(:\d+:\d+)?$/
+/** Progress reports while playing. */
+const REPORT_EVERY_MS = 10_000
+
+/**
+ * The profile's saved position for this stream, from the server (so it follows the profile across devices).
+ * `null`: the server has none. `undefined`: the server couldn't be asked.
+ */
+function serverPosition (type: MediaType, imdbId: string, streamId: string): Promise<WatchProgress | null | undefined> {
+  if (!IMDB_ID.test(imdbId)) return Promise.resolve(undefined)
+  return api.titleState(type, imdbId)
+    .then(s => (s.episodes ?? (s.progress ? [s.progress] : [])).find(p => p.streamId === streamId) ?? null)
+    .catch(() => undefined)
 }
 
 export function Watch ({ query }: { query: URLSearchParams }) {
@@ -65,6 +82,10 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const sessionId = stats?.id
   const duration = info?.probe.durationSec ?? 0
   const mode = info?.plan.mode
+
+  // Where this profile left off, asked for straight away so it's known by the time the file is.
+  const savedOnServer = useRef<Promise<WatchProgress | null | undefined> | null>(null)
+  savedOnServer.current ??= serverPosition(type, imdbId, streamId)
 
   // 1. Open the torrent and pick the file.
   useEffect(() => {
@@ -119,24 +140,84 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     v.play().catch(() => {})
   }, [sessionId, streamUrl, info])
 
-  // 4. Attach the source once we know the plan, resuming where the viewer left off.
+  // 4. Attach the source once we know the plan, resuming where the viewer left off: the profile's position on
+  //    the server first; this browser's own record only when the server has none (and it was this profile's)
+  //    or can't be reached.
   useEffect(() => {
     const v = video.current
     if (phase !== 'ready' || !info || !v || !sessionId) return
-    const saved = loadProgress(streamId)
-    const resumeAt = saved && saved.t > 30 && saved.t < info.probe.durationSec - 90 ? saved.t : 0
-    if (resumeAt) setResumedFrom(resumeAt)
-    if (info.plan.mode === 'direct') {
-      origin.current = 0
-      v.src = `/stream/${sessionId}/raw`
-      if (resumeAt) v.currentTime = resumeAt
-      v.play().catch(() => {})
-    } else {
-      startStream(resumeAt, info.plan.audioTrack)
-    }
+    let live = true
+    const wait = new Promise<undefined>(resolve => setTimeout(resolve, 1500, undefined))
+    Promise.race([savedOnServer.current!, wait]).then(server => {
+      if (!live) return
+      const local = loadProgress(streamId)
+      const mine = local && (local.p === undefined || local.p === getActiveProfile())
+      const at = server ? (server.completed ? 0 : server.position) : server === null ? (mine ? local!.t : 0) : local?.t ?? 0
+      const resumeAt = at > 30 && at < info.probe.durationSec - 90 ? at : 0
+      if (resumeAt) setResumedFrom(resumeAt)
+      if (info.plan.mode === 'direct') {
+        origin.current = 0
+        v.src = `/stream/${sessionId}/raw`
+        if (resumeAt) v.currentTime = resumeAt
+        v.play().catch(() => {})
+      } else {
+        startStream(resumeAt, info.plan.audioTrack)
+      }
+    })
+    return () => { live = false }
     // Only when the plan first arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, info, sessionId])
+
+  // ---- Progress for the profile (Continue watching, taste) ------------------------------------------
+  // Positions are film time (origin + the element's clock), never the converted stream's own clock.
+  // Reported every 10 s while playing, on pause, once a seek has settled, at the end, and on the way out.
+  const played = useRef(false)
+  const lastPosition = useRef(0)
+  const seekPending = useRef(false)
+  const exited = useRef(false)
+  const lastSent = useRef<{ position: number; at: number } | null>(null)
+  const durationRef = useRef(0)
+  durationRef.current = duration
+
+  const report = useCallback((exit = false) => {
+    if (exited.current || !played.current) return
+    const d = durationRef.current
+    if (!d || !IMDB_ID.test(imdbId) || !STREAM_ID.test(streamId)) return
+    const v = video.current
+    if (v && v.src && v.readyState > 0) lastPosition.current = origin.current + v.currentTime
+    const position = Math.max(0, Math.min(lastPosition.current, d))
+    const prev = lastSent.current
+    if (prev && Math.abs(prev.position - position) < 1 && Date.now() - prev.at < 5000) return
+    lastSent.current = { position, at: Date.now() }
+    const body: ProgressRequest = { type, id: imdbId, streamId, position, duration: d }
+    if (exit) api.progressOnExit(body)
+    else api.progress(body).catch(() => {})
+  }, [type, imdbId, streamId])
+  const reportRef = useRef(report)
+  reportRef.current = report
+
+  useEffect(() => {
+    if (phase !== 'ready') return
+    const id = setInterval(() => {
+      const v = video.current
+      if (v && !v.paused && !v.seeking && !seekPending.current) report()
+    }, REPORT_EVERY_MS)
+    return () => clearInterval(id)
+  }, [phase, report])
+
+  useEffect(() => {
+    const onHide = () => reportRef.current(true)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') reportRef.current(true) }
+    window.addEventListener('pagehide', onHide)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      document.removeEventListener('visibilitychange', onVisibility)
+      // Leaving by the browser's Back: the element may already be detached, so this uses the last known time.
+      reportRef.current(true)
+    }
+  }, [])
 
   const now = () => origin.current + (video.current?.currentTime ?? 0)
 
@@ -145,6 +226,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (!v || !duration) return
     t = Math.max(0, Math.min(t, duration - 1))
     setTime(t)
+    seekPending.current = true
     if (!usesConversion(audioTrack)) { v.currentTime = t; return }
     const local = t - origin.current
     for (let i = 0; i < v.buffered.length; i++) {
@@ -171,9 +253,13 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (!v) return
     const onTime = () => {
       setTime(origin.current + v.currentTime)
+      if (v.src && !exited.current) lastPosition.current = origin.current + v.currentTime
     }
-    const onPlaying = () => { setBuffering(false); setPlaying(true) }
-    const onPause = () => setPlaying(false)
+    const settled = () => { if (seekPending.current) { seekPending.current = false; reportRef.current() } }
+    const onPlaying = () => { setBuffering(false); setPlaying(true); played.current = true; settled() }
+    const onSeeked = () => { if (v.paused) settled() }
+    const onPause = () => { setPlaying(false); if (!v.ended) reportRef.current() }
+    const onEnded = () => reportRef.current()
     const onWaiting = () => setBuffering(true)
     const onCanPlay = () => setBuffering(false)
     const onVolume = () => { setMuted(v.muted); setVolume(v.volume) }
@@ -185,6 +271,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     }
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('playing', onPlaying)
+    v.addEventListener('seeked', onSeeked)
+    v.addEventListener('ended', onEnded)
     v.addEventListener('pause', onPause)
     v.addEventListener('waiting', onWaiting)
     v.addEventListener('canplay', onCanPlay)
@@ -193,6 +281,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     return () => {
       v.removeEventListener('timeupdate', onTime)
       v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('seeked', onSeeked)
+      v.removeEventListener('ended', onEnded)
       v.removeEventListener('pause', onPause)
       v.removeEventListener('waiting', onWaiting)
       v.removeEventListener('canplay', onCanPlay)
@@ -205,7 +295,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => {
     if (!duration || time < 5) return
     const t = Math.floor(time / 5) * 5
-    saveProgress(streamId, { t, d: duration, at: Date.now() })
+    saveProgress(streamId, { t, d: duration, at: Date.now(), p: getActiveProfile() ?? undefined })
   }, [Math.floor(time / 5), duration, streamId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subtitles: list, restore the viewer's last language, fetch cues.
@@ -297,6 +387,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
   const leave = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    report(true)
+    exited.current = true
     const v = video.current
     if (v) { v.pause(); v.removeAttribute('src'); v.load() }
     if (history.length > 1) history.back(); else navigate(`/title/${type}/${imdbId}`)

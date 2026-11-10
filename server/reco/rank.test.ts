@@ -180,6 +180,25 @@ describe('buildHome', () => {
     expect(names(more)).toEqual(expect.arrayContaining(['Signals', 'Deep Field', 'Arrival Point']))
   })
 
+  it('gives a boosted genre one row, not a "More …" row and a plain one with the same id', () => {
+    // Enough romantic dramas, and enough else, for "Romantic dramas" to earn a row of its own.
+    // Two-word names, so no two read as one franchise ("Romance 2" would be a sequel of "Romance 1").
+    const words = ['Amber', 'Blue', 'Silent', 'Golden', 'Distant', 'Winter', 'Hidden', 'Velvet'].flatMap(a =>
+      ['Harbor', 'Garden', 'Bridge', 'Season', 'Window', 'Orchard', 'Valley', 'Lantern', 'River', 'Meadow'].map(b => `${a} ${b}`))
+    const more = words.map((name, i) => i % 2
+      ? item(name, ['Drama', 'Romance'], { year: 1990 + (i % 30), imdbRating: 7.5, description: 'Two people fall in love over one summer.' })
+      : item(name, [['Comedy'], ['Horror'], ['Western'], ['Action']][(i / 2) % 4], { year: 1990 + (i % 30), imdbRating: 7.5 }))
+    const index = new ContentIndex([...CATALOG, ...more])
+    const fan = likes('Night Train', 'Dawn Again', 'Last Light', 'Paper Moons', 'Letters Home', 'Harbour')
+    const plain = buildHome(input(fan, { index })).rows.find(r => r.kind === 'genre')!
+    expect(plain).toBeDefined()
+    const key = plain.id.slice('genre:'.length)
+    const rows = buildHome(input({ ...fan, prefs: new Map<string, 1 | -1>([[key, 1]]) }, { index })).rows
+    const ids = rows.map(r => r.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(rows.filter(r => r.id === plain.id).map(r => r.title)).toEqual([`More ${plain.title}`])
+  })
+
   it('builds Continue watching from progress, with the next episode after a finished one', () => {
     const series = byName('Hearts Apart')
     const index = new ContentIndex(CATALOG.map(i => (i.id === series.id ? { ...i, episodes: [[1, 1], [1, 2], [1, 3]] as Array<[number, number]> } : i)))

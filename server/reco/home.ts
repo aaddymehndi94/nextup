@@ -190,7 +190,7 @@ function boostedRows (p: Prepared, cands: Candidate[], taken: Set<string>): Home
   return rows
 }
 
-function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: number): HomeRow[] {
+function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: number, boosted: HomeRow[] = []): HomeRow[] {
   const feats = [...p.affinity.values()]
     .filter(a => {
       const kind = a.key.slice(0, a.key.indexOf(':'))
@@ -199,9 +199,11 @@ function genreRows (p: Prepared, cands: Candidate[], taken: Set<string>, max: nu
     .sort((a, b) => b.score - a.score)
   const rows: HomeRow[] = []
   const prev: Array<Set<string>> = []
-  const tokens: Array<Set<string>> = []
+  // A feature that already has its "More …" row doesn't get a plain one too (same id, same titles).
+  const tokens: Array<Set<string>> = boosted.map(r => r.id.slice('genre:'.length)).filter(k => /^(gg|gd|g):/.test(k)).map(featureTokens)
   for (const a of feats) {
     if (rows.length >= max) break
+    if (boosted.some(r => r.id === `genre:${a.key}`)) continue
     // "Romance" adds nothing next to "Romantic dramas"; "80s action" and "Action thrillers" both do.
     const tk = featureTokens(a.key)
     if (tokens.some(t => isSubset(tk, t) || isSubset(t, tk))) continue
@@ -312,8 +314,9 @@ export function buildHome (input: HomeInput): HomeOutput {
     const row = becauseRow(p, s, cands, taken)
     if (row) { add(row); because++ }
   }
-  for (const row of boostedRows(p, cands, taken)) add(row)
-  for (const row of genreRows(p, cands, taken, 3)) add(row)
+  const boosted = boostedRows(p, cands, taken)
+  for (const row of boosted) add(row)
+  for (const row of genreRows(p, cands, taken, 3, boosted)) add(row)
 
   // Keep series and films both in view: series rely on content features alone (CF covers movies).
   const seriesShare = picks.filter(c => c.item.type === 'series').length / Math.max(1, picks.length)

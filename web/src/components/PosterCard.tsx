@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { TitleSummary } from '../../../shared/types.ts'
 import { useLoaded } from '../hooks.ts'
 import { onLinkClick } from '../router.ts'
 
-export function PosterCard ({ title, showType = false, note }: { title: TitleSummary; showType?: boolean; note?: string }) {
+export function PosterCard ({ title, showType = false, note, badge }: { title: TitleSummary; showType?: boolean; note?: string; badge?: ReactNode }) {
   const [failed, setFailed] = useState(!title.poster)
   const [loaded, onLoad] = useLoaded(title.poster)
   return (
@@ -13,11 +13,12 @@ export function PosterCard ({ title, showType = false, note }: { title: TitleSum
           ? <div className="poster-fallback"><span>{title.name}</span></div>
           : <img src={title.poster} alt="" loading="lazy" decoding="async" data-loaded={loaded || undefined} onLoad={onLoad} onError={() => setFailed(true)} />}
         {showType && title.type === 'series' && <span className="poster-tag">Series</span>}
+        {badge}
       </div>
       <div className="poster-meta">
         <span className="poster-name">{title.name}</span>
         {title.year && <span className="poster-year">{title.year}</span>}
-        {note && <span className="poster-note">{note}</span>}
+        {note && <span className="poster-note" title={note}>{note}</span>}
       </div>
     </a>
   )

@@ -1,0 +1,89 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import { Check, Pencil, SlidersHorizontal } from 'lucide-react'
+import { chooseProfile, useProfiles } from '../profiles.ts'
+import { navigate } from '../router.ts'
+import { Avatar } from './Avatar.tsx'
+
+/**
+ * The active profile's avatar in the masthead. Opens a small menu: switch profile, see "Your taste",
+ * manage profiles. Arrow keys move through it (remote friendly); Escape closes it.
+ */
+export function ProfileMenu () {
+  const profiles = useProfiles()
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const menuId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    items()[0]?.focus()
+    const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setOpen(false); button.current?.focus(); return }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+      const list = items()
+      if (!list.length) return
+      e.preventDefault()
+      const i = list.indexOf(document.activeElement as HTMLElement)
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1
+        : e.key === 'ArrowDown' ? (i + 1) % list.length : (i - 1 + list.length) % list.length
+      list[next].focus()
+    }
+    document.addEventListener('pointerdown', onDown)
+    root.current?.addEventListener('keydown', onKey)
+    const el = root.current
+    return () => { document.removeEventListener('pointerdown', onDown); el?.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  if (profiles.status !== 'ready' || !profiles.active) return null
+  const { active } = profiles
+  const go = (to: string) => { setOpen(false); navigate(to) }
+
+  return (
+    <div className="profile-menu" ref={root}>
+      <button
+        ref={button}
+        type="button"
+        className="avatar-button"
+        aria-label={`Profile: ${active.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(o => !o)}
+      >
+        <Avatar profile={active} />
+      </button>
+      {open && (
+        <div className="menu" role="menu" id={menuId} aria-label="Profiles">
+          <div className="menu-group" role="group" aria-label="Switch profile">
+            {profiles.profiles.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                aria-current={p.id === active.id || undefined}
+                onClick={() => { setOpen(false); if (p.id !== active.id) chooseProfile(p.id) }}
+              >
+                <Avatar profile={p} className="small" />
+                <span className="menu-label">{p.name}</span>
+                {p.id === active.id && <Check className="menu-check" aria-hidden />}
+              </button>
+            ))}
+          </div>
+          <div className="menu-rule" role="separator" />
+          <a href="/taste" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/taste') }}>
+            <SlidersHorizontal className="menu-icon" aria-hidden />
+            <span className="menu-label">Your taste</span>
+          </a>
+          <a href="/profiles" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/profiles') }}>
+            <Pencil className="menu-icon" aria-hidden />
+            <span className="menu-label">Manage profiles</span>
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}

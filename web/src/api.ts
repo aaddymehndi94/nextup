@@ -33,19 +33,45 @@ export function setActiveProfile (id: string | null): void {
   try { if (id) localStorage.setItem(PROFILE_KEY, id); else localStorage.removeItem(PROFILE_KEY) } catch { /* storage unavailable */ }
 }
 
+// A 404 from a profile-scoped route means the active profile was deleted (on another device, say).
+const goneListeners = new Set<() => void>()
+/** Called when the server says the active profile no longer exists. Returns an unsubscribe function. */
+export function onProfileGone (fn: () => void): () => void {
+  goneListeners.add(fn)
+  return () => { goneListeners.delete(fn) }
+}
+const profileScoped = (path: string) => path.startsWith('/api/me') || /^\/api\/title\/[^/]+\/[^/]+\/similar/.test(path)
+
 async function req<T> (path: string, init?: RequestInit): Promise<T> {
   let res: Response
+  const sentProfile = activeProfile
   try {
     const headers = new Headers(init?.headers)
-    if (activeProfile) headers.set('x-nexttupp-profile', activeProfile)
+    if (sentProfile) headers.set('x-nexttupp-profile', sentProfile)
     res = await fetch(path, { ...init, headers })
-  } catch {
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw err
     throw new ApiError('Can’t reach nexttupp on this computer. Is it running?', 0)
   }
   if (res.status === 204) return undefined as T
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
+  if (!res.ok) {
+    if (res.status === 404 && sentProfile && sentProfile === activeProfile && profileScoped(path)) goneListeners.forEach(fn => fn())
+    throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
+  }
   return body as T
+}
+
+/**
+ * Progress sent while the page is going away (leaving the player, closing the tab). `keepalive` lets the
+ * request outlive the page; sendBeacon can't carry the profile header. Failures are ignored.
+ */
+function sendProgressOnExit (body: ProgressRequest): void {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (activeProfile) headers['x-nexttupp-profile'] = activeProfile
+  try {
+    fetch('/api/me/progress', { method: 'POST', headers, body: JSON.stringify(body), keepalive: true }).catch(() => {})
+  } catch { /* keepalive quota exceeded or fetch unavailable */ }
 }
 
 const t = (type: MediaType, id: string) => `${type}/${id}`
@@ -92,6 +118,8 @@ export const api = {
   removeFromList: (type: MediaType, id: string) => req<TitleState>(`/api/me/list/${t(type, id)}`, json('DELETE')),
   /** The player calls this every ~10 s while playing and on pause/exit. */
   progress: (body: ProgressRequest) => req<ProgressResponse>('/api/me/progress', json('POST', body)),
+  /** The same, for the last report as the player closes: survives navigation and tab close. */
+  progressOnExit: sendProgressOnExit,
   /** Remove from Continue watching; `forget` also drops it from taste ("that wasn't me"). */
   clearProgress: (type: MediaType, id: string, forget = false) => req<TitleState>(`/api/me/progress/${t(type, id)}${forget ? '?forget=1' : ''}`, json('DELETE')),
   dismiss: (type: MediaType, id: string, reason: DismissReason) => req<TitleState>(`/api/me/dismiss/${t(type, id)}`, json('PUT', { reason })),

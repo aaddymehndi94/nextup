@@ -3,15 +3,18 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 /**
  * A titled, horizontally scrolling shelf. `caption` is a short line under the title
- * (e.g. why a row is shown). With a fine pointer, paddles at the edges page the shelf;
- * keyboard and remote users move through the items themselves.
+ * (e.g. why a row is shown); `aside` sits at the head's far end (a link, a progress meter).
+ * With a fine pointer, paddles at the edges page the shelf; keyboard and remote users move
+ * through the items themselves.
  */
-export function Row ({ title, caption, children, variant = 'poster', id }: {
+export function Row ({ title, caption, aside, children, variant = 'poster', id, className }: {
   title: string
-  caption?: string
+  caption?: ReactNode
+  aside?: ReactNode
   children: ReactNode
   variant?: 'poster' | 'landscape'
   id?: string
+  className?: string
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ start: true, end: true })
@@ -39,10 +42,13 @@ export function Row ({ title, caption, children, variant = 'poster', id }: {
 
   const headingId = id ?? `row-${title.toLowerCase().replace(/\W+/g, '-')}`
   return (
-    <section className={`row row-${variant}`} aria-labelledby={headingId}>
+    <section className={`row row-${variant}${className ? ` ${className}` : ''}`} aria-labelledby={headingId}>
       <header className="row-head">
-        <h2 className="row-title" id={headingId}>{title}</h2>
-        {caption && <p className="row-caption">{caption}</p>}
+        <div className="row-heading">
+          <h2 className="row-title" id={headingId}>{title}</h2>
+          {caption && <p className="row-caption">{caption}</p>}
+        </div>
+        {aside && <div className="row-aside">{aside}</div>}
       </header>
       <div className="row-frame">
         <div ref={scroller} className="row-scroller">{children}</div>

@@ -280,8 +280,10 @@ export interface SimilarResponse { items: RecItem[] }
 export interface OnboardingResponse {
   /** Diverse, well-known titles this profile hasn't rated; reason.text is a short descriptor ("Crime · 1994"). */
   items: RecItem[]
-  /** Titles this profile has rated so far. */
+  /** Titles this profile has rated so far (likes and dislikes). */
   rated: number
+  /** Positive signals so far (likes, finished titles): progress towards `target`. Dislikes don't count. */
+  positives: number
   /** Positive signals needed before the home screen personalises. */
   target: number
 }

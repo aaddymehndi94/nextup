@@ -223,4 +223,18 @@ describe('change notifications', () => {
     store.recordProgress(p, { ...MOVIE, streamId: MOVIE.id, position: 20, duration: 6000 })
     expect(seen).toEqual([p, p])
   })
+
+  it('notifies once when a title qualifies for Continue watching, so a cached Home picks it up', () => {
+    const p = store.defaultProfile().id
+    const seen: number[] = []
+    store.onChange(() => seen.push(clock))
+    const start = clock
+    store.recordProgress(p, { ...MOVIE, streamId: MOVIE.id, position: 0, duration: 6000 })
+    for (let t = 10; t <= 200; t += 10) {
+      clock += 10_000
+      store.recordProgress(p, { ...MOVIE, streamId: MOVIE.id, position: t, duration: 6000 })
+    }
+    // The first ping, then the one where real playback reaches two minutes; nothing for the pings between.
+    expect(seen.map(at => (at - start) / 1000)).toEqual([0, 120])
+  })
 })

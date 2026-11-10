@@ -330,11 +330,18 @@ Series tag, the scrubber time tip).
 
 ### Cards
 - **Poster:** 2:3 art with the art radius and hairline edge, then the name (label) and year (meta). An optional
-  one-line caption (meta, Ash) can carry a reason such as "Because you liked X". Focus or hover lifts the art
+  caption (meta, Ash, up to two lines) carries the reason, such as "Because you liked X"; every recommended
+  title shows one, and the year is dropped when the reason already ends with it. Focus or hover lifts the art
   1.04 with a white ring.
-- **Landscape (downloads, episodes):** 16:9 art. Downloads carry an inset progress bar and a centred play
-  disc. Episodes carry number, name and a two-line overview; the active episode gets a 2px white inner
-  stroke.
+- **Card remove ("Not interested"):** a small round X beside the name, under the art, never over it, so a
+  remote's Down reaches it and Left/Right still move between posters. Mouse users see it on hover or focus;
+  touch and TV always see it. Removing shows a snackbar with Undo.
+- **Rate card (getting started):** a poster with Like and Dislike round buttons under it. The chosen button
+  turns solid white; a rated card dims its art and shows a small white thumb badge on it. Progress is a segmented meter in
+  the row heading ("1 of 3 likes").
+- **Landscape (downloads, episodes, continue watching):** 16:9 art. Downloads and Continue watching carry an
+  inset progress bar and a centred play disc; Continue watching's status line is the episode and time left.
+  Episodes carry number, name and a two-line overview; the active episode gets a 2px white inner stroke.
 
 ### Inputs / Fields
 - **Search:** a pill field, 10% white glass with a 14% white inner ring and a leading search icon. Focus
@@ -345,6 +352,22 @@ Series tag, the scrubber time tip).
 - **Masthead:** the wordmark left and search right, floating over the billboard on a soft top scrim. It turns
   into a blurred Projection Black veil with a hairline once the page scrolls.
 - **Title and Watch:** a round back button; the Title page also shows the wordmark.
+- **Profile button and menu:** a 2.75rem avatar (the profile's initial on one of five neutral grey gradients,
+  from graphite to silver, never a hue) at the masthead's end. It opens a glass menu: the profiles with a check on the active one,
+  a hairline, then "Your taste" and "Manage profiles". Arrow keys, Home/End and Escape work as in any menu.
+- **Who's watching:** large avatar tiles centred on Projection Black, the title in Mona Sans Expanded. Shown
+  only when there is more than one profile. Manage mode adds a pencil to each tile and an inline form; delete
+  asks again with a red chip, and the last profile can't be deleted.
+
+### Feedback
+- **Snackbar:** one at a time, bottom centre, glass with an optional white text action ("Undo"). It lasts 7 s
+  with an action and 4 s without. Every removal ("Not interested", "Remove from My List") offers Undo.
+
+### Taste page
+- **Shape:** one reading column. A sentence in title style says what nexttupp thinks you like, with one quiet
+  line on how picks are made. Then "You lean towards" and "You're less keen on" as feature rows (label, kind,
+  "From X, Y and Z") with More / Never chips and Reset, then your ratings and what you've watched, each with
+  Undo or Forget. No toggles, sliders or scores.
 
 ### Source table (signature)
 - **Layout:** a grid of Quality, Release, Size, Seeds, Peers and Indexer. Release names wrap at their dots.
