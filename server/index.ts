@@ -1,19 +1,19 @@
-import Fastify, { type FastifyReply } from 'fastify'
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Readable, pipeline } from 'node:stream'
-import type { ClientCaps, MediaType, OpenSessionRequest, ProbeResponse, ProbeResult } from '../shared/types.ts'
+import type { ClientCaps, MediaType, OpenSessionRequest, PlaybackPlan, ProbeResponse, ProbeResult } from '../shared/types.ts'
 import * as cinemeta from './catalog/cinemeta.ts'
 import { config } from './config.ts'
 import { EngineError, TorrentEngine, type Session } from './engine/engine.ts'
 import { contentType, parseRange } from './engine/range.ts'
 import { HttpError, UpstreamError } from './http.ts'
 import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
-import { buildFfmpegArgs, choosePlan } from './playback/plan.ts'
+import { buildFfmpegArgs, castPlan, choosePlan } from './playback/plan.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
-import { fetchCues, listSubtitles } from './subtitles.ts'
+import { fetchCues, listSubtitles, toWebVtt } from './subtitles.ts'
 import { Library } from './library.ts'
 import { openDb } from './db.ts'
 import { loadCf } from './reco/cf.ts'
@@ -25,6 +25,9 @@ import { registerAccountRoutes } from './sync/routes.ts'
 import { SyncService } from './sync/service.ts'
 import { registerLanGate, registerLanRoutes } from './lan/routes.ts'
 import { LanService } from './lan/service.ts'
+import { CastDiscovery, parseStaticDevices } from './cast/discovery.ts'
+import { registerCastRoutes } from './cast/routes.ts'
+import { CastService, type CastToken } from './cast/service.ts'
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
@@ -45,6 +48,24 @@ const sync = new SyncService({
   onSignInChange: () => { void lan?.refresh() },
 })
 lan = new LanService({ dataDir: config.dataDir, port: config.port, host: config.host, signedIn: () => sync.signedIn, log: msg => app.log.info(msg) })
+// NEXTTUPP_CAST_DEVICES=Name@host:port replaces mDNS discovery with a fixed list (tests use a fake receiver).
+const castDiscovery = new CastDiscovery({ staticDevices: parseStaticDevices(process.env.NEXTTUPP_CAST_DEVICES), log: msg => app.log.warn(msg) })
+const cast = new CastService({
+  discovery: castDiscovery,
+  lan,
+  log: msg => app.log.info(msg),
+  media: {
+    async plan (id, audio) {
+      const s = session(id)
+      const probe = await getProbe(s)
+      return { plan: castPlan(probe, config.preferredLanguages, audio), durationSec: probe.durationSec, contentType: contentType(s.file.name) }
+    },
+    async streamStart (id, t) {
+      const s = session(id)
+      return keyframeStart(s.id, t, (await getProbe(s)).container)
+    },
+  },
+})
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
 const streamStarts = new Map<string, Promise<number>>()
@@ -225,7 +246,7 @@ app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) =
 // ---- Streaming --------------------------------------------------------------
 
 /** Raw bytes of the file with HTTP Range support. Used for direct play and as ffmpeg's input. */
-async function serveRaw (id: string, rangeHeader: string | undefined, head: boolean, reply: FastifyReply) {
+async function serveRaw (id: string, rangeHeader: string | undefined, head: boolean, reply: FastifyReply, extraHeaders: Record<string, string> = {}) {
   const s = session(id)
   const size = s.file.length
   const range = parseRange(rangeHeader, size)
@@ -238,6 +259,7 @@ async function serveRaw (id: string, rangeHeader: string | undefined, head: bool
     'content-type': contentType(s.file.name),
     'content-length': end - start + 1,
     'cache-control': 'no-store',
+    ...extraHeaders,
   }
   if (range) headers['content-range'] = `bytes ${start}-${end}/${size}`
   if (head) return reply.code(range ? 206 : 200).headers(headers).send()
@@ -271,25 +293,16 @@ async function serveRaw (id: string, rangeHeader: string | undefined, head: bool
 app.get<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, false, reply))
 app.head<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, true, reply))
 
-/** Remuxed / transcoded fragmented MP4, starting at `t` seconds. Seeking = a new request with a new `t`. */
-app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; caps?: string } }>('/stream/:id/play.mp4', async (req, reply) => {
-  const s = session(req.params.id)
+/** Remuxed / transcoded fragmented MP4 from `startSec`. Seeking is a new request with a new `t`. */
+async function servePlay (s: Session, plan: PlaybackPlan, startSec: number, req: FastifyRequest, reply: FastifyReply, opts: { registryKey?: string; headers?: Record<string, string> } = {}) {
   const result = await getProbe(s)
-  const audio = req.query.audio !== undefined ? Number(req.query.audio) : undefined
-  const plan = choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio)
-  const startSec = Math.max(0, Math.min(Number(req.query.t) || 0, Math.max(0, result.durationSec - 1)))
+  startSec = Math.max(0, Math.min(startSec, Math.max(0, result.durationSec - 1)))
   const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder: hw.encoder, hwDevice: hw.device })
   if (plan.copyVideo && startSec > 0) {
     // Runs alongside ffmpeg; both need the same pieces, so this costs no extra waiting.
-    const key = startKey(s.id, startSec)
-    if (!streamStarts.has(key)) {
-      const k = findKeyframe(rawUrl(s.id), startSec, result.container)
-      k.catch(() => streamStarts.delete(key))
-      streamStarts.set(key, k)
-      if (streamStarts.size > 200) streamStarts.delete(streamStarts.keys().next().value!)
-    }
+    keyframeStart(s.id, startSec, result.container)
   }
-  const proc = transcodes.spawn(s.id, args)
+  const proc = transcodes.spawn(opts.registryKey ?? s.id, args)
   const release = engine.hold(s)
   let stderr = ''
   proc.stderr!.on('data', d => { stderr = (stderr + d).slice(-2000) })
@@ -300,10 +313,32 @@ app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; cap
   })
   reply.raw.on('close', () => { proc.kill('SIGKILL'); release() })
   return reply
+    .headers(opts.headers ?? {})
     .header('content-type', 'video/mp4')
     .header('cache-control', 'no-store')
     .header('x-playback-mode', plan.mode)
     .send(proc.stdout)
+}
+
+/** Starts (once) finding where a copied stream asked for at `t` really begins: the keyframe before it. */
+function keyframeStart (id: string, t: number, container: string): Promise<number> {
+  const key = startKey(id, t)
+  let k = streamStarts.get(key)
+  if (!k) {
+    k = findKeyframe(rawUrl(id), t, container)
+    k.catch(() => streamStarts.delete(key))
+    streamStarts.set(key, k)
+    if (streamStarts.size > 200) streamStarts.delete(streamStarts.keys().next().value!)
+  }
+  return k
+}
+
+app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; caps?: string } }>('/stream/:id/play.mp4', async (req, reply) => {
+  const s = session(req.params.id)
+  const result = await getProbe(s)
+  const audio = req.query.audio !== undefined ? Number(req.query.audio) : undefined
+  const plan = choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio)
+  return servePlay(s, plan, Number(req.query.t) || 0, req, reply)
 })
 
 /** Film time at which the stream requested with `t` begins (the player's clock origin). */
@@ -328,6 +363,34 @@ app.get<{ Querystring: { url?: string } }>('/api/subtitle-cues', async req => {
   return fetchCues(req.query.url)
 })
 
+// ---- Cast to a TV ----------------------------------------------------------------------
+// The TV fetches the stream from this computer's home-network address; it has no cookie, so the URL holds a
+// token that only that TV may use, only while the cast runs (server/cast/service.ts).
+
+const CAST_HEADERS = { 'access-control-allow-origin': '*' }
+
+function castGrant (token: string, req: FastifyRequest): CastToken {
+  const g = cast.verify(token, req.socket.remoteAddress)
+  if (!g) throw new HttpError(404, 'Not found')
+  return g
+}
+
+app.get<{ Params: { token: string } }>('/cast/:token/raw', (req, reply) => serveRaw(castGrant(req.params.token, req).sessionId, req.headers.range, false, reply, CAST_HEADERS))
+app.head<{ Params: { token: string } }>('/cast/:token/raw', (req, reply) => serveRaw(castGrant(req.params.token, req).sessionId, req.headers.range, true, reply, CAST_HEADERS))
+app.get<{ Params: { token: string }; Querystring: { t?: string } }>('/cast/:token/play.mp4', async (req, reply) => {
+  const g = castGrant(req.params.token, req)
+  return servePlay(session(g.sessionId), g.plan, Number(req.query.t) || 0, req, reply, { registryKey: `${g.sessionId}#cast`, headers: CAST_HEADERS })
+})
+app.get<{ Params: { token: string } }>('/cast/:token/subs.vtt', async (req, reply) => {
+  const g = castGrant(req.params.token, req)
+  if (!g.subtitle) throw new HttpError(404, 'Not found')
+  const cues = await fetchCues(g.subtitle.url)
+  return reply.headers(CAST_HEADERS).header('content-type', 'text/vtt; charset=utf-8').header('cache-control', 'no-store')
+    .send(toWebVtt(cues, (g.subtitle.offset ?? 0) - g.origin))
+})
+
+registerCastRoutes(app, cast)
+
 // ---- Account and sync (optional) ---------------------------------------------------
 
 registerAccountRoutes(app, sync)
@@ -349,6 +412,8 @@ if (existsSync(config.webDist)) {
 
 const shutdown = async () => {
   sync.stop()
+  cast.shutdown()
+  castDiscovery.close()
   lan.stop()
   transcodes.killAll()
   await app.close()

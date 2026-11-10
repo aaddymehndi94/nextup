@@ -20,6 +20,7 @@
     "@fastify/static": "^10.1.10",
     "fastify": "^5.12.8",
     "lucide-react": "^1.71.0",
+    "multicast-dns": "7.2.5",
     "webtorrent": "3.0.21"
   },
   "devDependencies": {

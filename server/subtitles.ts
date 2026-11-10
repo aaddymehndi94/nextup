@@ -102,3 +102,26 @@ export async function fetchCues (url: string): Promise<Cue[]> {
   if (!res.ok) throw new Error(`Subtitle download failed: HTTP ${res.status}`)
   return parseSubtitles(await res.text())
 }
+
+const vttTime = (t: number) => {
+  const ms = Math.max(0, Math.round(t * 1000))
+  const h = Math.floor(ms / 3600_000)
+  const m = Math.floor(ms / 60_000) % 60
+  const sec = Math.floor(ms / 1000) % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`
+}
+
+/** Cues as WebVTT, moved by `shift` seconds (for a stream whose clock starts later in the film). */
+export function toWebVtt (cues: Cue[], shift = 0): string {
+  const out = ['WEBVTT', '']
+  for (const c of cues) {
+    const start = c.start + shift
+    const end = c.end + shift
+    if (end <= 0) continue
+    // A blank line would end the cue early, and "-->" would start a new one.
+    const text = c.text.replace(/\r/g, '').replace(/\n{2,}/g, '\n').replace(/-->/g, '→').trim()
+    if (!text) continue
+    out.push(`${vttTime(start)} --> ${vttTime(end)}`, text, '')
+  }
+  return out.join('\n')
+}

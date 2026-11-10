@@ -125,6 +125,24 @@ export function choosePlan (probe: ProbeResult, caps: ClientCaps, preferredLangs
   return { mode: 'transcode', audioTrack, copyVideo: false, copyAudio, reason: `Converting ${probe.video?.codec.toUpperCase()} video for this browser` }
 }
 
+/**
+ * What every Cast receiver plays (Chromecast from the 2nd generation on, Google TV, Android TV): H.264 8-bit
+ * up to 1080p with AAC or MP3, in MP4. Newer TVs decode more, but the Default Media Receiver doesn't say what,
+ * so the cast profile asks for the common ground.
+ */
+export const CAST_CAPS: ClientCaps = { h264: true, hevc: false, hevc10: false, av1: false, vp9: false, aac: true, ac3: false, eac3: false, opus: false, mp3: true, flac: false }
+
+/** The plan for a TV: direct play only for H.264 + AAC/MP3 in MP4, HEVC/10-bit/HDR/4K converted to 1080p H.264 SDR. */
+export function castPlan (probe: ProbeResult, preferredLangs: string[], requestedAudio?: number): PlaybackPlan {
+  const plan = choosePlan(probe, CAST_CAPS, preferredLangs, requestedAudio)
+  const reason = plan.reason.replace('the browser', 'the TV').replace('this browser', 'the TV').replace('Browser plays', 'The TV plays')
+  if (plan.copyVideo && probe.video && probe.video.height > 1088) {
+    return { ...plan, mode: 'transcode', copyVideo: false, reason: 'Converting 4K video to 1080p for the TV' }
+  }
+  if (plan.mode === 'direct' && probe.container !== 'mp4') return { ...plan, mode: 'remux', reason: `Repackaging ${probe.container.toUpperCase()} for the TV` }
+  return { ...plan, reason }
+}
+
 export interface FfmpegArgsInput {
   input: string
   startSec: number
