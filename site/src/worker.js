@@ -5,8 +5,14 @@
 
 const APEX = 'nexttupp.com'
 
+// connect-src: the /watch page signs in and lists the account's computers through the nexttupp API. A local
+// preview can allow a local API as well with `wrangler dev --var DEV_CONNECT_SRC:http://127.0.0.1:8799`; the
+// var isn't set in wrangler.jsonc, so a deploy never has it.
+const API = 'https://api.nexttupp.com'
+const csp = connect => `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+const CSP = csp(API)
+
 const SECURITY = {
-  'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -26,6 +32,8 @@ export default {
     const res = await env.ASSETS.fetch(request)
     const out = new Response(res.body, res)
     for (const [k, v] of Object.entries(SECURITY)) out.headers.set(k, v)
+    const dev = typeof env.DEV_CONNECT_SRC === 'string' && /^(http:\/\/(localhost|127\.0\.0\.1):\d{2,5} ?)+$/.test(env.DEV_CONNECT_SRC) ? env.DEV_CONNECT_SRC : ''
+    out.headers.set('content-security-policy', dev ? csp(`${API} ${dev}`) : CSP)
     // Fonts and images change rarely; pages, CSS and JS revalidate so a deploy shows up at once.
     if (res.ok && /^\/(fonts|img)\//.test(url.pathname)) out.headers.set('cache-control', 'public, max-age=604800')
     return out

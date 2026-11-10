@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Watch at home · nexttupp</title>
+  <meta name="description" content="Watch from the computer running nexttupp on your Wi-Fi, on this phone.">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/MonaSansVF.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/watch.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <a class="wordmark" href="/" aria-label="nexttupp, home">nexttupp</a>
+      <nav class="masthead-nav" aria-label="Main">
+        <a href="/#faq">Questions</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap narrow join watch">
+    <!-- Signed out (and the no-JS fallback). -->
+    <div data-view="signin">
+      <h1>Watch at home.</h1>
+      <p class="join-lede">Sign in on this phone to find the computer running nexttupp on your Wi-Fi. The film plays from that computer, right here.</p>
+      <form class="watch-form" data-signin novalidate>
+        <label class="watch-field">
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="username" inputmode="email" spellcheck="false" required>
+        </label>
+        <label class="watch-field">
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <p class="watch-error" role="alert" data-error></p>
+        <button class="button primary large" type="submit" data-submit>Sign in</button>
+      </form>
+      <noscript><p class="watch-error">This page needs JavaScript to sign in.</p></noscript>
+      <p class="join-foot">Use the account you signed in with in the nexttupp app. Your password is stretched on this phone and never sent. No account yet? <a class="link" href="/join">How to join</a>.</p>
+    </div>
+
+    <!-- Signed in: the account's computers. -->
+    <div data-view="devices" hidden>
+      <h1 data-heading>Watch at home.</h1>
+      <p class="join-lede" data-lede></p>
+      <div class="watch-primary" data-primary></div>
+      <ul class="watch-list" data-list aria-label="Your computers"></ul>
+      <p class="watch-status" role="status" aria-live="polite" data-status></p>
+      <p class="join-foot"><span data-who></span><span class="sep" aria-hidden="true"> · </span><button class="link" type="button" data-signout>Sign out on this phone</button></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <a class="wordmark" href="/">nexttupp</a>
+        <p class="footer-tag">Films and series, picked for you.</p>
+      </div>
+      <nav aria-label="Footer">
+        <a href="/#download">Download</a>
+        <a href="/#faq">Questions</a>
+      </nav>
+      <div class="footer-fine">
+        <span>© 2026 nexttupp</span>
+        <span>Set in Mona Sans, under the <a href="/fonts/OFL.txt">SIL Open Font License</a>.</span>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
