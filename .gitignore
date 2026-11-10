@@ -6,3 +6,6 @@ data
 .claude/settings.local.json
 .claude/skills/impeccable/scripts/bin/
 __pycache__/
+
+# Agent worktrees
+.claude/worktrees/
