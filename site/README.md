@@ -58,3 +58,10 @@ Nothing has been deployed. These steps change the Cloudflare account and DNS, so
 
 To update, edit `public/` and run `npx wrangler deploy` again. Because the Worker runs first, every request counts
 as a Worker request: up to 100,000 a day on the free plan.
+
+## As deployed (2026-11-11)
+
+The site is served by **zone routes** (`nexttupp.com/*`, `www.nexttupp.com/*`), not custom domains: the zone
+still holds the old parking records and the Wrangler login can't edit DNS. Those records are proxied, so the
+route answers first and they go unused. To tidy up later: delete the apex and `www` A/CNAME records in the
+Cloudflare dashboard, then switch the two routes back to `{ "pattern": "…", "custom_domain": true }` and deploy.

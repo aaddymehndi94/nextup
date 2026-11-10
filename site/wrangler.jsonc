@@ -10,8 +10,11 @@
   "routes": [
     // Each creates a proxied DNS record and a certificate in the nexttupp.com zone on first deploy.
     // Any existing A/AAAA/CNAME record on the same name (the parking records) must be deleted first.
-    { "pattern": "nexttupp.com", "custom_domain": true },
-    { "pattern": "www.nexttupp.com", "custom_domain": true }
+    // Zone routes, not custom domains: the zone still holds the old parking records (proxied), and the login
+    // used to deploy can't edit DNS. A route answers before the origin is reached, so those records go unused.
+    // Once they're deleted in the dashboard, these can become { "custom_domain": true } entries.
+    { "pattern": "nexttupp.com/*", "zone_name": "nexttupp.com" },
+    { "pattern": "www.nexttupp.com/*", "zone_name": "nexttupp.com" }
   ],
   "assets": {
     "directory": "public",
