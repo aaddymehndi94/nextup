@@ -37,6 +37,8 @@ terminal. `cd desktop && npm install && npm run dist:linux` builds the AppImage 
 at the root). The server's `NEXTTUPP_WEB_DIR`, `NEXTTUPP_FFMPEG`/`NEXTTUPP_FFPROBE`, `NEXTTUPP_ENCODER` and
 `NEXTTUPP_VAAPI_DEVICE` overrides come from there. Details: [`docs/adr/0005`](docs/adr/0005-desktop-app.md).
 
+The public website (nexttupp.com) lives in [`site/`](site/README.md).
+
 ## How it works
 
 ```

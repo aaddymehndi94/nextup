@@ -1,0 +1,27 @@
+// nexttupp.com: the public landing page, as one Cloudflare Worker with static assets.
+// Nothing here has been deployed. `wrangler deploy` changes the owner's Cloudflare account and DNS, so it waits for
+// the owner (see README.md, "Deploying").
+{
+  "name": "nexttupp-site",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    // Each creates a proxied DNS record and a certificate in the nexttupp.com zone on first deploy.
+    // Any existing A/AAAA/CNAME record on the same name (the parking records) must be deleted first.
+    { "pattern": "nexttupp.com", "custom_domain": true },
+    { "pattern": "www.nexttupp.com", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // /join serves join.html, /join.html redirects to /join.
+    "html_handling": "auto-trailing-slash",
+    // Unknown paths get public/404.html with a 404 status.
+    "not_found_handling": "404-page",
+    // The Worker runs first so it can redirect www to the apex and add security headers.
+    "run_worker_first": true
+  },
+  "observability": { "enabled": false }
+}
