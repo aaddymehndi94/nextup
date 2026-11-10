@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { loadProfiles, useProfiles } from './profiles.ts'
 import { useLocation } from './router.ts'
+import { Account } from './pages/Account.tsx'
 import { Home } from './pages/Home.tsx'
 import { Profiles } from './pages/Profiles.tsx'
 import { Taste } from './pages/Taste.tsx'
@@ -16,6 +17,7 @@ function Route () {
   if (title) return <Title key={title[2]} type={title[1] as 'movie' | 'series'} id={title[2]} season={query.get('season')} play={query.get('play')} />
   if (path === '/watch') return <Watch key={query.toString()} query={query} />
   if (path === '/taste') return <Taste />
+  if (path === '/account') return <Account code={query.get('code')} />
   if (path === '/profiles') return <Profiles mode="manage" />
   if (path === '/films' || path === '/series') return <Home key={path} initialQuery={query.get('q') ?? ''} tab={path === '/films' ? 'movie' : 'series'} />
   return <Home key="/" initialQuery={query.get('q') ?? ''} />

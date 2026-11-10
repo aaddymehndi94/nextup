@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, Pencil, SlidersHorizontal } from 'lucide-react'
+import { Check, CircleUserRound, Pencil, SlidersHorizontal } from 'lucide-react'
 import { chooseProfile, useProfiles } from '../profiles.ts'
 import { navigate } from '../router.ts'
 import { Avatar } from './Avatar.tsx'
 
 /**
  * The active profile's avatar in the masthead. Opens a small menu: switch profile, see "Your taste",
- * manage profiles. Arrow keys move through it (remote friendly); Escape closes it.
+ * manage profiles, and the optional account (sign-in and sync). Arrow keys move through it (remote friendly); Escape closes it.
  */
 export function ProfileMenu () {
   const profiles = useProfiles()
@@ -81,6 +81,10 @@ export function ProfileMenu () {
           <a href="/profiles" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/profiles') }}>
             <Pencil className="menu-icon" aria-hidden />
             <span className="menu-label">Manage profiles</span>
+          </a>
+          <a href="/account" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/account') }}>
+            <CircleUserRound className="menu-icon" aria-hidden />
+            <span className="menu-label">Account</span>
           </a>
         </div>
       )}

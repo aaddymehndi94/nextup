@@ -20,6 +20,23 @@ export interface DownloadRequest {
   type: MediaType; imdbId: string; streamId: string; title: string
 }
 
+// Account and sync (optional). The local server holds the session; the browser sees only this.
+export type SyncState = 'idle' | 'syncing' | 'synced' | 'offline' | 'error'
+export interface AccountStatus {
+  signedIn: boolean
+  cloudUrl: string
+  account?: { email: string; displayName: string | null; role: 'admin' | 'member' }
+  sync?: { state: SyncState; lastSyncAt: number | null; error: string | null; pending: number; retryAt: number | null }
+  /** Why this computer was signed out, when it wasn't the person's doing. */
+  notice?: string
+  /** After sign-in: local profile → the account's profile it was merged into. */
+  merged?: Record<string, string>
+}
+export interface Invite {
+  id: string; note: string | null; status: 'pending' | 'used' | 'expired' | 'revoked'
+  createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { email: string; displayName: string | null } | null
+}
+
 export class ApiError extends Error {
   readonly status: number
   constructor (message: string, status: number) {
@@ -133,6 +150,15 @@ export const api = {
   clearProgress: (type: MediaType, id: string, forget = false) => req<TitleState>(`/api/me/progress/${t(type, id)}${forget ? '?forget=1' : ''}`, json('DELETE')),
   dismiss: (type: MediaType, id: string, reason: DismissReason) => req<TitleState>(`/api/me/dismiss/${t(type, id)}`, json('PUT', { reason })),
   undismiss: (type: MediaType, id: string) => req<TitleState>(`/api/me/dismiss/${t(type, id)}`, json('DELETE')),
+
+  // Account and sync. Every write sends a JSON body (the server requires one).
+  account: () => req<AccountStatus>('/api/account'),
+  login: (email: string, password: string) => req<AccountStatus>('/api/account/login', json('POST', { email, password })),
+  join: (body: { code: string; email: string; password: string; displayName?: string }) => req<AccountStatus>('/api/account/join', json('POST', body)),
+  logout: () => req<AccountStatus>('/api/account/logout', json('POST', {})),
+  syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
+  invites: () => req<{ invites: Invite[] }>('/api/account/invites'),
+  createInvite: () => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', {})),
 
   // Recommendations.
   home: (type?: MediaType) => req<HomeResponse>(`/api/me/home${type ? `?type=${type}` : ''}`),
