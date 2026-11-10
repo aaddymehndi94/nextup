@@ -214,12 +214,15 @@ async function appCheck () {
     const failed = /CF model not loaded[^"\n]*/.exec(log())
     check('CF model loads in the app', !failed, failed ? failed[0] : 'no load warning', log())
   }
-  // Quit the way a user would: SIGTERM is handled as app.quit() on Linux and macOS; on Windows, taskkill without
-  // /F asks the window to close. Either way main asks the server to shut down before exiting. On Windows this is
-  // only a warning: a runner without an interactive desktop can't deliver the close message.
+  // Quit the way a user would: SIGTERM is handled as app.quit() on Linux and macOS; on Windows, close the main
+  // window (WM_CLOSE, as its close button does). Either way main asks the server to shut down before exiting. On
+  // Windows this is only a warning: a runner without an interactive desktop may have no window to close.
   const quitAt = Date.now()
-  if (os === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T'], { stdio: 'ignore' })
-  else child.kill('SIGTERM')
+  if (os === 'win32') {
+    const ps = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${child.pid}).CloseMainWindow()`], { encoding: 'utf8' })
+    console.log(`CloseMainWindow → ${(ps.stdout ?? '').trim() || ps.error?.message}`)
+    if (!/True/.test(ps.stdout ?? '')) spawnSync('taskkill', ['/PID', String(child.pid), '/T'], { stdio: 'ignore' })
+  } else child.kill('SIGTERM')
   const code = await Promise.race([exited, sleep(20_000).then(() => 'timeout')])
   if (code === 'timeout') await stop(child, exited)
   await sleep(500)

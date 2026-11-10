@@ -10,7 +10,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: [ci-setup] # TEMPORARY: while setting up CI; removed before merging
   workflow_dispatch:
 
 permissions:
@@ -211,7 +210,7 @@ jobs:
           mnt="$RUNNER_TEMP/dmg"
           hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "../out/${{ matrix.assets }}"
           app="$mnt/nexttupp.app"
-          codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Format|Signature|TeamIdentifier)=' || true
+          echo "::notice title=codesign ${{ matrix.arch }}::$(codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Format|Signature|TeamIdentifier)=' | tr '\n' ' ')"
           bash ../.github/scripts/run-logged.sh "codesign --verify" codesign --verify --deep --strict --verbose=2 "$app"
           for bin in "$app/Contents/MacOS/nexttupp" "$app/Contents/Resources/ffmpeg/bin/ffmpeg" "$app/Contents/Resources/ffmpeg/bin/ffprobe"; do
             archs=$(lipo -archs "$bin")
