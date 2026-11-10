@@ -16,19 +16,18 @@ npm start          # http://localhost:4545
 
 For development, `npm run dev` runs the server with reload plus Vite on http://localhost:5173.
 
-To use it from a phone or TV on the same network: `HOST=0.0.0.0 npm start`, then open
-`http://<this-machine's-ip>:4545`. The local server has no login of its own, so only do that on a network
-you trust: anyone who can reach it can use it, Account page included.
+To watch on a phone or a TV at home, see [Watch at home](#watch-at-home-phones-and-tvs) below.
 
 | Env var | Default | |
 |---|---|---|
 | `PORT` | `4545` | |
-| `HOST` | `127.0.0.1` | `0.0.0.0` to allow other devices |
+| `HOST` | `127.0.0.1` | the main listener; phones get their own listener on the home-network address (below). With `0.0.0.0`, other devices still need the phone cookie |
 | `NEXTTUPP_DATA` | `./data` | downloads, saved torrent metadata, library, taste database (`nexttupp.db`) |
 | `NEXTTUPP_LANGS` | `en` | preferred audio/subtitle languages, e.g. `en,hi` |
 | `NEXTTUPP_IDLE_MIN` | `15` | minutes before an unused torrent is stopped |
 | `NEXTTUPP_TORRENTIO` | `https://torrentio.strem.fun` | can include Torrentio options |
 | `NEXTTUPP_CLOUD_URL` | `https://api.nexttupp.com` | the accounts and sync service (`cloud/`); nothing is sent there until someone signs in |
+| `NEXTTUPP_CAST_DEVICES` | | extra TVs to cast to that discovery can't see, `Name@host[:port],…` (testing: `scripts/fake-tv.ts`) |
 
 The old `NEXTUP_*` names still work as fallbacks.
 
@@ -43,7 +42,8 @@ at the root). The server's `NEXTTUPP_WEB_DIR`, `NEXTTUPP_FFMPEG`/`NEXTTUPP_FFPRO
 
 Everything works without an account. Signing in (profile menu → Account) keeps profiles, likes, My List,
 Continue watching and taste settings the same on every computer you use. Only those sync, by IMDb id:
-never what you search for, sources, torrents or file names. Accounts are invite-only; any member can
+never what you search for, sources, torrents or file names. (Watch at home, below, also tells the cloud
+about the computer itself: its name and home-network addresses.) Accounts are invite-only; any member can
 invite from the same page, and the friend pastes the code, or the `https://nexttupp.com/join?code=…` link,
 into Join with an invite.
 
@@ -55,6 +55,34 @@ out keeps everything on the computer. The service itself is in [`cloud/`](cloud/
 [ADR 0004](docs/adr/0004-accounts-and-sync.md).
 
 The public website (nexttupp.com) lives in [`site/`](site/README.md).
+
+## Watch at home (phones and TVs)
+
+**Phones.** Signed in, the computer also answers on its home-network address. On the phone, open
+**nexttupp.com/watch**, sign in with the same account and tap **Watch on <computer>**: the phone lands on
+the computer's own address (`http://192.168.x.y:4545`) and can bookmark it or add it to the home screen.
+The film still streams from the computer, over the home network; nothing goes through the cloud. The
+setting is **Watch on phones and TVs at home** on the Account page (on by default once signed in), with the
+computer's name, its address for bookmarking, and the connected phones, each removable.
+
+How it stays private: every request from another device needs a random, HttpOnly cookie that only a
+handoff sets. A handoff code comes from the cloud, works once, within 60 seconds, for that account and that
+computer, and the computer checks it with the cloud using its own session. Phones can't sign the computer
+out or change its settings. Requests to `localhost` must say `localhost` or `127.0.0.1`, so another website
+can't reach the server through DNS rebinding. Signing out turns phones off.
+
+**TVs.** The Cast button in the player lists the Chromecasts and Google TVs on the network. The computer
+sends the TV a private, short-lived link to the film on its own address (the link only works for that TV)
+and converts what the TV can't play: MKV is repackaged as MP4, HEVC, 10-bit and HDR video become H.264
+(4K comes down to 1080p), and AC3/EAC3/DTS sound becomes AAC. Subtitles go along as WebVTT. The player becomes the remote
+(play, pause, seek, volume, stop) and Continue watching keeps up; it works the same from a connected phone.
+Details and limits: [ADR 0006](docs/adr/0006-watch-at-home.md).
+
+**What this sends to the cloud.** While signed in, the computer registers itself: a random device id, its
+name (like "Laptop (Linux)"; renamable, never the computer's hostname), its OS family, and when it was last
+seen, plus a keyed hash of its public IP address so the phone can tell it's on the same network (the IP
+itself isn't stored). While the setting is on, also its home-network addresses (like
+`http://192.168.1.20:4545`), so the phone knows where to go. Signing out removes the device.
 
 ## How it works
 
@@ -68,6 +96,8 @@ web (React)  ──►  server (Node 24, Fastify)
                    ├─ library     downloads kept for offline viewing, resumed on restart
                    ├─ taste       profiles, likes, My List, progress → SQLite (nexttupp.db), sync-ready
                    ├─ reco        content + CF ranking → personalised home rows, each with a reason
+                   ├─ lan         phones at home: a cookie-gated listener on the home-network address
+                   ├─ cast        Chromecast discovery (mDNS) and control (Cast v2), tokenised TV streams
                    └─ sync        optional sign-in; outbox push + pull ──►  cloud (Worker + D1, accounts and taste only)
 ```
 
@@ -82,6 +112,11 @@ node scripts/e2e.mjs out/                  # real Chrome: search → title → p
 node scripts/seek-bench.mjs <infoHash> 0   # seek latency into undownloaded parts of a file
 node scripts/reco-sanity.mjs http://127.0.0.1:<port> quiet action   # throwaway profiles → home rows with reasons
 CODE=nxi_… node scripts/sync-e2e.mjs       # two local servers + a local Worker: sign-in, invites, sync both ways
+node scripts/handoff-e2e.mjs …             # phone emulation: nexttupp.com/watch → handoff → the LAN cookie (see header)
+node scripts/cast-e2e.mjs …                # casting to scripts/fake-tv.ts: direct, remux, transcode, ffprobe + Chrome
+node scripts/cast-ui-e2e.mjs …             # the player as a remote, on the computer and a connected phone
 ```
+
+The cast scripts never touch a real TV: they cast to `scripts/fake-tv.ts`, a fake receiver.
 
 The end-to-end and seek scripts use a public-domain film (*Night of the Living Dead*, 1968).

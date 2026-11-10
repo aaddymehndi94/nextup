@@ -27,7 +27,8 @@ per password guess. Login throttling (per email and per IP) stays.
 **The local server is the client.** The browser never holds the session token: it lives in
 `<NEXTTUPP_DATA>/account.json` (mode 0600). The web app talks to `/api/account/*` on its own server and
 sees only the email and a sync status. Account writes need a JSON body, so another website can't trigger
-them without a CORS preflight, which fails.
+them without a CORS preflight, which fails. (One exception since [0006](0006-watch-at-home.md): the phone page
+nexttupp.com/watch keeps its own cloud session in `localStorage` on that origin, to find the computer.)
 
 **An outbox, filled by triggers.** Every insert or update on a synced table records the row's key in
 `sync_outbox`, so no write path can be missed. A rewritten key gets a new id, and a push only clears the
@@ -64,6 +65,9 @@ fallback that signs up in the browser with WebCrypto.
 - Raising the iteration count later means a new `KDF_ITERATIONS`, accepted for new credentials; existing
   accounts keep theirs until the password changes, and prelogin then reveals which accounts are older.
 - Hard limits from the cloud apply: 50 profiles per account (deleted ones included), 500 rows per push.
+- Since [0006](0006-watch-at-home.md), a signed-in computer also registers itself as a device (id, name, OS
+  family, last seen, an HMAC of its public IP, and with phones on its LAN URLs), as a heartbeat on the sync
+  loop. That is the only non-taste data the cloud holds about a computer; signing out deletes it.
 
 ## Testing
 
