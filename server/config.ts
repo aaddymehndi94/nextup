@@ -28,6 +28,8 @@ export const config = {
   idleMinutes: Number(env('IDLE_MIN') ?? 15),
   /** Torrentio base URL. Can include Torrentio config segments, e.g. https://torrentio.strem.fun/providers=yts,1337x */
   torrentioUrl: env('TORRENTIO') ?? 'https://torrentio.strem.fun',
+  /** The optional accounts and sync service (cloud/). Nothing is sent there until someone signs in. */
+  cloudUrl: (env('CLOUD_URL') ?? 'https://api.nexttupp.com').replace(/\/+$/, ''),
   cinemetaUrl: 'https://v3-cinemeta.strem.io',
   openSubtitlesUrl: 'https://opensubtitles-v3.strem.io',
 }

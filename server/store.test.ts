@@ -41,7 +41,8 @@ describe('schema', () => {
   })
 
   it('has no autoincrement keys and an updated_at on every synced state table', () => {
-    const sql = rows("SELECT sql FROM sqlite_master WHERE type = 'table'").map(r => String(r.sql)).join('\n')
+    // sync_outbox is LOCAL bookkeeping and needs ids that are never reused; nothing else may autoincrement.
+    const sql = rows("SELECT sql FROM sqlite_master WHERE type = 'table' AND name NOT IN ('sync_outbox', 'sqlite_sequence')").map(r => String(r.sql)).join('\n')
     expect(sql).not.toMatch(/AUTOINCREMENT/i)
     for (const t of ['profiles', 'ratings', 'my_list', 'progress', 'dismissals', 'feature_prefs']) {
       expect(rows(`PRAGMA table_info(${t})`).map(c => c.name)).toContain('updated_at')

@@ -146,7 +146,45 @@ const MIGRATIONS: string[] = [
     value  TEXT
   ) WITHOUT ROWID;
   `,
+
+  /* 2 */ `
+  -- Sync outbox (server/sync/): the key of every synced row written on this device since it was last
+  -- pushed. Triggers fill it, so every write path is covered. A row written again gets a new id, so a push
+  -- that was in flight only clears the versions it actually sent. Filled whether or not anyone is signed
+  -- in; a key appears once however often its row changes.
+  CREATE TABLE sync_outbox (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    tbl  TEXT NOT NULL,
+    k1   TEXT NOT NULL,
+    k2   TEXT NOT NULL DEFAULT '',
+    UNIQUE (tbl, k1, k2)
+  );
+  -- While a pull is applied, one row here silences the triggers: rows from the server aren't pushed back.
+  CREATE TABLE sync_mute (x INTEGER);
+${outboxTriggers([
+    ['profiles', 'NEW.id', "''"],
+    ['events', 'NEW.id', "''"],
+    ['ratings', 'NEW.profile_id', 'NEW.item_id'],
+    ['my_list', 'NEW.profile_id', 'NEW.item_id'],
+    ['progress', 'NEW.profile_id', 'NEW.stream_id'],
+    ['dismissals', 'NEW.profile_id', 'NEW.item_id'],
+    ['feature_prefs', 'NEW.profile_id', 'NEW.feature'],
+  ])}
+  `,
 ]
+
+/**
+ * AFTER INSERT/UPDATE triggers that (re)queue a row's key with a fresh id. Delete-then-insert rather than
+ * INSERT OR REPLACE: inside a trigger, the outer statement's conflict policy (an upsert's is ABORT) wins.
+ */
+function outboxTriggers (tables: Array<[string, string, string]>): string {
+  return tables.map(([t, k1, k2]) => ['INSERT', 'UPDATE'].map(op => `
+  CREATE TRIGGER ${t}_outbox_${op.toLowerCase()} AFTER ${op} ON ${t} WHEN NOT EXISTS (SELECT 1 FROM sync_mute)
+  BEGIN
+    DELETE FROM sync_outbox WHERE tbl = '${t}' AND k1 = ${k1} AND k2 = ${k2};
+    INSERT INTO sync_outbox (tbl, k1, k2) VALUES ('${t}', ${k1}, ${k2});
+  END;`).join('')).join('')
+}
 
 export const SCHEMA_VERSION = MIGRATIONS.length
 

@@ -21,6 +21,8 @@ import { SqliteTasteStore } from './store.ts'
 import { ItemCache } from './taste/items.ts'
 import { registerTasteRoutes } from './taste/routes.ts'
 import { RecoService } from './taste/service.ts'
+import { registerAccountRoutes } from './sync/routes.ts'
+import { SyncService } from './sync/service.ts'
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
@@ -33,6 +35,7 @@ const tasteStore = new SqliteTasteStore(db)
 const itemCache = new ItemCache(db, { baseUrl: config.cinemetaUrl })
 const loadCfSafe = () => loadCf(config.dataDir).catch(err => { app.log.warn(`CF model not loaded: ${(err as Error).message}`); return null })
 const reco = new RecoService({ store: tasteStore, items: itemCache, cf: await loadCfSafe(), log: msg => app.log.info(msg) })
+const sync = new SyncService({ db, store: tasteStore, dataDir: config.dataDir, cloudUrl: config.cloudUrl, log: msg => app.log.info(msg) })
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
 const streamStarts = new Map<string, Promise<number>>()
@@ -313,6 +316,10 @@ app.get<{ Querystring: { url?: string } }>('/api/subtitle-cues', async req => {
   return fetchCues(req.query.url)
 })
 
+// ---- Account and sync (optional) ---------------------------------------------------
+
+registerAccountRoutes(app, sync)
+
 // ---- Profiles, taste and recommendations ----------------------------------------
 
 registerTasteRoutes(app, tasteStore, reco)
@@ -328,6 +335,7 @@ if (existsSync(config.webDist)) {
 }
 
 const shutdown = async () => {
+  sync.stop()
   transcodes.killAll()
   await app.close()
   await engine.destroy()
@@ -340,6 +348,7 @@ process.on('SIGTERM', shutdown)
 await app.listen({ port: config.port, host: config.host })
 app.log.info(`nexttupp server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
 library.resumeAll(msg => app.log.info(msg)).catch(err => app.log.error(err))
+sync.start()
 
 // Candidate pool for recommendations: Cinemeta catalogs, refreshed twice a day (pages within TTL are skipped).
 const crawl = () => itemCache.crawl(msg => app.log.info(msg)).catch(err => app.log.warn(`catalog crawl: ${(err as Error).message}`))

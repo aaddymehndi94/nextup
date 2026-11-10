@@ -294,21 +294,25 @@ lower `seq`. `cursor` is an opaque decimal string: store it as given and send it
 `serverTime` comes back on every sync response so the client can spot a badly wrong clock. Timestamps
 more than an hour in the future are rejected.
 
-### Notes for the local side (`server/db.ts`, `server/store.ts`)
+### The local side (`server/sync/`)
 
-- Local `pref` events use `item_id = '-'` and `item_type = 'movie'`. On the wire these are `null`, `null`.
-- Local event `context` JSON passes through as-is when it holds only the keys allowed for its kind (it
-  does today: `streamId`, `position`, `duration`, `watchedSec`, `source`, `reason`, `feature`).
-- `ratings.source` is free text locally (≤ 32 characters). Send `null` when it doesn't match
-  `^[a-z][a-z0-9_-]{0,31}$`.
-- Profile names and avatars are checked more strictly here than in `server/taste/routes.ts` (no hash-like
-  runs, file names or links). Running `VALIDATORS.profiles` when a profile is created avoids a profile
-  that can never sync.
-- `profiles.account_id` is NULL locally until sign-in. On first sign-in, a device holding a default "Me"
-  profile will add a second "Me" to an account that already has one. Merging that is a UI decision on the
-  local side; the server just stores profiles.
-- `impressions`, `items` and `catalog_pages` are LOCAL and have no place in the wire format. The cursor
-  can live in the reserved `sync_state` table.
+The app's local server is the sync client; [ADR 0004](../docs/adr/0004-accounts-and-sync.md) has the
+design. In short:
+
+- Local `pref` events use `item_id = '-'` and `item_type = 'movie'`; on the wire these are `null`, `null`.
+  Event `context` keys not allowed for the kind are dropped, and a free-text `ratings.source` that doesn't
+  match `^[a-z][a-z0-9_-]{0,31}$` is sent as `null`.
+- Triggers on the synced tables fill a local `sync_outbox` with the key of every row written. A push sends
+  the current rows for those keys (validated with `VALIDATORS` first; a row that fails is set aside), plus
+  the profile row each one refers to, so `422 unknown_profile` can't happen. Pulled rows are applied with
+  the triggers muted, so they aren't pushed back.
+- `profiles.account_id` is NULL until sign-in. At sign-in, after a full pull, each unlinked local profile
+  with the same name as one of the account's live profiles is merged into it (newer row wins per title);
+  the rest join the account. Profiles linked to another account stay on the device and don't sync.
+  Profiles deleted before they were ever synced (test profiles, say) never reach the cloud.
+- Profile names are checked with the cloud's rules when created (`server/taste/routes.ts`), so every
+  profile can sync.
+- `impressions`, `items` and `catalog_pages` are LOCAL. The cursor lives in `sync_state`.
 
 ## D1 schema
 

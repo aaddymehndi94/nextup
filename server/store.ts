@@ -93,6 +93,9 @@ export class SqliteTasteStore implements TasteStore {
 
   onChange (fn: (profileId: string) => void): void { this.listeners.push(fn) }
 
+  /** Tells listeners (the recommender's caches) that a profile's data changed outside this store: a sync pull. */
+  markChanged (profileId: string): void { this.changed(profileId) }
+
   private event (profileId: string, item: ItemRef, kind: string, value: number | null, context: Record<string, unknown> | null, at: number): void {
     this.q('INSERT INTO events (id, profile_id, item_id, item_type, kind, value, context, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(uuidv7(at), profileId, item.id, item.type, kind, value, context ? JSON.stringify(context) : null, at)

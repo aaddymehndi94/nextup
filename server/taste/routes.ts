@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type {
   CreateProfileRequest, DismissRequest, FeaturePrefRequest, MediaType, Profile, ProgressRequest, RatingRequest, UpdateProfileRequest,
 } from '../../shared/types.ts'
+import { plainText } from '../../cloud/src/validate.ts'
 import { UUID } from '../db.ts'
 import { HttpError } from '../http.ts'
 import { isTunableFeature } from '../reco/taste.ts'
@@ -27,6 +28,8 @@ function title (params: { type: string; id: string }): { type: MediaType; id: st
 function profileName (v: unknown): string {
   const name = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : ''
   if (!name || name.length > 40) throw new HttpError(400, 'Name must be 1–40 characters')
+  // The same rules the sync service applies, so every profile can sync: no links, file names or long codes.
+  try { plainText(name, 'name', 40) } catch { throw new HttpError(400, 'Use a plain name, without links, file names or long codes') }
   return name
 }
 
