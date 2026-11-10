@@ -1,0 +1,30 @@
+// nexttupp cloud: one Worker + one D1 database.
+// Nothing here has been deployed. `wrangler deploy` and `wrangler d1 create` change the owner's Cloudflare
+// account, so they wait for the owner's approval (see README.md, "Deploying").
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nexttupp-cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    // Creates a DNS record and certificate for api.nexttupp.com in the nexttupp.com zone on first deploy.
+    { "pattern": "api.nexttupp.com", "custom_domain": true }
+  ],
+  "vars": {
+    // Where invite (/join) and reset (/reset) links point.
+    "PUBLIC_URL": "https://api.nexttupp.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nexttupp",
+      // PLACEHOLDER. Filled in at first deploy, after the owner approves: run `wrangler d1 create nexttupp`
+      // and paste the database_id it prints here. Until then this id matches no database, so a deploy
+      // fails instead of silently creating one.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
