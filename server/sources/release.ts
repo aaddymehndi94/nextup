@@ -37,8 +37,8 @@ export function parseRelease (name: string, fileName?: string): ReleaseInfo {
 
   let videoCodec: string | undefined
   if (has('av1')) videoCodec = 'av1'
-  else if (has('x265', 'h265', 'hevc') || /h\.265/i.test(text)) videoCodec = 'hevc'
-  else if (has('x264', 'h264', 'avc') || /h\.264|bdrip-avc/i.test(text)) videoCodec = 'h264'
+  else if (has('x265', 'h265', 'hevc') || /\bh[. ]265\b/i.test(text)) videoCodec = 'hevc'
+  else if (has('x264', 'h264', 'avc') || /\bh[. ]264\b|bdrip-avc/i.test(text)) videoCodec = 'h264'
   else if (has('xvid', 'divx')) videoCodec = 'xvid'
   else if (has('vp9')) videoCodec = 'vp9'
 

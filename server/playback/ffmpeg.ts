@@ -69,6 +69,28 @@ export function probe (url: string, fileName: string, timeoutMs = 120_000): Prom
   })
 }
 
+/**
+ * Film time where a stream-copy that seeks to `t` really begins. Copying can only cut on a keyframe, so
+ * ffmpeg starts at the keyframe at or before `t` (often 5–10 s earlier) and the MP4 it writes restarts at
+ * zero, so the player can't tell. ffprobe's -read_intervals seeks the same way as ffmpeg's -ss (verified
+ * to the millisecond against real output), so its first video packet is that keyframe.
+ */
+export function findKeyframe (url: string, t: number, container: string, timeoutMs = 60_000): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const fast = ['mkv', 'mp4', 'webm'].includes(container) ? ['-probesize', '1000000', '-analyzeduration', '0'] : []
+    const p = spawn('ffprobe', ['-v', 'error', ...fast, '-read_intervals', `${t.toFixed(3)}%+#1`, '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', url])
+    let out = ''
+    const timer = setTimeout(() => { p.kill('SIGKILL'); reject(new Error('keyframe lookup timed out')) }, timeoutMs)
+    p.stdout.on('data', d => { out += d })
+    p.on('error', e => { clearTimeout(timer); reject(e) })
+    p.on('close', () => {
+      clearTimeout(timer)
+      const k = Number.parseFloat(out.split('\n')[0])
+      if (Number.isFinite(k)) resolve(k); else reject(new Error('no keyframe found'))
+    })
+  })
+}
+
 /** Checks once at startup whether NVENC actually works (the encoder can be listed but unusable). */
 export function detectEncoder (): Promise<Encoder> {
   return new Promise(resolve => {

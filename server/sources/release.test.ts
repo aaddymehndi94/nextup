@@ -38,6 +38,11 @@ describe('parseRelease', () => {
     expect(r.videoCodec).toBe('h264')
   })
 
+  it('reads codecs written with a space, as some indexers mangle the dot', () => {
+    expect(parseRelease('Night of the Living Dead 1968 1080p MAX WEB-DL DDP2 0 H 264-').videoCodec).toBe('h264')
+    expect(parseRelease('Show S01E01 1080p WEB H 265').videoCodec).toBe('hevc')
+  })
+
   it('flags cam and telesync releases as low quality', () => {
     expect(parseRelease('Some.Movie.2024.HDCAM.x264').lowQuality).toBe(true)
     expect(parseRelease('Some Movie 2024 1080p HDTS H264').lowQuality).toBe(true)

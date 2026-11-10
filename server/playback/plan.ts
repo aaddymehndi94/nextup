@@ -79,7 +79,14 @@ export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder }: Ffmp
   if (!plan.copyVideo && encoder === 'nvenc') args.push('-hwaccel', 'cuda')
   // ffmpeg's HTTP client range-seeks into the torrent stream; wait patiently for slow swarms.
   args.push('-rw_timeout', String(180e6), '-fflags', '+genpts')
+  // MKV/MP4/WebM carry codec parameters in the header, and ffprobe already told us the streams.
+  // Without this ffmpeg reads ~12 MB from the start of the file before it will seek, and on a torrent
+  // that means waiting for pieces nobody asked for. Other containers (AVI, TS) need the default probing.
+  if (['mkv', 'mp4', 'webm'].includes(probe.container)) args.push('-probesize', '1000000', '-analyzeduration', '0')
   if (startSec > 0) args.push('-ss', startSec.toFixed(3))
+  // Keep original timestamps so the player knows exactly where a stream starts. With stream copy the
+  // cut lands on the keyframe *before* the requested time, so "requested t" alone would drift.
+  args.push('-copyts', '-start_at_zero')
   args.push('-i', input)
 
   args.push('-map', `0:v:${probe.video?.index ?? 0}`)

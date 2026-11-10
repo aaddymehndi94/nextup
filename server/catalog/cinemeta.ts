@@ -27,11 +27,26 @@ interface CinemetaMeta {
 
 const HOUR = 3600_000
 
+const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' }
+
+/** Cinemeta passes some text through with HTML entities ("Judith O&apos;Dea"). */
+export function decodeEntities (s: string): string
+export function decodeEntities (s: string | undefined): string | undefined
+export function decodeEntities (s: string | undefined): string | undefined {
+  return s?.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1] === 'x' || e[1] === 'X' ? Number.parseInt(e.slice(2), 16) : Number(e.slice(1))
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m
+    }
+    return NAMED[e.toLowerCase()] ?? m
+  })
+}
+
 function summary (m: CinemetaMeta): TitleSummary {
   return {
     id: m.imdb_id ?? m.id,
     type: m.type,
-    name: m.name,
+    name: decodeEntities(m.name),
     year: m.releaseInfo ?? m.year,
     poster: m.poster ? largerPoster(m.poster) : undefined,
   }
@@ -73,10 +88,10 @@ export async function detail (type: MediaType, id: string): Promise<TitleDetail>
       id: v.id,
       season: v.season,
       episode: v.episode ?? v.number ?? 0,
-      name: v.name ?? v.title ?? `Episode ${v.episode ?? v.number}`,
+      name: decodeEntities(v.name ?? v.title) ?? `Episode ${v.episode ?? v.number}`,
       released: v.released ?? v.firstAired,
       thumbnail: v.thumbnail,
-      overview: v.overview ?? v.description,
+      overview: decodeEntities(v.overview ?? v.description),
     }))
     .sort((a, b) => a.season - b.season || a.episode - b.episode)
   return {
@@ -84,12 +99,12 @@ export async function detail (type: MediaType, id: string): Promise<TitleDetail>
     poster: m.poster ? largerPoster(m.poster) : undefined,
     background: m.background?.replace('/background/medium/', '/background/large/'),
     logo: m.logo,
-    description: m.description,
+    description: decodeEntities(m.description),
     runtime: m.runtime,
     genres: m.genres ?? m.genre ?? [],
     imdbRating: m.imdbRating,
-    cast: m.cast ?? [],
-    director: m.director ?? [],
+    cast: (m.cast ?? []).map(c => decodeEntities(c)),
+    director: (m.director ?? []).map(d => decodeEntities(d)),
     episodes,
   }
 }

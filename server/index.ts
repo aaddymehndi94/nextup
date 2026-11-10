@@ -1,14 +1,14 @@
 import Fastify, { type FastifyReply } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
-import { Readable } from 'node:stream'
+import { Readable, pipeline } from 'node:stream'
 import type { ClientCaps, MediaType, OpenSessionRequest, ProbeResponse, ProbeResult } from '../shared/types.ts'
 import * as cinemeta from './catalog/cinemeta.ts'
 import { config } from './config.ts'
 import { EngineError, TorrentEngine, type Session } from './engine/engine.ts'
 import { contentType, parseRange } from './engine/range.ts'
 import { UpstreamError } from './http.ts'
-import { detectEncoder, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
+import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
 import { buildFfmpegArgs, choosePlan } from './playback/plan.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
@@ -19,6 +19,9 @@ const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
 const transcodes = new TranscodeRegistry()
 const encoder = await detectEncoder()
 const probes = new Map<string, Promise<ProbeResult>>()
+/** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
+const streamStarts = new Map<string, Promise<number>>()
+const startKey = (id: string, t: number) => `${id}@${t.toFixed(2)}`
 
 const IMDB_ID = /^tt\d{1,10}$/
 const STREAM_ID = /^tt\d{1,10}(:\d{1,4}:\d{1,5})?$/
@@ -168,17 +171,39 @@ async function serveRaw (id: string, rangeHeader: string | undefined, head: bool
     return reply.code(416).header('content-range', `bytes */${size}`).send()
   }
   const { start, end } = range ?? { start: 0, end: size - 1 }
-  reply
-    .code(range ? 206 : 200)
-    .header('accept-ranges', 'bytes')
-    .header('content-type', contentType(s.file.name))
-    .header('content-length', end - start + 1)
-    .header('cache-control', 'no-store')
-  if (range) reply.header('content-range', `bytes ${start}-${end}/${size}`)
-  if (head) return reply.send()
+  const headers: Record<string, string | number> = {
+    'accept-ranges': 'bytes',
+    'content-type': contentType(s.file.name),
+    'content-length': end - start + 1,
+    'cache-control': 'no-store',
+  }
+  if (range) headers['content-range'] = `bytes ${start}-${end}/${size}`
+  if (head) return reply.code(range ? 206 : 200).headers(headers).send()
+
+  // Send headers now rather than with the first byte. A client that seeks (ffmpeg, the browser) keeps
+  // its previous connection open until the new one answers; answering immediately lets it drop the
+  // old one before the torrent has even fetched the new piece.
+  reply.hijack()
+  reply.raw.writeHead(range ? 206 : 200, headers)
+  reply.raw.flushHeaders()
   const release = engine.hold(s)
-  reply.raw.on('close', release)
-  return reply.send(Readable.from(engine.read(s, start, end)))
+  const aborter = new AbortController()
+  reply.raw.on('close', () => aborter.abort())
+  // Timing per range request (LOG_LEVEL=debug): the main signal when diagnosing slow seeks.
+  const began = Date.now()
+  let firstByteMs = -1
+  let sent = 0
+  async function * timed () {
+    for await (const chunk of engine.read(s, start, end, aborter.signal)) {
+      if (firstByteMs < 0) firstByteMs = Date.now() - began
+      sent += chunk.length
+      yield chunk
+    }
+  }
+  pipeline(Readable.from(timed()), reply.raw, err => {
+    release()
+    reply.log.debug({ raw: { startPct: +(start / size * 100).toFixed(2), firstByteMs, sentKB: sent >> 10, ms: Date.now() - began, aborted: Boolean(err) } }, 'raw range')
+  })
 }
 
 app.get<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, false, reply))
@@ -192,10 +217,22 @@ app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; cap
   const plan = choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio)
   const startSec = Math.max(0, Math.min(Number(req.query.t) || 0, Math.max(0, result.durationSec - 1)))
   const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder })
+  if (plan.copyVideo && startSec > 0) {
+    // Runs alongside ffmpeg; both need the same pieces, so this costs no extra waiting.
+    const key = startKey(s.id, startSec)
+    if (!streamStarts.has(key)) {
+      const k = findKeyframe(rawUrl(s.id), startSec, result.container)
+      k.catch(() => streamStarts.delete(key))
+      streamStarts.set(key, k)
+      if (streamStarts.size > 200) streamStarts.delete(streamStarts.keys().next().value!)
+    }
+  }
   const proc = transcodes.spawn(s.id, args)
   const release = engine.hold(s)
   let stderr = ''
   proc.stderr!.on('data', d => { stderr = (stderr + d).slice(-2000) })
+  const began = Date.now()
+  proc.stdout!.once('data', () => req.log.debug({ play: { t: startSec, mode: plan.mode, firstOutputMs: Date.now() - began } }, 'ffmpeg output'))
   proc.on('close', code => {
     if (code && code !== 255 && !reply.raw.destroyed) req.log.warn({ code, stderr: stderr.trim() }, 'ffmpeg exited')
   })
@@ -205,6 +242,15 @@ app.get<{ Params: { id: string }; Querystring: { t?: string; audio?: string; cap
     .header('cache-control', 'no-store')
     .header('x-playback-mode', plan.mode)
     .send(proc.stdout)
+})
+
+/** Film time at which the stream requested with `t` begins (the player's clock origin). */
+app.get<{ Params: { id: string }; Querystring: { t?: string } }>('/api/sessions/:id/stream-start', async req => {
+  const s = session(req.params.id)
+  const t = Number(req.query.t) || 0
+  const pending = streamStarts.get(startKey(s.id, t))
+  if (!pending) return { start: t, exact: false }
+  try { return { start: await pending, exact: true } } catch { return { start: t, exact: false } }
 })
 
 // ---- Subtitles --------------------------------------------------------------

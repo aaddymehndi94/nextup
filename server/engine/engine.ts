@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { OpenSessionRequest, SessionStats } from '../../shared/types.ts'
 import { DEFAULT_TRACKERS } from '../config.ts'
+import { StreamReader } from './reader.ts'
 
 const VIDEO_RE = /\.(mkv|mp4|m4v|avi|webm|mov|ts|m2ts|wmv|mpg|mpeg|flv)$/i
 const METADATA_TIMEOUT_MS = 90_000
@@ -17,6 +18,8 @@ export interface Session {
   pinned: boolean
   activeStreams: number
   lastActive: number
+  /** Open readers, oldest first. Only the newest gets urgent priority. */
+  readers: StreamReader[]
 }
 
 export class EngineError extends Error {
@@ -84,7 +87,7 @@ export class TorrentEngine {
     const id = sessionId(infoHash, idx)
     let session = this.sessions.get(id)
     if (!session) {
-      session = { id, infoHash, title: req.title, torrent, file: torrent.files[idx], pinned: false, activeStreams: 0, lastActive: Date.now() }
+      session = { id, infoHash, title: req.title, torrent, file: torrent.files[idx], pinned: false, activeStreams: 0, lastActive: Date.now(), readers: [] }
       this.sessions.set(id, session)
     }
     session.lastActive = Date.now()
@@ -148,8 +151,27 @@ export class TorrentEngine {
   }
 
   /** Reads bytes [start, end] of the session's file, prioritising those pieces in the swarm. */
-  read (session: Session, start: number, end: number): AsyncIterableIterator<Uint8Array> {
-    return session.file[Symbol.asyncIterator]({ start, end })
+  /**
+   * Streams bytes [start, end] of the file. Pass the response's AbortSignal: an async generator that is
+   * waiting for a piece cannot be cancelled from outside, so without it an abandoned request would keep
+   * its urgent priority (and starve the next seek) until its piece happened to arrive.
+   */
+  read (session: Session, start: number, end: number, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+    // The newest request is what the viewer is waiting on (a seek, or ffmpeg's jump to the seek point);
+    // older readers on this file drop behind it until it finishes.
+    const reader = new StreamReader(session.torrent, session.file, start, end)
+    signal?.addEventListener('abort', () => reader.destroy(), { once: true })
+    for (const r of session.readers) r.setActive(false)
+    session.readers.push(reader)
+    return (async function * () {
+      try {
+        yield * reader
+      } finally {
+        reader.destroy()
+        session.readers = session.readers.filter(r => r !== reader)
+        session.readers.at(-1)?.setActive(true)
+      }
+    })()
   }
 
   /** Marks the session as in use for the lifetime of a response. Returns a release function. */
@@ -168,7 +190,8 @@ export class TorrentEngine {
   /** Download the whole file and keep it, so it can be watched later without waiting. */
   pin (session: Session): void {
     session.pinned = true
-    session.file.select(1)
+    // Background priority: a full download must never slow down what's being watched.
+    session.file.select(0)
   }
 
   unpin (session: Session): void {
