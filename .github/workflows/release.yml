@@ -61,11 +61,15 @@ jobs:
           path: cf-model/raw/ml-32m.zip
           key: movielens-32m-d472be332d4daa821edc399621853b57
 
-      - name: Install numpy, scipy and pandas
+      # Ubuntu's own packages, as on the laptop the model was developed on. OpenBLAS (multithreaded) instead of the
+      # reference BLAS/LAPACK they otherwise pull in: the model's dense 18,797² inverse needs it.
+      - name: Install numpy, scipy, pandas and OpenBLAS
         if: steps.model.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends python3-numpy python3-scipy python3-pandas unzip
+          sudo apt-get install -y -q --no-install-recommends python3-numpy python3-scipy python3-pandas libopenblas0-pthread unzip
+          /usr/bin/python3 -I -c "import numpy, scipy, pandas; print('numpy', numpy.__version__, 'scipy', scipy.__version__, 'pandas', pandas.__version__)"
+          update-alternatives --display liblapack.so.3-x86_64-linux-gnu | head -3
 
       - name: Build the model (MovieLens 32M, EDLAE; about 5 GB of RAM)
         if: steps.model.outputs.cache-hit != 'true'
