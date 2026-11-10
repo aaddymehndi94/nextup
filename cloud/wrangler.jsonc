@@ -13,8 +13,9 @@
     { "pattern": "api.nexttupp.com", "custom_domain": true }
   ],
   "vars": {
-    // Where invite (/join) and reset (/reset) links point.
-    "PUBLIC_URL": "https://api.nexttupp.com"
+    // The website. Invite links are <PUBLIC_URL>/join?code=nxi_…, a page the website serves. Reset links
+    // use this Worker's own origin (api.nexttupp.com/reset#…).
+    "PUBLIC_URL": "https://nexttupp.com"
   },
   "d1_databases": [
     {

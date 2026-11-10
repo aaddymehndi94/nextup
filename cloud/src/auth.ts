@@ -1,8 +1,9 @@
-import { DUMMY_HASH, hashPassword, randomToken, sha256Hex, TOKEN, verifyPassword } from './crypto.ts'
+import { checkKey, DUMMY_VERIFIER, fakeSalt, KDF, KDF_ITERATIONS, kdfParams, makeVerifier, randomToken, sha256Hex, TOKEN } from './crypto.ts'
 import { type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
-import { displayName, newPassword, str } from './validate.ts'
+import { authKey, credential, displayName, str } from './validate.ts'
 
-// Accounts, sessions, login throttling, password change and admin-issued password resets.
+// Accounts, sessions, login throttling, password change and admin-issued password resets. Passwords are
+// stretched by the client; the server only ever sees the derived key (see crypto.ts).
 
 const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
@@ -13,7 +14,7 @@ const SESSION_TOUCH_MS = DAY
 const MAX_SESSIONS = 20
 export const RESET_TTL_MS = DAY
 
-/** Login throttling: failures per key inside a window, then a lock. Checked before any hashing. */
+/** Login throttling: failures per key inside a window, then a lock. Checked before the key is compared. */
 export const THROTTLE = {
   windowMs: 15 * MINUTE,
   lockMs: 15 * MINUTE,
@@ -28,6 +29,7 @@ export interface AccountRow {
   email: string
   display_name: string | null
   role: 'admin' | 'member'
+  /** The verifier for the client-derived key: nxk1$<iterations>$<client salt>$<server salt>$<hmac> */
   password_hash: string
   invited_by: string | null
   created_at: number
@@ -136,11 +138,41 @@ function failure (env: Env, key: string, limit: number, now: number): D1Prepared
 
 // ---- Handlers ---------------------------------------------------------------------
 
+// The prelogin key is a random value in D1 (migration 0002), read once per isolate.
+let preloginKey: string | null = null
+
+async function serverKey (env: Env): Promise<string> {
+  if (preloginKey) return preloginKey
+  const [, row] = await env.DB.batch<{ value: string }>([
+    env.DB.prepare("INSERT OR IGNORE INTO server_keys (name, value) VALUES ('prelogin', lower(hex(randomblob(32))))"),
+    env.DB.prepare("SELECT value FROM server_keys WHERE name = 'prelogin'"),
+  ])
+  preloginKey = (row.results[0] as { value: string }).value
+  return preloginKey
+}
+
+/**
+ * The KDF parameters for an email: `{ kdf, iterations, salt }`. An email without an account gets a
+ * deterministic fake salt, so this doesn't reveal who has an account. Costs one HMAC either way.
+ */
+export async function prelogin (ctx: Ctx): Promise<Response> {
+  const body = await readJson(ctx.req, SMALL_BODY)
+  onlyKeys(body, ['email'])
+  const mail = str(body.email, 'email').trim().toLowerCase().slice(0, 254)
+  const [row, key] = await Promise.all([
+    ctx.env.DB.prepare('SELECT password_hash FROM accounts WHERE email = ?').bind(mail).first<{ password_hash: string }>(),
+    serverKey(ctx.env),
+  ])
+  const fake = await fakeSalt(key, mail)
+  const real = row ? kdfParams(row.password_hash) : null
+  return json({ kdf: KDF, iterations: real?.iterations ?? KDF_ITERATIONS, salt: real?.salt ?? fake })
+}
+
 export async function login (ctx: Ctx): Promise<Response> {
   const body = await readJson(ctx.req, SMALL_BODY)
-  onlyKeys(body, ['email', 'password'])
+  onlyKeys(body, ['email', 'key'])
   const mail = str(body.email, 'email').trim().toLowerCase().slice(0, 254)
-  const password = str(body.password, 'password').slice(0, 1024)
+  const key = authKey(body.key)
   const { env, now } = ctx
   const keys = await throttleKeys(mail, clientIp(ctx.req))
 
@@ -153,7 +185,7 @@ export async function login (ctx: Ctx): Promise<Response> {
   if (until > now) throw tooManyAttempts(until - now)
   const account = accounts.results[0] as AccountRow | undefined
 
-  const ok = await verifyPassword(password, account?.password_hash ?? DUMMY_HASH)
+  const ok = await checkKey(key, account?.password_hash ?? DUMMY_VERIFIER)
   if (!ok || !account) {
     await env.DB.batch([failure(env, keys.email, THROTTLE.emailFailures, now), failure(env, keys.ip, THROTTLE.ipFailures, now)])
     throw new HttpError(401, 'invalid_credentials', 'Wrong email or password')
@@ -193,22 +225,22 @@ export async function patchAccount (ctx: Ctx): Promise<Response> {
   return json({ account: accountJson({ ...s.account, display_name: name }) })
 }
 
-/** Needs the current password; signs out every other session. Costs two hashes (verify + new). */
+/** Needs the current key (derived with the old salt) and a new credential; signs out every other session. */
 export async function changePassword (ctx: Ctx): Promise<Response> {
   const s = await authenticate(ctx)
   const body = await readJson(ctx.req, SMALL_BODY)
-  onlyKeys(body, ['currentPassword', 'newPassword'])
-  const current = str(body.currentPassword, 'currentPassword').slice(0, 1024)
-  const next = newPassword(body.newPassword, 'newPassword')
+  onlyKeys(body, ['currentKey', 'salt', 'iterations', 'key'])
+  const current = authKey(body.currentKey, 'currentKey')
+  const next = credential(body)
   const { env, now } = ctx
   const keys = await throttleKeys(s.account.email, clientIp(ctx.req))
   const wait = await lockedFor(env, [keys.email, keys.ip], now)
   if (wait > 0) throw tooManyAttempts(wait)
-  if (!await verifyPassword(current, s.account.password_hash)) {
+  if (!await checkKey(current, s.account.password_hash)) {
     await env.DB.batch([failure(env, keys.email, THROTTLE.emailFailures, now), failure(env, keys.ip, THROTTLE.ipFailures, now)])
     throw new HttpError(403, 'wrong_password', 'The current password is wrong')
   }
-  const hash = await hashPassword(next)
+  const hash = await makeVerifier(next.key, next.salt, next.iterations)
   await env.DB.batch([
     env.DB.prepare('UPDATE accounts SET password_hash = ?, password_changed_at = ? WHERE id = ?').bind(hash, now, s.account.id),
     env.DB.prepare('DELETE FROM sessions WHERE account_id = ? AND token_hash != ?').bind(s.account.id, s.tokenHash),
@@ -221,9 +253,9 @@ export async function changePassword (ctx: Ctx): Promise<Response> {
 /** Sets a new password with an admin-issued reset token. Signs out every session; the client then logs in. */
 export async function resetPassword (ctx: Ctx): Promise<Response> {
   const body = await readJson(ctx.req, SMALL_BODY)
-  onlyKeys(body, ['token', 'newPassword'])
+  onlyKeys(body, ['token', 'salt', 'iterations', 'key'])
   const token = str(body.token, 'token')
-  const next = newPassword(body.newPassword, 'newPassword')
+  const next = credential(body)
   const { env, now } = ctx
   const invalid = new HttpError(400, 'invalid_token', 'This reset link is invalid or has expired. Ask the admin for a new one.')
   if (!TOKEN.test(token) || !token.startsWith('nxr_')) throw invalid
@@ -233,7 +265,7 @@ export async function resetPassword (ctx: Ctx): Promise<Response> {
     .bind(tokenHash, now).first<{ account_id: string; email: string; disabled_at: number | null }>()
   if (!r) throw invalid
   if (r.disabled_at !== null) throw new HttpError(403, 'account_disabled', 'This account has been disabled')
-  const hash = await hashPassword(next)
+  const hash = await makeVerifier(next.key, next.salt, next.iterations)
   const keys = await throttleKeys(r.email, '')
   // The password only changes if the token is still unused when the batch runs (it is one transaction);
   // the follow-up statements key off the new hash, which is unique, so a lost race changes nothing.

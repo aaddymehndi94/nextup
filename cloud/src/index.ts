@@ -1,4 +1,4 @@
-import { changePassword, getAccount, login, logout, patchAccount, resetPassword } from './auth.ts'
+import { changePassword, getAccount, login, logout, patchAccount, prelogin, resetPassword } from './auth.ts'
 import { type Env, json, Router } from './http.ts'
 import {
   acceptInvite, adminDisable, adminEnable, adminListAccounts, adminListInvites, adminResetLink, adminRevokeInvite, createInvite, listMyInvites, revokeMyInvite,
@@ -14,6 +14,7 @@ export type { Env }
 const router = new Router()
   .on('GET', '/v1/health', async ctx => json({ ok: true, serverTime: ctx.now }))
 
+  .on('POST', '/v1/auth/prelogin', prelogin)
   .on('POST', '/v1/auth/login', login)
   .on('POST', '/v1/auth/logout', logout)
   .on('POST', '/v1/auth/reset', resetPassword)

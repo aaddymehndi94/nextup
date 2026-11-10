@@ -1,7 +1,7 @@
 import { type AccountRow, accountJson, authenticate, RESET_TTL_MS, requireAdmin } from './auth.ts'
-import { hashPassword, randomToken, sha256Hex, TOKEN } from './crypto.ts'
+import { makeVerifier, randomToken, sha256Hex, TOKEN } from './crypto.ts'
 import { type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
-import { displayName, email, newPassword, plainText, str, UUID } from './validate.ts'
+import { credential, displayName, email, plainText, str, UUID } from './validate.ts'
 
 // Invite-only sign-up (any member can invite; links are single-use and expire after 7 days) and the
 // admin endpoints: list accounts, disable/enable, reset links, list and revoke any invite.
@@ -55,8 +55,10 @@ function inviteJson (r: InviteListRow, now: number, withCreator: boolean) {
 const INVITE_SELECT = `SELECT i.*, u.email AS u_email, u.display_name AS u_name, c.email AS c_email, c.display_name AS c_name
                          FROM invites i LEFT JOIN accounts u ON u.id = i.used_by LEFT JOIN accounts c ON c.id = i.created_by`
 
-export const inviteUrl = (env: Env, token: string) => `${env.PUBLIC_URL.replace(/\/+$/, '')}/join#${token}`
-const resetUrl = (env: Env, token: string) => `${env.PUBLIC_URL.replace(/\/+$/, '')}/reset#${token}`
+/** Invite links open the website's join page, `<PUBLIC_URL>/join?code=nxi_…`. The app also takes the bare code. */
+export const inviteUrl = (env: Env, token: string) => `${env.PUBLIC_URL.replace(/\/+$/, '')}/join?code=${token}`
+/** Reset links open this Worker's own /reset page, with the token in the fragment (never sent to a server). */
+const resetUrl = (ctx: Ctx, token: string) => `${ctx.url.origin}/reset#${token}`
 
 // ---- Members -------------------------------------------------------------------------
 
@@ -111,10 +113,10 @@ export async function revokeMyInvite (ctx: Ctx): Promise<Response> {
 /** Sign up with an invite token. Returns the new account; the client then logs in. */
 export async function acceptInvite (ctx: Ctx): Promise<Response> {
   const body = await readJson(ctx.req, SMALL_BODY)
-  onlyKeys(body, ['token', 'email', 'password', 'displayName'])
+  onlyKeys(body, ['token', 'email', 'salt', 'iterations', 'key', 'displayName'])
   const token = str(body.token, 'token')
   const mail = email(body.email)
-  const password = newPassword(body.password)
+  const cred = credential(body)
   const name = displayName(body.displayName)
   const { env, now } = ctx
   const invalid = new HttpError(400, 'invalid_invite', 'This invite link is invalid, already used or expired. Ask for a new one.')
@@ -131,7 +133,7 @@ export async function acceptInvite (ctx: Ctx): Promise<Response> {
   if (!invite) throw invalid
   if (taken.results.length) throw new HttpError(409, 'email_taken', 'An account with that email already exists')
 
-  const hash = await hashPassword(password)
+  const hash = await makeVerifier(cred.key, cred.salt, cred.iterations)
   const id = crypto.randomUUID()
   // One transaction: the account is only inserted while the invite is still valid, then the invite is
   // marked used. Two simultaneous sign-ups with one token: the second inserts nothing.
@@ -220,7 +222,7 @@ export async function adminResetLink (ctx: Ctx): Promise<Response> {
     env.DB.prepare('INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
       .bind(await sha256Hex(token), a.id, admin.id, now, expiresAt),
   ])
-  return json({ token, url: resetUrl(env, token), expiresAt }, 201)
+  return json({ token, url: resetUrl(ctx, token), expiresAt }, 201)
 }
 
 export async function adminListInvites (ctx: Ctx): Promise<Response> {

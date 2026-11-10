@@ -1,9 +1,10 @@
 import { env } from 'cloudflare:workers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { THROTTLE } from '../src/auth.ts'
+import { KDF_ITERATIONS } from '../src/crypto.ts'
 import { bootstrapInvite } from '../src/bootstrap.ts'
 import { INVITE_TTL_MS } from '../src/invites.ts'
-import { call, invite, login, makeAdmin, makeMember, PASSWORD, uniqueEmail, uniqueIp } from './helpers.ts'
+import { accept, call, credential, deriveKey, invite, login, makeAdmin, makeMember, PASSWORD, prelogin, uniqueEmail, uniqueIp } from './helpers.ts'
 
 afterEach(() => { vi.useRealTimers() })
 
@@ -31,8 +32,8 @@ describe('bootstrap', () => {
     const a = await bootstrapInvite({ force: true })
     const b = await bootstrapInvite({ force: true })
     await env.DB.batch([env.DB.prepare(a.sql), env.DB.prepare(b.sql)])
-    expect((await call('POST', '/v1/invites/accept', { body: { token: a.token, email: uniqueEmail('admin'), password: PASSWORD } })).status).toBe(201)
-    const second = await call('POST', '/v1/invites/accept', { body: { token: b.token, email: uniqueEmail('admin'), password: PASSWORD } })
+    expect((await accept(a.token, uniqueEmail('admin'))).status).toBe(201)
+    const second = await accept(b.token, uniqueEmail('admin'))
     expect(second.status).toBe(400)
     expect(second.body.error).toBe('invalid_invite')
   })
@@ -58,11 +59,11 @@ describe('invites and sign-up', () => {
     expect(bobRow.invitedBy).toEqual({ id: alice.id, email: alice.email, displayName: 'Alice' })
   })
 
-  it('returns a /join link with the token in the fragment, valid for 7 days', async () => {
+  it('returns a website /join?code= link, valid for 7 days', async () => {
     const admin = await makeAdmin()
     const before = Date.now()
     const inv = await invite(admin, 'for Sam')
-    expect(inv.url).toBe(`https://cloud.test/join#${inv.token}`)
+    expect(inv.url).toBe(`https://site.test/join?code=${inv.token}`)
     expect(inv.token).toMatch(/^nxi_[A-Za-z0-9_-]{43}$/)
     expect(inv.expiresAt - before).toBeGreaterThanOrEqual(INVITE_TTL_MS)
     expect(inv.expiresAt - before).toBeLessThan(INVITE_TTL_MS + 60_000)
@@ -75,9 +76,9 @@ describe('invites and sign-up', () => {
   it('an invite works once', async () => {
     const admin = await makeAdmin()
     const inv = await invite(admin)
-    const first = await call('POST', '/v1/invites/accept', { body: { token: inv.token, email: uniqueEmail(), password: PASSWORD } })
+    const first = await accept(inv.token, uniqueEmail())
     expect(first.status).toBe(201)
-    const again = await call('POST', '/v1/invites/accept', { body: { token: inv.token, email: uniqueEmail(), password: PASSWORD } })
+    const again = await accept(inv.token, uniqueEmail())
     expect(again.status).toBe(400)
     expect(again.body.error).toBe('invalid_invite')
   })
@@ -86,7 +87,7 @@ describe('invites and sign-up', () => {
     const admin = await makeAdmin()
     const inv = await invite(admin)
     const results = await Promise.all([0, 1, 2].map(() =>
-      call('POST', '/v1/invites/accept', { body: { token: inv.token, email: uniqueEmail(), password: PASSWORD } })))
+      accept(inv.token, uniqueEmail())))
     expect(results.map(r => r.status).sort()).toEqual([201, 400, 400])
   })
 
@@ -97,9 +98,9 @@ describe('invites and sign-up', () => {
     const early = await invite(admin)
     const late = await invite(admin)
     setNow(start + INVITE_TTL_MS - 60_000)
-    expect((await call('POST', '/v1/invites/accept', { body: { token: early.token, email: uniqueEmail(), password: PASSWORD } })).status).toBe(201)
+    expect((await accept(early.token, uniqueEmail())).status).toBe(201)
     setNow(start + INVITE_TTL_MS + 1)
-    const expired = await call('POST', '/v1/invites/accept', { body: { token: late.token, email: uniqueEmail(), password: PASSWORD } })
+    const expired = await accept(late.token, uniqueEmail())
     expect(expired.status).toBe(400)
     expect(expired.body.error).toBe('invalid_invite')
     const mine = await call('GET', '/v1/invites', { token: admin.token })
@@ -113,7 +114,7 @@ describe('invites and sign-up', () => {
     const inv = await invite(alice)
     expect((await call('DELETE', `/v1/invites/${inv.id}`, { token: bob.token })).status).toBe(404)
     expect((await call('DELETE', `/v1/invites/${inv.id}`, { token: alice.token })).status).toBe(204)
-    expect((await call('POST', '/v1/invites/accept', { body: { token: inv.token, email: uniqueEmail(), password: PASSWORD } })).status).toBe(400)
+    expect((await accept(inv.token, uniqueEmail())).status).toBe(400)
 
     const inv2 = await invite(alice)
     expect((await call('DELETE', `/v1/admin/invites/${inv2.id}`, { token: bob.token })).status).toBe(403)
@@ -122,7 +123,7 @@ describe('invites and sign-up', () => {
     expect(listed.body.invites.find((i: { id: string }) => i.id === inv2.id)).toMatchObject({ status: 'revoked', createdBy: { id: alice.id } })
 
     const inv3 = await invite(alice)
-    await call('POST', '/v1/invites/accept', { body: { token: inv3.token, email: uniqueEmail(), password: PASSWORD } })
+    await accept(inv3.token, uniqueEmail())
     const used = await call('DELETE', `/v1/invites/${inv3.id}`, { token: alice.token })
     expect(used.status).toBe(409)
   })
@@ -139,18 +140,24 @@ describe('invites and sign-up', () => {
   it('validates sign-up input', async () => {
     const admin = await makeAdmin()
     const inv = await invite(admin)
-    const accept = (body: Record<string, unknown>) => call('POST', '/v1/invites/accept', { body: { token: inv.token, email: uniqueEmail(), password: PASSWORD, ...body } })
-    expect((await accept({ email: 'not-an-email' })).status).toBe(400)
-    expect((await accept({ password: 'short' })).status).toBe(400)
-    expect((await accept({ displayName: 'x'.repeat(41) })).status).toBe(400)
-    expect((await accept({ extra: 1 })).status).toBe(400)
-    expect((await accept({ token: 'nxi_nope' })).body.error).toBe('invalid_invite')
+    const signUp = (extra: Record<string, unknown>) => accept(inv.token, uniqueEmail(), PASSWORD, extra)
+    expect((await signUp({ email: 'not-an-email' })).status).toBe(400)
+    expect((await signUp({ displayName: 'x'.repeat(41) })).status).toBe(400)
+    expect((await signUp({ extra: 1 })).status).toBe(400)
+    expect((await signUp({ token: 'nxi_nope' })).body.error).toBe('invalid_invite')
+    // The raw password, a short key, a bad salt or another iteration count is refused.
+    expect((await signUp({ key: PASSWORD })).status).toBe(400)
+    expect((await signUp({ password: PASSWORD })).status).toBe(400)
+    expect((await signUp({ key: 'A'.repeat(42) })).status).toBe(400)
+    expect((await signUp({ salt: 'tooshort' })).status).toBe(400)
+    expect((await signUp({ iterations: 100_000 })).status).toBe(400)
+    expect((await signUp({ iterations: undefined })).status).toBe(400)
     expect((await call('POST', '/v1/invites/accept', { raw: 'email=x', headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status).toBe(415)
     // The invite is still usable after all those rejections, and emails are unique (case-insensitive).
     const email = uniqueEmail()
-    expect((await accept({ email })).status).toBe(201)
+    expect((await signUp({ email })).status).toBe(201)
     const other = await invite(admin)
-    const dup = await call('POST', '/v1/invites/accept', { body: { token: other.token, email: email.toUpperCase(), password: PASSWORD } })
+    const dup = await accept(other.token, email.toUpperCase())
     expect(dup.status).toBe(409)
     expect(dup.body.error).toBe('email_taken')
   })
@@ -216,6 +223,56 @@ describe('login, sessions, logout', () => {
   })
 })
 
+describe('client-side key stretching', () => {
+  it('prelogin returns the salt the account signed up with', async () => {
+    const admin = await makeAdmin()
+    const row = await env.DB.prepare('SELECT password_hash FROM accounts WHERE id = ?').bind(admin.id).first<{ password_hash: string }>()
+    const r = await prelogin(admin.email.toUpperCase())
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual({ kdf: 'pbkdf2-sha256', iterations: KDF_ITERATIONS, salt: row!.password_hash.split('$')[2] })
+  })
+
+  it('prelogin gives an unknown email a stable fake salt that looks like a real one', async () => {
+    const admin = await makeAdmin()
+    const nobody = uniqueEmail('nobody')
+    const a = await prelogin(nobody)
+    const b = await prelogin(nobody)
+    const other = await prelogin(uniqueEmail('nobody'))
+    const real = await prelogin(admin.email)
+    expect(a.status).toBe(200)
+    expect(a.body).toEqual(b.body)
+    expect(other.body.salt).not.toBe(a.body.salt)
+    expect(Object.keys(a.body).sort()).toEqual(Object.keys(real.body).sort())
+    expect(a.body.iterations).toBe(real.body.iterations)
+    expect(a.body.salt).toMatch(/^[A-Za-z0-9_-]{22}$/)
+    expect(real.body.salt).toMatch(/^[A-Za-z0-9_-]{22}$/)
+  })
+
+  it('stores only an HMAC of the key, never the key or the password', async () => {
+    const admin = await makeAdmin()
+    const salt = (await prelogin(admin.email)).body.salt
+    const key = await deriveKey(PASSWORD, salt)
+    const row = await env.DB.prepare('SELECT password_hash FROM accounts WHERE id = ?').bind(admin.id).first<{ password_hash: string }>()
+    expect(row!.password_hash).toMatch(/^nxk1\$600000\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/)
+    expect(row!.password_hash).not.toContain(key)
+    expect(row!.password_hash).not.toContain(PASSWORD)
+  })
+
+  it('login takes only the derived key: a raw password or a malformed key is a 400, not a guess', async () => {
+    const admin = await makeAdmin()
+    const ip = uniqueIp()
+    for (const key of [PASSWORD, 'A'.repeat(42), 'A'.repeat(44), '']) {
+      const r = await call('POST', '/v1/auth/login', { body: { email: admin.email, key }, ip })
+      expect(r.status, JSON.stringify(key)).toBe(400)
+    }
+    expect((await call('POST', '/v1/auth/login', { body: { email: admin.email, password: PASSWORD }, ip })).status).toBe(400)
+    // A key derived with the wrong salt is just a wrong password.
+    const wrongSalt = await call('POST', '/v1/auth/login', { body: { email: admin.email, key: await deriveKey(PASSWORD, 'AAAAAAAAAAAAAAAAAAAAAA') }, ip })
+    expect(wrongSalt.status).toBe(401)
+    expect((await login(admin.email, PASSWORD, ip)).status).toBe(200)
+  })
+})
+
 describe('brute-force protection', () => {
   it(`locks an email after ${THROTTLE.emailFailures} failures, even for the right password, until the lock ends`, async () => {
     const admin = await makeAdmin()
@@ -254,9 +311,13 @@ describe('passwords', () => {
     const admin = await makeAdmin()
     const member = await makeMember(admin)
     const other = (await login(member.email)).body.token
-    const wrong = await call('POST', '/v1/account/password', { token: member.token, body: { currentPassword: 'not it at all', newPassword: 'a brand new password' } })
+    const salt = (await prelogin(member.email)).body.salt
+    const change = async (current: string) => call('POST', '/v1/account/password', {
+      token: member.token, body: { currentKey: await deriveKey(current, salt), ...await credential('a brand new password') },
+    })
+    const wrong = await change('not it at all')
     expect(wrong.status).toBe(403)
-    const ok = await call('POST', '/v1/account/password', { token: member.token, body: { currentPassword: PASSWORD, newPassword: 'a brand new password' } })
+    const ok = await change(PASSWORD)
     expect(ok.status).toBe(204)
     expect((await call('GET', '/v1/account', { token: member.token })).status).toBe(200)
     expect((await call('GET', '/v1/account', { token: other })).status).toBe(401)
@@ -271,11 +332,11 @@ describe('passwords', () => {
     const link = await call('POST', `/v1/admin/accounts/${member.id}/reset-link`, { token: admin.token })
     expect(link.status).toBe(201)
     expect(link.body.url).toBe(`https://cloud.test/reset#${link.body.token}`)
-    const reset = await call('POST', '/v1/auth/reset', { body: { token: link.body.token, newPassword: 'reset password 123' } })
+    const reset = await call('POST', '/v1/auth/reset', { body: { token: link.body.token, ...await credential('reset password 123') } })
     expect(reset.status).toBe(204)
     expect((await call('GET', '/v1/account', { token: member.token })).status).toBe(401)
     expect((await login(member.email, 'reset password 123')).status).toBe(200)
-    const reuse = await call('POST', '/v1/auth/reset', { body: { token: link.body.token, newPassword: 'another password 456' } })
+    const reuse = await call('POST', '/v1/auth/reset', { body: { token: link.body.token, ...await credential('another password 456') } })
     expect(reuse.status).toBe(400)
     expect(reuse.body.error).toBe('invalid_token')
   })
@@ -285,8 +346,8 @@ describe('passwords', () => {
     const member = await makeMember(admin)
     const first = (await call('POST', `/v1/admin/accounts/${member.id}/reset-link`, { token: admin.token })).body.token
     const second = (await call('POST', `/v1/admin/accounts/${member.id}/reset-link`, { token: admin.token })).body.token
-    expect((await call('POST', '/v1/auth/reset', { body: { token: first, newPassword: 'reset password 123' } })).status).toBe(400)
-    expect((await call('POST', '/v1/auth/reset', { body: { token: second, newPassword: 'reset password 123' } })).status).toBe(204)
+    expect((await call('POST', '/v1/auth/reset', { body: { token: first, ...await credential('reset password 123') } })).status).toBe(400)
+    expect((await call('POST', '/v1/auth/reset', { body: { token: second, ...await credential('reset password 123') } })).status).toBe(204)
   })
 })
 
@@ -309,7 +370,7 @@ describe('admin', () => {
     const row = list.body.accounts.find((a: { id: string }) => a.id === member.id)
     expect(row).toMatchObject({ email: member.email, role: 'member', disabledAt: null, invitedBy: { id: admin.id } })
     expect(row).not.toHaveProperty('password_hash')
-    expect(JSON.stringify(list.body)).not.toContain('pbkdf2')
+    expect(JSON.stringify(list.body)).not.toContain('nxk1')
   })
 
   it('disabling an account ends its sessions, blocks login and revokes its unused invites', async () => {
@@ -323,7 +384,7 @@ describe('admin', () => {
     const blocked = await login(member.email)
     expect(blocked.status).toBe(403)
     expect(blocked.body.error).toBe('account_disabled')
-    expect((await call('POST', '/v1/invites/accept', { body: { token: pending.token, email: uniqueEmail(), password: PASSWORD } })).status).toBe(400)
+    expect((await accept(pending.token, uniqueEmail())).status).toBe(400)
 
     expect((await call('POST', `/v1/admin/accounts/${member.id}/enable`, { token: admin.token })).status).toBe(200)
     expect((await login(member.email)).status).toBe(200)

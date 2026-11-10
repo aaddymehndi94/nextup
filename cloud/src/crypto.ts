@@ -1,10 +1,21 @@
-// Password hashing, opaque tokens and constant-time comparison, on WebCrypto only so the same code runs
+// Login credentials, opaque tokens and constant-time comparison, on WebCrypto only so the same code runs
 // in the Worker and in Node (scripts/bootstrap-invite.ts).
+//
+// The password never reaches the server. The client stretches it (Bitwarden's pattern):
+//
+//   key = PBKDF2-SHA256(password, salt, KDF_ITERATIONS), 32 bytes, sent as base64url
+//
+// with a random 16-byte salt the client picked at sign-up; POST /v1/auth/prelogin hands it back later.
+// The server keeps only HMAC-SHA256(serverSalt, key) and compares in constant time, so a login costs
+// microseconds of CPU (the free plan allows 10 ms), and a leaked database still needs 600,000 PBKDF2
+// rounds per password guess, the same as if the server had stretched it.
 
-/** Workers' WebCrypto rejects PBKDF2 above 100,000 iterations, so this is the most it allows. */
-export const PBKDF2_ITERATIONS = 100_000
-const SALT_BYTES = 16
-const HASH_BYTES = 32
+export const KDF = 'pbkdf2-sha256'
+/** OWASP's 2023 figure for PBKDF2-HMAC-SHA256. Every client must use exactly this (checked on write). */
+export const KDF_ITERATIONS = 600_000
+export const SALT_BYTES = 16
+export const KEY_BYTES = 32
+const SCHEME = 'nxk1'
 const enc = new TextEncoder()
 
 export function b64url (bytes: Uint8Array): string {
@@ -23,34 +34,59 @@ export function fromB64url (s: string): Uint8Array | null {
   }
 }
 
-async function pbkdf2 (password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, HASH_BYTES * 8)
-  return new Uint8Array(bits)
-}
-
-/** `pbkdf2-sha256$<iterations>$<salt>$<hash>` (base64url), so the cost can change later per hash. */
-export async function hashPassword (password: string, iterations = PBKDF2_ITERATIONS): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
-  const hash = await pbkdf2(password, salt, iterations)
-  return `pbkdf2-sha256$${iterations}$${b64url(salt)}$${b64url(hash)}`
-}
-
-export async function verifyPassword (password: string, stored: string): Promise<boolean> {
-  const [scheme, iter, saltS, hashS] = stored.split('$')
-  const iterations = Number(iter)
-  const salt = fromB64url(saltS ?? '')
-  const expected = fromB64url(hashS ?? '')
-  if (scheme !== 'pbkdf2-sha256' || !Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_ITERATIONS || !salt || !expected) return false
-  const actual = await pbkdf2(password, salt, iterations)
-  return timingSafeEqual(actual, expected)
+async function hmac (key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  // Copies give plain ArrayBuffer-backed views, which every lib's BufferSource type accepts.
+  const k = await crypto.subtle.importKey('raw', new Uint8Array(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, new Uint8Array(data)))
 }
 
 /**
- * A valid hash of a random password nobody knows. Logins for unknown emails verify against it, so they
- * cost the same as real ones and don't reveal which emails have accounts.
+ * What the server stores for a client-derived key:
+ * `nxk1$<iterations>$<client salt>$<server salt>$<HMAC-SHA256(server salt, key)>` (base64url).
+ * The client's KDF parameters live in the same string, so prelogin reads them from one column.
  */
-export const DUMMY_HASH = 'pbkdf2-sha256$100000$RlnZ4fd3sB7RSGikAUp-MA$W4s6V-Y8ACWlihgXbv0yF82beDSQOyeMCoKlpK-E7uI'
+export async function makeVerifier (key: Uint8Array, clientSalt: Uint8Array, iterations: number): Promise<string> {
+  const serverSalt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
+  return `${SCHEME}$${iterations}$${b64url(clientSalt)}$${b64url(serverSalt)}$${b64url(await hmac(serverSalt, key))}`
+}
+
+function parse (stored: string): { iterations: number; salt: string; serverSalt: Uint8Array; verifier: Uint8Array } | null {
+  const [scheme, iter, salt, serverS, verS] = stored.split('$')
+  const iterations = Number(iter)
+  const serverSalt = fromB64url(serverS ?? '')
+  const verifier = fromB64url(verS ?? '')
+  if (scheme !== SCHEME || !Number.isInteger(iterations) || iterations < 1 || !salt || !serverSalt || !verifier) return null
+  return { iterations, salt, serverSalt, verifier }
+}
+
+/** The KDF parameters the client must use for this account, or null for a value that isn't a verifier. */
+export function kdfParams (stored: string): { iterations: number; salt: string } | null {
+  const p = parse(stored)
+  return p && { iterations: p.iterations, salt: p.salt }
+}
+
+export async function checkKey (key: Uint8Array, stored: string): Promise<boolean> {
+  const p = parse(stored)
+  if (!p) return false
+  return timingSafeEqual(await hmac(p.serverSalt, key), p.verifier)
+}
+
+/**
+ * A well-formed verifier nobody has a key for. Logins for unknown emails check against it, so they do
+ * the same work as real ones and fail the same way.
+ */
+export const DUMMY_VERIFIER = 'nxk1$600000$-VTgvwoyWNcAEcWKFOUpYQ$znyDCYtkH5HpcpmMeBohGg$TEgM2j1IrfJmpBh6h3jRmC-Jghyn7KTO-WG7ZWJJwIw'
+
+/**
+ * The salt prelogin returns for an email that has no account: HMAC-SHA256(server key, email), cut to 16
+ * bytes. Deterministic, so asking twice gives the same answer, as it would for a real account, and it
+ * looks like any random salt. The server key is a random value in D1 (`server_keys`), so no deployed
+ * secret is needed.
+ */
+export async function fakeSalt (serverKeyHex: string, email: string): Promise<string> {
+  const keyBytes = Uint8Array.from(serverKeyHex.match(/../g) ?? [], h => parseInt(h, 16))
+  return b64url((await hmac(keyBytes, enc.encode(`prelogin-salt:${email}`))).slice(0, SALT_BYTES))
+}
 
 export function timingSafeEqual (a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false

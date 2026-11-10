@@ -1,4 +1,5 @@
-import { bad } from './http.ts'
+import { fromB64url, KDF_ITERATIONS, KEY_BYTES, SALT_BYTES } from './crypto.ts'
+import { bad } from './errors.ts'
 
 // Field validators shared by the account and sync endpoints. Each takes the value and a path for the
 // error message (`events[3].itemId: …`) and returns the value narrowed, or throws a 400.
@@ -78,12 +79,24 @@ export function email (v: unknown, path = 'email'): string {
   return s
 }
 
-export function newPassword (v: unknown, path = 'password'): string {
+/**
+ * A client-derived login key: PBKDF2-SHA256(password, salt, KDF_ITERATIONS), 32 bytes in base64url.
+ * Anything else (a raw password, say) is rejected, so a buggy client can't send the password itself.
+ */
+export function authKey (v: unknown, path = 'key'): Uint8Array {
   const s = str(v, path)
-  const chars = [...s].length
-  if (chars < 8 || chars > 256) throw bad(`${path}: must be 8–256 characters`)
-  if (!s.trim()) throw bad(`${path}: can't be only spaces`)
-  return s
+  const bytes = /^[A-Za-z0-9_-]{43}$/.test(s) ? fromB64url(s) : null
+  if (!bytes || bytes.byteLength !== KEY_BYTES) throw bad(`${path}: must be the 32-byte PBKDF2 key in base64url (43 characters), never the password`)
+  return bytes
+}
+
+/** A new credential (sign-up, reset, password change): the client's salt, its iteration count and the key. */
+export function credential (o: Record<string, unknown>): { salt: Uint8Array; iterations: number; key: Uint8Array } {
+  const s = str(o.salt, 'salt')
+  const salt = /^[A-Za-z0-9_-]{22}$/.test(s) ? fromB64url(s) : null
+  if (!salt || salt.byteLength !== SALT_BYTES) throw bad('salt: must be 16 random bytes in base64url (22 characters)')
+  if (o.iterations !== KDF_ITERATIONS) throw bad(`iterations: must be ${KDF_ITERATIONS} (update nexttupp)`)
+  return { salt, iterations: KDF_ITERATIONS, key: authKey(o.key) }
 }
 
 export function displayName (v: unknown, path = 'displayName'): string | null {

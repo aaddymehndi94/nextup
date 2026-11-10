@@ -1,4 +1,4 @@
-import { bad, HttpError } from './http.ts'
+import { bad, HttpError } from './errors.ts'
 import { IMDB_ID, match, nullable, num, object, oneOf, plainText, STREAM_ID, time, UUID } from './validate.ts'
 
 // The sync wire format: types, limits and the validator for a push. Pure (no Worker APIs), so the local
@@ -17,12 +17,13 @@ export type Kind = typeof KINDS[number]
 const TYPES = ['movie', 'series'] as const
 export type MediaType = typeof TYPES[number]
 const REASONS = ['not_interested', 'seen'] as const
-const RATING_SOURCE = /^[a-z][a-z0-9_-]{0,31}$/
+export const RATING_SOURCE = /^[a-z][a-z0-9_-]{0,31}$/
 const FEATURE = /^(g|gg|gd|dec|d|w|p|c):(.{1,120})$/s
 const MAX_SECONDS = 86_400
 const MAX_WATCHED = 10_000_000
 
-const CONTEXT_KEYS: Record<Kind, string[]> = {
+/** The context keys each event kind may carry. */
+export const CONTEXT_KEYS: Record<Kind, string[]> = {
   rating: ['source'],
   list: [],
   play: ['streamId', 'position', 'duration', 'watchedSec'],

@@ -41,9 +41,10 @@ The script runs nothing itself. It prints:
    guarded by `WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE role = 'admin')`, so once an admin exists
    it does nothing. `--force` drops that guard, for recovery (for example, if the only admin forgot
    their password).
-2. The link `https://api.nexttupp.com/join#nxi_…`. Open it and create the admin account, or POST the
-   token to `/v1/invites/accept`. The token is printed once and is never stored. Using a bootstrap
-   invite revokes every other unused bootstrap invite.
+2. The invite code `nxi_…` and its link `https://nexttupp.com/join?code=nxi_…` (with `--local`:
+   `http://localhost:8799/join?code=…`, this Worker's fallback page). Paste the code or the link into the
+   app (profile menu → Account → Join with an invite), or open the link. The code is printed once and is
+   never stored. Using a bootstrap invite revokes every other unused bootstrap invite.
 
 Why this is safe: only someone who can already run `wrangler d1 execute` against the database can
 create an admin invite. No secret stays deployed in the Worker, and no endpoint can mint an admin.
@@ -68,42 +69,87 @@ All times are integer milliseconds since the Unix epoch.
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
-| `POST /v1/auth/login` | – | `{ email, password }` | `200 { token: "nxs_…", expiresAt, account: Account }` · `401 invalid_credentials` · `403 account_disabled` · `429 too_many_attempts` |
+| `POST /v1/auth/prelogin` | – | `{ email }` | `200 { kdf: "pbkdf2-sha256", iterations: 600000, salt }` (see [Passwords](#passwords-stretched-by-the-client)) |
+| `POST /v1/auth/login` | – | `{ email, key }` | `200 { token: "nxs_…", expiresAt, account: Account }` · `401 invalid_credentials` · `403 account_disabled` · `429 too_many_attempts` |
 | `POST /v1/auth/logout` | bearer | none, or `{ all: true }` to end every session | `204` |
-| `POST /v1/auth/reset` | – | `{ token: "nxr_…", newPassword }` | `204`, then log in · `400 invalid_token` |
+| `POST /v1/auth/reset` | – | `{ token: "nxr_…", salt, iterations, key }` | `204`, then log in · `400 invalid_token` |
 | `GET /v1/account` | bearer | | `200 { account: Account }` |
 | `PATCH /v1/account` | bearer | `{ displayName: string\|null }` | `200 { account: Account }` |
-| `POST /v1/account/password` | bearer | `{ currentPassword, newPassword }` | `204`; every other session is signed out · `403 wrong_password` |
+| `POST /v1/account/password` | bearer | `{ currentKey, salt, iterations, key }` | `204`; every other session is signed out · `403 wrong_password` |
 
-- Passwords are 8–256 characters. Emails are lowercased and unique. `displayName` is 1–40 characters.
+- Emails are lowercased and unique. `displayName` is 1–40 characters. Passwords never reach the API (see
+  below), so their length (8–256 characters) is checked by the clients.
 - Sessions are opaque 256-bit tokens, stored only as SHA-256. A session expires after **90 days unused**,
   and each day it is used pushes the expiry out again. Logout deletes the session. An account keeps its
   20 most recent sessions.
 - **Login throttling:** 5 failures per email or 30 per IP within 15 minutes lock that email or IP for 15
-  minutes. While locked, even the right password gets `429`. The check runs before any hashing. Counters
-  are keyed by SHA-256 of the email or IP, so the table holds no emails or addresses. An unknown email
-  still costs one hash (against a dummy), so login timing doesn't reveal which emails have accounts.
+  minutes. While locked, even the right password gets `429`. The check runs before the key is compared.
+  Counters are keyed by SHA-256 of the email or IP, so the table holds no emails or addresses. An unknown
+  email is checked against a dummy verifier, so it fails the same way and takes the same work.
+
+### Passwords: stretched by the client
+
+The Workers free plan allows 10 ms of CPU per request, and PBKDF2 at a safe cost takes far longer. So the
+client does the slow part, as Bitwarden does, and the server only checks a cheap HMAC:
+
+1. **Sign-up, reset, password change.** The client picks a random 16-byte `salt` and derives
+   `key = PBKDF2-SHA256(UTF-8(NFC(password)), salt, 600000)`, 32 bytes. It sends `salt` and `key` in
+   base64url (22 and 43 characters) with `iterations: 600000`. Any other iteration count is refused
+   (`400`, "update nexttupp"). The server stores
+   `nxk1$<iterations>$<salt>$<server salt>$<HMAC-SHA256(server salt, key)>`, with a fresh random 16-byte
+   server salt, in `accounts.password_hash`.
+2. **Login.** The client calls `POST /v1/auth/prelogin { email }` for `{ kdf, iterations, salt }`, derives
+   the key the same way, and sends `POST /v1/auth/login { email, key }`. The server recomputes the HMAC
+   and compares in constant time.
+3. A `key` that isn't exactly 32 bytes of base64url is a `400`, so a client can't send a password by
+   mistake. The password itself never reaches the server or its logs.
+
+**Unknown emails.** Prelogin answers every email the same way. One without an account gets
+`HMAC-SHA256(server key, "prelogin-salt:" + email)` cut to 16 bytes: deterministic (asking twice gives the
+same salt, as for a real account) and indistinguishable from a random salt. The server key is 32 random
+bytes that migration `0002` generates inside D1 (`server_keys`), so **no deployed secret is needed** and
+nothing has to be set at deploy time. Someone holding the database can tell real salts from fake ones,
+but they already have the email list. Two small leaks remain, both accepted: a real account's salt
+changes when its password changes and a fake one never does, and if `KDF_ITERATIONS` is raised later,
+older accounts will report the old count until their password changes.
+
+**What a leak would cost.** From the database alone, each password guess still needs 600,000 PBKDF2
+rounds, the same as server-side stretching. The stored HMAC can't be replayed: login needs the key, and
+the key is the PBKDF2 output.
+
+**Where the clients are.** The nexttupp app's local server (`server/sync/cloud.ts`, Node's
+`crypto.pbkdf2`, about 0.3–0.5 s) and any browser page (WebCrypto `PBKDF2`; this Worker's own `/join` and
+`/reset` pages do it in `/app.js`). `server/sync/cloud.test.ts` checks that both derive the same key.
 
 ### Invites (any member)
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
-| `POST /v1/invites` | bearer | none, or `{ note?: string (≤80) }` | `201 { invite: Invite, token: "nxi_…", url: "<PUBLIC_URL>/join#nxi_…" }` · `409 too_many_invites` |
+| `POST /v1/invites` | bearer | none, or `{ note?: string (≤80) }` | `201 { invite: Invite, token: "nxi_…", url: "<PUBLIC_URL>/join?code=nxi_…" }` · `409 too_many_invites` |
 | `GET /v1/invites` | bearer | | `200 { invites: Invite[] }`, your own, newest first |
 | `DELETE /v1/invites/:id` | bearer | | `204` · `404` if it isn't yours · `409 already_used` |
-| `POST /v1/invites/accept` | – | `{ token, email, password, displayName? }` | `201 { account: Account }`, then log in · `400 invalid_invite` · `409 email_taken` |
+| `POST /v1/invites/accept` | – | `{ token, email, salt, iterations, key, displayName? }` | `201 { account: Account }`, then log in · `400 invalid_invite` · `409 email_taken` |
 
 `Invite` = `{ id, note, role, status: "pending"|"used"|"expired"|"revoked", createdAt, expiresAt, usedAt, usedBy: {id, email, displayName}|null, revokedAt }`.
 
-- An invite is single-use and expires **7 days** after creation. Only its hash is stored, so the link is
-  shown once, in the create response. The token sits in the URL fragment, so it never reaches server logs
-  or a `Referer` header.
+- An invite is single-use and expires **7 days** after creation. Only its hash is stored, so the code is
+  shown once, in the create response. The `token` is the **invite code**; people share it as is or as the
+  link `https://nexttupp.com/join?code=<code>` (`PUBLIC_URL` is the website). The app's Join form takes
+  either. The website's `/join` page should send `Referrer-Policy: no-referrer` and drop the code from the
+  address bar once read, since a query string can reach the site's logs. A leaked code is still single-use
+  and expires.
 - A member can have at most 10 unused invites at a time (an admin, 100).
 - An invite is valid only while its creator's account is enabled. Disabling an account revokes its unused invites.
 - Who invited whom is recorded in `accounts.invited_by` and `invites.used_by`.
 - Signing up is atomic: two simultaneous sign-ups with one token create one account (tested).
-- `GET /join` and `GET /reset` serve small HTML forms (strict CSP; script at `/app.js`) for people who
-  open a link in a browser.
+- `GET /join?code=…` (or `/join#…`) and `GET /reset#…` serve small HTML forms (strict CSP; script at
+  `/app.js`) for people who open a link in a browser. `/join` here is the fallback for the website's page;
+  `/reset` links point here (the Worker's own origin).
+
+**For the website's `/join` page.** It can sign people up itself: read `code`, ask for email, password
+(8–256 characters) and an optional name, derive the key with WebCrypto as above, and
+`POST https://api.nexttupp.com/v1/invites/accept` (CORS allows any origin). Then tell them to sign in
+in the app. Or it can just show the code and say "paste this in nexttupp → Account → Join".
 
 ### Admin (role `admin`; anyone else gets 403)
 
@@ -112,7 +158,7 @@ All times are integer milliseconds since the Unix epoch.
 | `GET /v1/admin/accounts` | `200 { accounts: [Account + { invitedBy: {id, email, displayName}\|null, disabledAt, lastSeenAt }] }` |
 | `POST /v1/admin/accounts/:id/disable` | `200 { account }`. Ends all its sessions, revokes its unused invites and reset links. `409` for your own account |
 | `POST /v1/admin/accounts/:id/enable` | `200 { account }` |
-| `POST /v1/admin/accounts/:id/reset-link` | `201 { token: "nxr_…", url: "<PUBLIC_URL>/reset#nxr_…", expiresAt }`. Single-use, 24 h; replaces any earlier unused link |
+| `POST /v1/admin/accounts/:id/reset-link` | `201 { token: "nxr_…", url: "https://api.nexttupp.com/reset#nxr_…", expiresAt }` (this Worker's origin). Single-use, 24 h; replaces any earlier unused link |
 | `GET /v1/admin/invites` | `200 { invites: [Invite + { createdBy }] }`, everyone's, newest first |
 | `DELETE /v1/admin/invites/:id` | `204` · `409 already_used` |
 
@@ -266,15 +312,16 @@ more than an hour in the future are rejected.
 
 ## D1 schema
 
-[`migrations/0001_init.sql`](migrations/0001_init.sql). All tables are `STRICT`.
+[`migrations/0001_init.sql`](migrations/0001_init.sql) and [`0002_client_kdf.sql`](migrations/0002_client_kdf.sql). All tables are `STRICT`.
 
 | Table | Key | Purpose |
 |---|---|---|
-| `accounts` | `id` (UUID), `email` unique | role, PBKDF2 hash, `invited_by`, `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
+| `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `invited_by`, `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
 | `sessions` | `token_hash` | bearer sessions: `created_at`, `last_used_at`, `expires_at` |
 | `invites` | `id`, `token_hash` unique | `created_by` (NULL = bootstrap), role, note, `expires_at`, `used_at`/`used_by`, `revoked_at`/`revoked_by` |
 | `password_resets` | `token_hash` | admin-issued, single-use, 24 h |
 | `login_attempts` | `key` (SHA-256 of email or IP) | failure count, window, `locked_until` |
+| `server_keys` | `name` | random keys generated in D1: `prelogin` (the fake-salt HMAC key) |
 | `profiles` | `id` | + `account_id`, name, avatar, `created_at`, `updated_at`, `deleted_at`, `seq` |
 | `events` | `(account_id, id)` | kind, item, value, `at`, and the context as typed columns (`stream_id`, `position`, `duration`, `watched_sec`, `source`, `reason`, `feature`), `seq` |
 | `ratings`, `my_list`, `dismissals` | `(account_id, profile_id, item_id)` | the local columns + `seq` |
@@ -285,33 +332,13 @@ Every synced table has an index on `(account_id, seq)`, so a pull reads only the
 
 ## Free-plan budget
 
-**Password hashing** is PBKDF2-SHA256 at 100,000 iterations (the most Workers' WebCrypto allows), with a
-16-byte per-user salt and a constant-time compare (`crypto.subtle.timingSafeEqual`). Hashes are stored
-as `pbkdf2-sha256$<iterations>$<salt>$<hash>`, so the cost can change later without invalidating
-existing passwords.
-
-Measured on this machine (i7-11800H, under load):
-
-| Where | One hash |
-|---|---|
-| workerd in the vitest pool (`test/hash-cost.test.ts`, median of 20) | **≈ 13–14 ms** run alone; 22 ms median with other test files hashing in parallel |
-| `wrangler dev`, request with 10 hashes vs none (medians) | **≈ 12–13 ms** |
-| Node 24 (OpenSSL, for comparison) | 40–72 ms |
-
-The free plan allows **10 ms of CPU per request**. Cloudflare's docs say the limit "has some
-flexibility" and that a Worker is cut off when it hits it *consistently*. So:
-
-- Login, sign-up and reset each do one hash (about 13 ms, so over the limit). Password change does two
-  (about 26 ms). Every other request does none; sessions use a SHA-256 of the token, which takes
-  microseconds.
-- These requests are rare: one login per device per 90 days, plus sign-ups. Occasional overruns will
-  *probably* be tolerated, but that isn't guaranteed. The failure would be Cloudflare error **1102**
-  ("Worker exceeded resource limits") on login.
-- A flood of logins (password spraying from many IPs) costs about 13 ms of CPU each and could hit that
-  limit or the 100,000 requests/day cap. That is denial of service, not a breach. The per-IP lock limits
-  it for any single address.
-- If 1102 shows up after deploying, there are two fixes: **Workers Paid** ($5/month, 30 s CPU by default,
-  no code change), or fewer iterations for new hashes (the stored format allows that per hash).
+**Password checks** cost one HMAC-SHA256: about **0.01 ms** per check in workerd (`test/hash-cost.test.ts`,
+200 checks), so login, sign-up, reset and password change all fit the 10 ms budget with room to spare.
+The expensive part, PBKDF2 at 600,000 iterations, runs on the client (see
+[Passwords](#passwords-stretched-by-the-client)). Before this, the Worker ran PBKDF2 itself at 100,000
+iterations (the most Workers' WebCrypto allows) and measured 13–26 ms per login, over the free plan's
+limit. A flood of login attempts now costs the Worker microseconds each; the per-email and per-IP locks
+still limit online guessing.
 
 **Other limits:** a push is one D1 batch (one transaction) plus one ownership read. A pull is one batch.
 D1 counts a batch as one query against the 50-queries-per-request free limit, and no request here makes
@@ -325,18 +352,20 @@ Nothing below has been run. Each step changes the owner's Cloudflare account.
 
 ```bash
 npx wrangler d1 create nexttupp                      # 1. creates the D1 database; paste its id into wrangler.jsonc
-npx wrangler d1 migrations apply nexttupp --remote   # 2. creates the tables
+npx wrangler d1 migrations apply nexttupp --remote   # 2. creates the tables (0001, 0002; 0002 also generates the prelogin key)
 npx wrangler deploy                                  # 3. uploads the Worker and attaches api.nexttupp.com
-node scripts/bootstrap-invite.ts                     # 4. prints the --remote INSERT to run, then the /join link
+node scripts/bootstrap-invite.ts                     # 4. prints the --remote INSERT to run, then the invite code and link
 ```
 
 What that creates:
 
 | Resource | Details | Free-plan allowance |
 |---|---|---|
-| D1 database `nexttupp` | 12 tables + indexes, plus wrangler's `d1_migrations` | 10 databases, 500 MB each, 5 GB per account |
-| Worker `nexttupp-cloud` | `src/index.ts`; one plain var `PUBLIC_URL`; no secrets, KV, R2, Durable Objects, queues or cron triggers | 100,000 requests/day |
+| D1 database `nexttupp` | 13 tables + indexes, plus wrangler's `d1_migrations` | 10 databases, 500 MB each, 5 GB per account |
+| Worker `nexttupp-cloud` | `src/index.ts`; one plain var `PUBLIC_URL` (`https://nexttupp.com`, where invite links point); no secrets, KV, R2, Durable Objects, queues or cron triggers | 100,000 requests/day |
 | Custom domain `api.nexttupp.com` | a proxied DNS record and an edge certificate in the `nexttupp.com` zone (the zone must be on this account) | free |
 
 `workers_dev` and preview URLs are off, so the Worker is reachable only at `api.nexttupp.com`. To use
-another hostname, change `routes` and `PUBLIC_URL` in `wrangler.jsonc` before step 3.
+another hostname, change `routes` in `wrangler.jsonc` before step 3 (and `NEXTTUPP_CLOUD_URL` for the app).
+`PUBLIC_URL` is the website that serves `/join?code=…`; until that page exists, invite codes still work
+pasted into the app, and the Worker's own `/join` page takes the same `?code=`.

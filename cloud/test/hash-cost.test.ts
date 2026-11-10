@@ -1,26 +1,25 @@
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
-import { hashPassword, PBKDF2_ITERATIONS, verifyPassword } from '../src/crypto.ts'
+import { checkKey, makeVerifier } from '../src/crypto.ts'
 
-// Measures one PBKDF2-SHA256 hash inside workerd, the runtime Workers use. Workers only advance the clock
-// at I/O, so each timing is bracketed by a trivial D1 query and the same bracket without hashing is
-// subtracted. Prints the result; asserts only that hashing works.
-it(`measures PBKDF2-SHA256 x${PBKDF2_ITERATIONS} in workerd`, async () => {
+// Measures what a login costs the Worker now that clients stretch passwords themselves: one
+// HMAC-SHA256 check of the derived key, inside workerd. Workers only advance the clock at I/O, so a run of
+// N checks is bracketed by a trivial D1 query and the same bracket without work is subtracted. The free
+// plan allows 10 ms of CPU per request; this asserts a check stays far below 1 ms.
+it('checks a client-derived key in well under a millisecond in workerd', async () => {
   const tick = async () => { await env.DB.prepare('SELECT 1').first(); return Date.now() }
-  const N = 20
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const stored = await makeVerifier(key, crypto.getRandomValues(new Uint8Array(16)), 600_000)
+  const wrong = crypto.getRandomValues(new Uint8Array(32))
+  const N = 200
   let t = await tick()
-  for (let i = 0; i < N; i++) await tick()
-  const overhead = ((await tick()) - t) / (N + 1)
-  const hash = await hashPassword('warm-up password')
-  const samples: number[] = []
-  for (let i = 0; i < N; i++) {
-    t = await tick()
-    await verifyPassword('warm-up password', hash)
-    samples.push((await tick()) - t - overhead)
-  }
-  samples.sort((a, b) => a - b)
-  const median = samples[Math.floor(N / 2)]
-  console.log(`[hash-cost] PBKDF2-SHA256 x${PBKDF2_ITERATIONS} in workerd: median ${median.toFixed(1)} ms, min ${samples[0].toFixed(1)} ms, max ${samples[N - 1].toFixed(1)} ms over ${N} runs (I/O overhead ${overhead.toFixed(2)} ms subtracted)`)
-  expect(await verifyPassword('warm-up password', hash)).toBe(true)
-  expect(await verifyPassword('wrong', hash)).toBe(false)
+  const overhead = (await tick()) - t
+  t = await tick()
+  for (let i = 0; i < N; i++) await checkKey(key, stored)
+  const perCheck = Math.max(0, (await tick()) - t - overhead) / N
+  console.log(`[hash-cost] HMAC-SHA256 key check in workerd: ${perCheck.toFixed(3)} ms each over ${N} runs`)
+  expect(perCheck).toBeLessThan(1)
+  expect(await checkKey(key, stored)).toBe(true)
+  expect(await checkKey(wrong, stored)).toBe(false)
+  expect(await checkKey(key, 'pbkdf2-sha256$100000$abc$def')).toBe(false)
 }, 60_000)

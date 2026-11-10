@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { bootstrapInvite } from '../src/bootstrap.ts'
+import { b64url, fromB64url, KDF_ITERATIONS } from '../src/crypto.ts'
 
 export const BASE = 'https://cloud.test'
 export const PASSWORD = 'correct horse battery'
@@ -30,8 +31,35 @@ export async function call<T = any> (method: string, path: string, opts: { token
 
 export interface User { id: string; email: string; token: string; role: string }
 
+/**
+ * The client's key derivation, stood in for by one SHA-256: workerd refuses PBKDF2 above 100,000
+ * iterations, and the server treats the key as opaque 32 bytes anyway. The real client runs
+ * PBKDF2-SHA256(password, salt, 600000) (server/sync/cloud.ts, src/pages.ts).
+ */
+export async function deriveKey (password: string, salt: string): Promise<string> {
+  const saltBytes = fromB64url(salt)!
+  const data = new Uint8Array([...saltBytes, ...new TextEncoder().encode(password)])
+  return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', data)))
+}
+
+/** A new credential for sign-up, reset or password change: a fresh salt, the iterations and the key. */
+export async function credential (password = PASSWORD): Promise<{ salt: string; iterations: number; key: string }> {
+  const salt = b64url(crypto.getRandomValues(new Uint8Array(16)))
+  return { salt, iterations: KDF_ITERATIONS, key: await deriveKey(password, salt) }
+}
+
+export const prelogin = (email: string) => call('POST', '/v1/auth/prelogin', { body: { email } })
+
+/** What the client does: prelogin for the salt, derive the key, log in with it. */
 export async function login (email: string, password = PASSWORD, ip = uniqueIp()): Promise<Res> {
-  return call('POST', '/v1/auth/login', { body: { email, password }, ip })
+  const pre = await prelogin(email)
+  if (pre.status !== 200) throw new Error(`prelogin: ${pre.status} ${JSON.stringify(pre.body)}`)
+  return call('POST', '/v1/auth/login', { body: { email, key: await deriveKey(password, pre.body.salt) }, ip })
+}
+
+/** Signs up with an invite token. `extra` adds or overrides body fields. */
+export async function accept (token: string, email: string, password = PASSWORD, extra: Record<string, unknown> = {}): Promise<Res> {
+  return call('POST', '/v1/invites/accept', { body: { token, email, ...await credential(password), ...extra } })
 }
 
 async function signIn (email: string, password = PASSWORD): Promise<User> {
@@ -45,7 +73,7 @@ export async function makeAdmin (): Promise<User> {
   const { token, sql } = await bootstrapInvite({ force: true })
   await env.DB.prepare(sql).run()
   const email = uniqueEmail('admin')
-  const r = await call('POST', '/v1/invites/accept', { body: { token, email, password: PASSWORD, displayName: 'Owner' } })
+  const r = await accept(token, email, PASSWORD, { displayName: 'Owner' })
   if (r.status !== 201) throw new Error(`bootstrap accept: ${r.status} ${JSON.stringify(r.body)}`)
   return signIn(email)
 }
@@ -59,7 +87,7 @@ export async function invite (by: User, note?: string): Promise<{ id: string; to
 export async function makeMember (inviter: User, name = 'Friend'): Promise<User> {
   const inv = await invite(inviter)
   const email = uniqueEmail('member')
-  const r = await call('POST', '/v1/invites/accept', { body: { token: inv.token, email, password: PASSWORD, displayName: name } })
+  const r = await accept(inv.token, email, PASSWORD, { displayName: name })
   if (r.status !== 201) throw new Error(`accept: ${r.status} ${JSON.stringify(r.body)}`)
   return signIn(email)
 }

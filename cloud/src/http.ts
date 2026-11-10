@@ -1,24 +1,15 @@
 // A small router, JSON helpers and errors. Every error leaves as `{ error: <code>, message }`.
 
+import { bad, HttpError } from './errors.ts'
+
+export { bad, HttpError }
+
 export interface Env {
   DB: D1Database
-  /** Origin the invite and reset links point at, e.g. https://api.nexttupp.com */
+  /** The website that invite links open: `<PUBLIC_URL>/join?code=nxi_…`, e.g. https://nexttupp.com */
   PUBLIC_URL: string
 }
 
-export class HttpError extends Error {
-  readonly status: number
-  readonly code: string
-  readonly headers: Record<string, string>
-  constructor (status: number, code: string, message: string, headers: Record<string, string> = {}) {
-    super(message)
-    this.status = status
-    this.code = code
-    this.headers = headers
-  }
-}
-
-export const bad = (message: string) => new HttpError(400, 'invalid', message)
 
 const CORS: Record<string, string> = {
   // Bearer tokens only, no cookies, so any origin (the desktop app's webview) may call the API.
