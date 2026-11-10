@@ -1,4 +1,5 @@
-# Installers: npm run dist:linux (AppImage + deb, built and tested), npm run dist:win (NSIS, untested).
+# Installers: npm run dist:linux (AppImage + deb), npm run dist:win (NSIS), npm run dist:mac (dmg, this Mac's arch).
+# All of them are built and smoke-tested by .github/workflows/release.yml, which publishes tags as GitHub Releases.
 appId: app.nexttupp.desktop
 productName: nexttupp
 executableName: nexttupp
@@ -23,16 +24,37 @@ extraResources:
     to: reco
     filter: [cf.bin]
 publish: null
+artifactName: ${productName}-${version}-${arch}.${ext}
+# Release assets keep the same names in every version, so the website can link to
+# https://github.com/<owner>/<repo>/releases/latest/download/<name>.
 linux:
   target: [AppImage, deb]
   category: AudioVideo
   icon: resources/icon.png
   synopsis: Search, pick a torrent, watch.
   maintainer: nexttupp
-artifactName: ${productName}-${version}-${arch}.${ext}
+appImage:
+  artifactName: nexttupp-linux-${arch}.${ext}
+deb:
+  artifactName: nexttupp-linux-${arch}.${ext}
 win:
   target: nsis
   icon: resources/icon.png
 nsis:
   oneClick: true
   perMachine: false
+  artifactName: nexttupp-windows-${arch}.${ext}
+mac:
+  target: dmg
+  icon: resources/icon.png
+  category: public.app-category.entertainment
+  # No Apple Developer ID, so an ad-hoc signature ("-"): Apple Silicon refuses to run unsigned code at all. Friends
+  # open it the first time with right-click → Open (macOS 15+: System Settings → Privacy & Security → Open Anyway).
+  # The hardened runtime only matters for notarization, and with an ad-hoc signature it would reject Electron's
+  # own frameworks (library validation), so it stays off.
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+dmg:
+  artifactName: nexttupp-mac-${arch}.${ext}
