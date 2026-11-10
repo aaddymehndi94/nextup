@@ -54,6 +54,8 @@ a couple of seconds after a change. Offline, changes wait and go out when the se
 out keeps everything on the computer. The service itself is in [`cloud/`](cloud/README.md); the design is
 [ADR 0004](docs/adr/0004-accounts-and-sync.md).
 
+The public website (nexttupp.com) lives in [`site/`](site/README.md).
+
 ## How it works
 
 ```
