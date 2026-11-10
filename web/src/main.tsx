@@ -1,8 +1,5 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@fontsource/instrument-serif/400.css'
-import '@fontsource/instrument-serif/400-italic.css'
-import '@fontsource-variable/geist'
 import './styles.css'
 import { useLocation } from './router.ts'
 import { Home } from './pages/Home.tsx'

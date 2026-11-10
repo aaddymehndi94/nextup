@@ -1,4 +1,4 @@
-# nextup
+# nexttupp
 
 Personal streaming platform: search a title → see metadata → pick a torrent → stream it in the browser.
 See `README.md` for how to run it and `docs/` for architecture decisions.

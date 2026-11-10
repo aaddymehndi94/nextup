@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
+import { AlertTriangle, Check, ChevronDown, Play } from 'lucide-react'
 import type { HealthResponse, Source } from '../../../shared/types.ts'
-import { bytes, LANG_NAME, RES_LABEL } from '../format.ts'
+import { bytes, languageName, RES_LABEL } from '../format.ts'
 
 type Sort = 'best' | 'seeders' | 'small' | 'large'
 const FILTERS = ['all', '2160p', '1080p', '720p', '480p'] as const
@@ -14,6 +15,11 @@ function healthClass (seeders: number) {
   if (seeders >= 30) return 'good'
   if (seeders >= 5) return 'fair'
   return 'poor'
+}
+
+/** Release names are long dotted tokens; offer line breaks after separators so they wrap at word-like joints. */
+function breakable (name: string) {
+  return name.split(/(?<=[._\-\])])/).flatMap((part, i) => (i ? [<wbr key={i} />, part] : [part]))
 }
 
 function tags (s: Source): string[] {
@@ -49,7 +55,7 @@ export function SourceList ({ sources, health, onPick }: { sources: Source[]; he
     return sorted
   }, [sources, filter, sort, health])
 
-  const shown = showAll ? visible : visible.slice(0, 25)
+  const shown = showAll ? visible : visible.slice(0, 8)
   const liveCount = Object.keys(health).length
 
   return (
@@ -64,52 +70,71 @@ export function SourceList ({ sources, health, onPick }: { sources: Source[]; he
         </div>
         <label className="sort">
           <span>Sort</span>
-          <select value={sort} onChange={e => setSort(e.target.value as Sort)}>
-            <option value="best">Best match</option>
-            <option value="seeders">Most seeders</option>
-            <option value="small">Smallest</option>
-            <option value="large">Largest</option>
-          </select>
+          <span className="select">
+            <select value={sort} onChange={e => setSort(e.target.value as Sort)}>
+              <option value="best">Best match</option>
+              <option value="seeders">Most seeders</option>
+              <option value="small">Smallest</option>
+              <option value="large">Largest</option>
+            </select>
+            <ChevronDown aria-hidden />
+          </span>
         </label>
       </div>
-      <p className="muted small source-legend">
+      <p className="source-legend">
+        <span className={`live-dot${liveCount > 0 ? ' is-live' : ''}`} aria-hidden />
         {liveCount > 0 ? <>Seeders and peers are live from trackers ({liveCount} checked).</> : <>Seeders as reported by indexes. Checking live swarm…</>}
       </p>
+      <div className="sources-header" aria-hidden>
+        <span>Quality</span>
+        <span>Release</span>
+        <span className="num">Size</span>
+        <span className="num">Seeds</span>
+        <span className="num">Peers</span>
+        <span>Indexer</span>
+      </div>
       <ol className="sources-table">
         {shown.map((s, i) => {
           const { seeders, leechers, live } = seedsOf(s, health)
           const recommended = sort === 'best' && filter === 'all' && i === 0
-          const langs = s.languages.map(l => LANG_NAME[l] ?? l.toUpperCase())
+          const langs = s.languages.map(languageName)
+          const facts = tags(s)
           return (
             <li key={s.infoHash}>
               <button className={`source${recommended ? ' recommended' : ''}`} onClick={() => onPick(s)} title={s.title}>
                 <span className={`res res-${s.release.resolution}`}>{RES_LABEL[s.release.resolution]}</span>
                 <span className="source-main">
-                  <span className="source-title">{s.fileName && s.fileName !== s.title ? s.fileName : s.title}</span>
+                  <span className="source-title">{breakable(s.fileName && s.fileName !== s.title ? s.fileName : s.title)}</span>
                   <span className="source-sub">
                     {recommended && <span className="badge">Recommended</span>}
-                    {tags(s).map(t => <span key={t} className="tag">{t}</span>)}
-                    {langs.length > 0 && <span className="tag lang">{langs.join(' · ')}</span>}
-                    {s.notes.filter(n => !/healthy|seeders/i.test(n)).map(n => (
-                      <span key={n} className={/conversion/.test(n) ? 'note good' : 'note warn'}>{n}</span>
-                    ))}
+                    {facts.length > 0 && <span className="source-facts">{facts.join(' · ')}</span>}
+                    {langs.length > 0 && <span className="source-lang">{langs.join(' · ')}</span>}
+                    {s.notes.filter(n => !/healthy|seeders/i.test(n)).map(n => {
+                      const good = /conversion/.test(n)
+                      return (
+                        <span key={n} className={good ? 'note good' : 'note warn'}>
+                          {good ? <Check aria-hidden /> : <AlertTriangle aria-hidden />}{n}
+                        </span>
+                      )
+                    })}
                   </span>
                 </span>
                 <span className="source-stats">
                   <span className="stat size">{bytes(s.sizeBytes)}</span>
                   <span className={`stat seeds ${healthClass(seeders)}`} title={live ? 'Live tracker count' : 'Indexer count (may be stale)'}>
-                    <span className="dot" aria-hidden />{seeders}<span className="unit"> seeds</span>
+                    <span className="dot" aria-hidden /><span className="num">{seeders}</span><span className="unit">{seeders === 1 ? ' seed' : ' seeds'}</span>
                   </span>
-                  <span className="stat peers">{leechers !== undefined ? <>{leechers}<span className="unit"> peers</span></> : '—'}</span>
+                  <span className="stat peers">{leechers !== undefined ? <>{leechers}<span className="unit">{leechers === 1 ? ' peer' : ' peers'}</span></> : <span className="unit">—</span>}</span>
                   <span className="stat provider">{s.providers.join(', ')}</span>
                 </span>
+                <span className="source-go" aria-hidden><Play fill="currentColor" /></span>
               </button>
             </li>
           )
         })}
       </ol>
       {visible.length > shown.length && (
-        <button className="button ghost show-more" onClick={() => setShowAll(true)}>Show all {visible.length} sources</button>
+        <button className="button secondary show-more" onClick={() => setShowAll(true)}>Show all {visible.length} sources</button>
       )}
     </div>
   )

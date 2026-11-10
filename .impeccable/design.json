@@ -1,0 +1,428 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-10T16:13:34+00:00",
+  "title": "Design System: nexttupp",
+  "extensions": {
+    "colorMeta": {
+      "projection-black": {
+        "role": "neutral",
+        "displayName": "Projection Black",
+        "canonical": "oklch(14.5% 0.002 286)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424243",
+          "#616162",
+          "#828283",
+          "#a5a5a6",
+          "#c9c9ca",
+          "#eeeeef"
+        ]
+      },
+      "raised-graphite": {
+        "role": "neutral",
+        "displayName": "Raised Graphite",
+        "canonical": "oklch(18.8% 0.004 286)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#252526",
+          "#424243",
+          "#616163",
+          "#828285",
+          "#a5a5a7",
+          "#c9c9cb",
+          "#eeeeef"
+        ]
+      },
+      "lifted-graphite": {
+        "role": "neutral",
+        "displayName": "Lifted Graphite",
+        "canonical": "oklch(22.3% 0.006 286)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#252526",
+          "#424244",
+          "#616164",
+          "#828286",
+          "#a5a5a8",
+          "#c9c9cb",
+          "#eeeef0"
+        ]
+      },
+      "screen-white": {
+        "role": "neutral",
+        "displayName": "Screen White",
+        "canonical": "oklch(97.1% 0.003 286)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252526",
+          "#424243",
+          "#616162",
+          "#828284",
+          "#a5a5a6",
+          "#c9c9ca",
+          "#eeeeef"
+        ]
+      },
+      "silver-text": {
+        "role": "neutral",
+        "displayName": "Silver",
+        "canonical": "oklch(77.2% 0.010 286)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#252527",
+          "#424245",
+          "#616166",
+          "#828288",
+          "#a4a4aa",
+          "#c9c9cd",
+          "#eeeef1"
+        ]
+      },
+      "ash-text": {
+        "role": "neutral",
+        "displayName": "Ash",
+        "canonical": "oklch(64.6% 0.012 286)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#252527",
+          "#414146",
+          "#606067",
+          "#818189",
+          "#a4a4ab",
+          "#c8c8ce",
+          "#eeeef2"
+        ]
+      },
+      "action-white": {
+        "role": "primary",
+        "displayName": "Action White",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "ink-on-light": {
+        "role": "neutral",
+        "displayName": "Ink on Light",
+        "canonical": "oklch(14.5% 0.002 286)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424243",
+          "#616162",
+          "#828283",
+          "#a5a5a6",
+          "#c9c9ca",
+          "#eeeeef"
+        ]
+      },
+      "true-black": {
+        "role": "neutral",
+        "displayName": "True Black",
+        "canonical": "oklch(0.0% 0.000 0)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "healthy-swarm": {
+        "role": "state",
+        "displayName": "Healthy Swarm",
+        "canonical": "oklch(76.9% 0.158 157)",
+        "tonalRamp": [
+          "#001005",
+          "#002f16",
+          "#00512b",
+          "#007642",
+          "#009d5a",
+          "#58bc85",
+          "#94dcb0",
+          "#cbfcdd"
+        ]
+      },
+      "thin-swarm": {
+        "role": "state",
+        "displayName": "Thin Swarm",
+        "canonical": "oklch(82.8% 0.141 85)",
+        "tonalRamp": [
+          "#120a00",
+          "#332200",
+          "#573d00",
+          "#7f5a00",
+          "#a87a00",
+          "#c59f4a",
+          "#e3c688",
+          "#ffecc2"
+        ]
+      },
+      "dying-swarm": {
+        "role": "state",
+        "displayName": "Dying Swarm",
+        "canonical": "oklch(70.8% 0.185 28)",
+        "tonalRamp": [
+          "#1b0302",
+          "#45100c",
+          "#73211b",
+          "#a6342c",
+          "#da4a3f",
+          "#f37d70",
+          "#ffada0",
+          "#ffdcd2"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "rgb(255 255 255 / 0.08)"
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "rgb(255 255 255 / 0.16)"
+      }
+    },
+    "typographyMeta": {
+      "title-card": {
+        "displayName": "Title card",
+        "purpose": "Title name when logo art is missing; Mona Sans Expanded 800."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "The brand; Expanded 800 so the two t's share a crossbar."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page and section heads."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Row heads and the player title."
+      },
+      "title-compact": {
+        "displayName": "Title compact",
+        "purpose": "Row heads on phone, empty-state titles."
+      },
+      "player-title": {
+        "displayName": "Player title",
+        "purpose": "Name in the player chrome."
+      },
+      "subtitle-cue": {
+        "displayName": "Subtitle cue",
+        "purpose": "Rendered subtitles on a 55% black box."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Interface text."
+      },
+      "synopsis": {
+        "displayName": "Synopsis",
+        "purpose": "Hero descriptions, max 52ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, chips, tabs, card names."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Years, file names, source facts, column heads."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Column heads, key hints, a card reason line."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Badges and tags; the 11px floor."
+      },
+      "clock": {
+        "displayName": "Clock",
+        "purpose": "Running time, scrubber tip, subtitle offset; the only tabular figures."
+      }
+    },
+    "shadows": [
+      {
+        "name": "lift",
+        "value": "0 1.25rem 2.5rem -1rem rgb(0 0 0 / 0.85)",
+        "purpose": "Artwork lifted on hover or focus."
+      },
+      {
+        "name": "float",
+        "value": "inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 1.5rem 3.5rem -1.25rem rgb(0 0 0 / 0.85)",
+        "purpose": "Player panels."
+      },
+      {
+        "name": "hairline-edge",
+        "value": "inset 0 0 0 1px rgb(255 255 255 / 0.07)",
+        "purpose": "Every piece of artwork at rest."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "All state transitions and arrivals."
+      },
+      {
+        "name": "dur",
+        "value": "220ms",
+        "purpose": "Buttons and controls."
+      },
+      {
+        "name": "art-fade",
+        "value": "opacity 600ms",
+        "purpose": "Artwork fades in once decoded."
+      },
+      {
+        "name": "backdrop-settle",
+        "value": "transform 2200ms from scale(1.035)",
+        "purpose": "Billboard and title backdrops settle as they arrive; off under reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "640px"
+      },
+      {
+        "name": "table-stack",
+        "value": "900px"
+      },
+      {
+        "name": "tv",
+        "value": "1800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled white action per screen: Play, More info.",
+      "html": "<button class=\"ds-btn-primary\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M6 4l14 8-14 8z\"/></svg>Play</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; gap:.5rem; height:3rem; padding:0 1.625rem 0 1.375rem; border:0; border-radius:999px; background:#fff; color:#0a0a0b; font:620 1rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; letter-spacing:-.005em; cursor:pointer; transition:background 220ms cubic-bezier(.22,1,.36,1), transform 220ms cubic-bezier(.22,1,.36,1); } .ds-btn-primary:hover { background:rgb(255 255 255 / .84); } .ds-btn-primary:active { transform:scale(.97); } .ds-btn-primary:focus-visible { outline:2px solid #fff; outline-offset:3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Translucent pill for second actions: Pick another source, Show all sources.",
+      "html": "<button class=\"ds-btn-secondary\">Show all 77 sources</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; height:3rem; padding:0 1.375rem; border:0; border-radius:999px; background:rgb(255 255 255 / .14); color:#f5f5f7; font:620 1rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:background 220ms cubic-bezier(.22,1,.36,1); } .ds-btn-secondary:hover { background:rgb(255 255 255 / .22); } .ds-btn-secondary:focus-visible { outline:2px solid #fff; outline-offset:3px; }"
+    },
+    {
+      "name": "Round Button",
+      "kind": "button",
+      "refersTo": "round-button",
+      "description": "Circular icon action beside the primary button or for Back; solid white when pressed.",
+      "html": "<button class=\"ds-round\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m12 19-7-7 7-7\"/><path d=\"M19 12H5\"/></svg></button>",
+      "css": ".ds-round { display:inline-grid; place-items:center; width:3rem; height:3rem; border:0; border-radius:50%; background:rgb(255 255 255 / .1); color:#f5f5f7; box-shadow:inset 0 0 0 1px rgb(255 255 255 / .24); cursor:pointer; transition:background 220ms, box-shadow 220ms, transform 220ms; } .ds-round:hover { background:rgb(255 255 255 / .2); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .4); } .ds-round:active { transform:scale(.95); } .ds-round[aria-pressed='true'] { background:#fff; color:#0a0a0b; box-shadow:none; } .ds-round:focus-visible { outline:2px solid #fff; outline-offset:3px; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Quality filters and season tabs; the active one is solid white.",
+      "html": "<div style=\"display:flex;gap:.5rem\"><button class=\"ds-chip ds-chip-active\">All<span class=\"ds-count\">77</span></button><button class=\"ds-chip\">4K<span class=\"ds-count\">7</span></button><button class=\"ds-chip\">1080p<span class=\"ds-count\">22</span></button></div>",
+      "css": ".ds-chip { display:inline-flex; align-items:center; height:2.25rem; padding:0 .875rem; border:0; border-radius:999px; background:rgb(255 255 255 / .07); color:#b4b4bb; font:580 .875rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; cursor:pointer; transition:background 160ms, color 160ms; } .ds-chip:hover { background:rgb(255 255 255 / .12); color:#f5f5f7; } .ds-chip-active, .ds-chip-active:hover { background:#fff; color:#0a0a0b; } .ds-count { margin-left:.375rem; opacity:.6; font-weight:520; } .ds-chip:focus-visible { outline:2px solid #fff; outline-offset:3px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "Glass pill over artwork; deepens to graphite with a bright ring on focus.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg><input placeholder=\"Search films and series\" aria-label=\"Search films and series\"></label>",
+      "css": ".ds-search { display:flex; align-items:center; gap:.75rem; width:26rem; max-width:100%; height:2.75rem; padding:0 1rem; border-radius:999px; background:rgb(255 255 255 / .1); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .14); color:#b4b4bb; transition:background 200ms, box-shadow 200ms; } .ds-search:hover { background:rgb(255 255 255 / .14); } .ds-search:focus-within { background:rgb(30 30 33 / .94); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .55); } .ds-search input { flex:1; min-width:0; background:transparent; border:0; outline:none; color:#f5f5f7; font:460 1rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; } .ds-search input::placeholder { color:#b4b4bb; }"
+    },
+    {
+      "name": "Masthead",
+      "kind": "nav",
+      "refersTo": "masthead",
+      "description": "Wordmark left, search right; floats on a scrim, turns into a blurred black veil on scroll.",
+      "html": "<header class=\"ds-mast\"><span class=\"ds-wordmark\">nexttupp</span><span class=\"ds-mast-search\">Search films and series</span></header>",
+      "css": ".ds-mast { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; padding:1rem 1.5rem; background:rgb(10 10 11 / .82); backdrop-filter:saturate(1.6) blur(20px); box-shadow:0 1px 0 rgb(255 255 255 / .08); } .ds-wordmark { font:800 1.5rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; font-stretch:125%; letter-spacing:-.045em; color:#f5f5f7; } .ds-mast-search { height:2.75rem; display:inline-flex; align-items:center; padding:0 1rem; border-radius:999px; background:rgb(255 255 255 / .1); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .14); color:#b4b4bb; font:460 1rem/1 'Mona Sans', ui-sans-serif, system-ui, sans-serif; }"
+    },
+    {
+      "name": "Poster Card",
+      "kind": "card",
+      "refersTo": "poster-card",
+      "description": "2:3 artwork with hairline edge, name and year; optional one-line reason caption; lifts with a white ring on focus.",
+      "html": "<a class=\"ds-poster\" href=\"#\"><span class=\"ds-poster-art\"></span><span class=\"ds-poster-name\">Night of the Living Dead</span><span class=\"ds-poster-year\">1968</span></a>",
+      "css": ".ds-poster { display:flex; flex-direction:column; gap:.625rem; width:10rem; color:#f5f5f7; text-decoration:none; font-family:'Mona Sans', ui-sans-serif, system-ui, sans-serif; outline:none; } .ds-poster-art { aspect-ratio:2/3; border-radius:.625rem; background:linear-gradient(160deg,#2a2a2e,#131315); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .07); outline:3px solid transparent; outline-offset:3px; transition:transform 320ms cubic-bezier(.22,1,.36,1), box-shadow 320ms, outline-color 160ms; } .ds-poster:hover .ds-poster-art { transform:scale(1.04); box-shadow:0 1.25rem 2.5rem -1rem rgb(0 0 0 / .85); } .ds-poster:focus-visible .ds-poster-art { transform:scale(1.04); outline-color:#fff; } .ds-poster-name { font-size:.875rem; font-weight:560; } .ds-poster-year { font-size:.8125rem; color:#8d8d95; margin-top:-.5rem; }"
+    },
+    {
+      "name": "Player Panel",
+      "kind": "custom",
+      "refersTo": "player-panel",
+      "description": "Anchored glass panel for subtitles, audio and stream info; bottom sheet on phone.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-head\">Subtitles</div><button class=\"ds-panel-item ds-on\">Off<span>&#10003;</span></button><button class=\"ds-panel-item\">English<small>Night.Of.The.Living.Dead.1968.720p</small></button></div>",
+      "css": ".ds-panel { width:22rem; padding:.5rem; border-radius:1.125rem; background:rgb(24 24 27 / .84); backdrop-filter:blur(28px) saturate(1.5); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .1), 0 1.5rem 3.5rem -1.25rem rgb(0 0 0 / .85); color:#f5f5f7; font-family:'Mona Sans', ui-sans-serif, system-ui, sans-serif; } .ds-panel-head { padding:.75rem .75rem .5rem; font-weight:700; font-stretch:112.5%; } .ds-panel-item { display:flex; flex-direction:column; align-items:flex-start; width:100%; padding:.625rem .75rem; border:0; border-radius:.75rem; background:transparent; color:inherit; font:560 .9375rem/1.35 'Mona Sans', ui-sans-serif, system-ui, sans-serif; text-align:left; cursor:pointer; } .ds-panel-item small { color:#8d8d95; font-size:.8125rem; font-weight:440; } .ds-panel-item:hover { background:rgb(255 255 255 / .08); } .ds-panel-item.ds-on { flex-direction:row; justify-content:space-between; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Projection Room",
+    "overview": "The room goes dark and the film's own artwork does the talking. nexttupp plays the streaming canon straight,\nat the finish of the Apple TV app, Netflix, Mubi and A24: full-bleed backdrops, the title's own logo art set\nlarge, one white action, and chrome that is only black, white and grey. Colour belongs to the artwork. The\ninterface adds hierarchy, spacing and restraint, never ornament.\n\nDensity changes by job. Browsing surfaces (Home, the title hero) are cinematic and spacious. The source table\nis the one dense, data-bearing surface, and it stays calm through alignment, hairlines and greys. The player\nrecedes completely until it is needed.\n\nThe whole interface scales with the screen: the root size is fluid from 16px at laptop width to about 18.5px\nat 1920px, so a 1080p TV reads from the sofa without a separate layout.",
+    "keyCharacteristics": [
+      "Projection-room black ground, lifted graphite surfaces, white as the only action colour.",
+      "Artwork-first: backdrops, posters and logo art carry every colour on screen.",
+      "One typeface, Mona Sans, in two widths: Expanded for titling, standard width for interface.",
+      "Pill actions, 10px-radius artwork with a 1px inner hairline.",
+      "Restrained motion: fades, a slow backdrop settle, small focus lifts."
+    ],
+    "rules": [
+      {
+        "name": "The Artwork Owns Colour Rule",
+        "body": "Chrome is black, white and grey. Green, amber and red appear only as swarm health, honest playback warnings, and a destructive confirmation. Nothing is green because it is good news.",
+        "section": "colors"
+      },
+      {
+        "name": "The One White Action Rule",
+        "body": "Each screen has one filled white action (More info, Play). Everything else is a translucent pill, a ring, or plain text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Widths Rule",
+        "body": "Expanded is for the brand and for titling. Standard width is for everything you read or press. Never set body copy, buttons or tables in Expanded.",
+        "section": "typography"
+      },
+      {
+        "name": "The Ticking Figures Rule",
+        "body": "Tabular figures appear only on running clocks (the player time, the scrubber tip, the subtitle offset). Static numbers use the face's proportional figures, because its tabular set reads as code.",
+        "section": "typography"
+      },
+      {
+        "name": "The Scrim Not Card Rule",
+        "body": "Text over artwork is made legible with gradients from Projection Black, never by boxing it in a card.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do let artwork carry colour: full-bleed backdrops, logo art cropped to its mark, posters at 2:3.",
+      "Do keep one white filled action per screen and make everything else translucent.",
+      "Do align every screen's left edge to the gutter (clamp(1rem, 4vw, 4.5rem)).",
+      "Do give every focusable element a visible white ring. Use 3–4px rings on screens 1800px and wider.",
+      "Do honour reduced motion: no backdrop settle, no hover lift."
+    ],
+    "donts": [
+      "Don't add accent colours, gradient text, glows or coloured buttons; white is the only action colour.",
+      "Don't use green, amber or red for anything but swarm health, honest playback warnings and destructive confirmation.",
+      "Don't set body text, buttons or tables in Mona Sans Expanded.",
+      "Don't put small labels or kickers above headings; meta sits below the title art.",
+      "Don't show invented data. Every number and image comes from Cinemeta, metahub, trackers or the server."
+    ]
+  }
+}

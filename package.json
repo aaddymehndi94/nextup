@@ -1,5 +1,5 @@
 {
-  "name": "nextup",
+  "name": "nexttupp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,13 @@
     "dev:server": "node --watch-path=server server/index.ts",
     "dev:web": "vite",
     "build": "vite build",
+    "build:cf": "python3 -I scripts/build-cf.py build",
     "start": "NODE_ENV=production node server/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@fastify/static": "^10.1.10",
-    "@fontsource-variable/geist": "^5.3.0",
-    "@fontsource/instrument-serif": "^5.3.0",
     "fastify": "^5.12.8",
     "lucide-react": "^1.71.0",
     "webtorrent": "3.0.21"

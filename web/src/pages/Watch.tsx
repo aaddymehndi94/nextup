@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, AudioLines, Captions, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX,
+  ArrowLeft, AudioLines, Captions, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX, X,
 } from 'lucide-react'
 import type { MediaType, ProbeResponse } from '../../../shared/types.ts'
 import { api, capsParam, type Cue, type Stats, type SubtitleOption } from '../api.ts'
 import { detectCaps } from '../caps.ts'
-import { bytes, clock, speed } from '../format.ts'
+import { bytes, clock, languageName, speed } from '../format.ts'
+import { useDocumentTitle } from '../hooks.ts'
 import { navigate } from '../router.ts'
+import { readKey, readSessionKey, writeKey } from '../storage.ts'
+import { TitleArt } from '../components/TitleArt.tsx'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
 interface Progress { t: number; d: number; at: number }
-const progressKey = (streamId: string) => `nextup:progress:${streamId}`
+// Saved as `nexttupp:progress:<streamId>`; positions saved under the old `nextup:` prefix are still read.
+const progressKey = (streamId: string) => `progress:${streamId}`
 function loadProgress (streamId: string): Progress | null {
-  try { return JSON.parse(localStorage.getItem(progressKey(streamId)) ?? 'null') } catch { return null }
+  try { return JSON.parse(readKey(progressKey(streamId)) ?? 'null') } catch { return null }
 }
 function saveProgress (streamId: string, p: Progress) {
-  try { localStorage.setItem(progressKey(streamId), JSON.stringify(p)) } catch { /* storage unavailable */ }
+  writeKey(progressKey(streamId), JSON.stringify(p))
 }
 
 export function Watch ({ query }: { query: URLSearchParams }) {
@@ -67,7 +71,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     let live = true
     setPhase('connecting'); setPhaseStarted(Date.now()); setError(null)
     let trackers: string[] = []
-    try { trackers = JSON.parse(sessionStorage.getItem(`nextup:trackers:${infoHash}`) ?? '[]') } catch { /* none */ }
+    try { trackers = JSON.parse(readSessionKey(`trackers:${infoHash}`) ?? '[]') } catch { /* none */ }
     api.open({ infoHash, fileIdx, fileName, trackers, title: name })
       .then(s => { if (live) { setStats(s); setPhase('probing'); setPhaseStarted(Date.now()) } })
       .catch(err => { if (live) { setError(err.message); setPhase('error') } })
@@ -211,7 +215,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     api.subtitles(type, streamId, stats.fileName).then(list => {
       if (!live) return
       setSubs(list)
-      const lang = (() => { try { return localStorage.getItem('nextup:subs-lang') } catch { return null } })()
+      const lang = readKey('subs-lang')
       if (lang) {
         const best = list.filter(s => s.lang === lang).sort((a, b) => b.match - a.match)[0]
         if (best) setSubChoice(best)
@@ -231,7 +235,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const chooseSub = (s: SubtitleOption | null) => {
     setSubChoice(s)
     setSubOffset(0)
-    try { if (s) localStorage.setItem('nextup:subs-lang', s.lang); else localStorage.removeItem('nextup:subs-lang') } catch { /* ignore */ }
+    writeKey('subs-lang', s ? s.lang : null)
     setPanel('none')
   }
 
@@ -308,10 +312,16 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const showOverlay = phase !== 'ready' || (buffering && !error)
   const elapsed = Math.round((Date.now() - phaseStarted) / 1000)
   const backdrop = imdbId ? `https://images.metahub.space/background/large/${imdbId}/img` : undefined
+  const logo = imdbId ? `https://images.metahub.space/logo/medium/${imdbId}/img` : undefined
+  // "Show · S1E1 Pilot" → title and episode line.
+  const [mainTitle, ...rest] = name.split(' · ')
+  const episodeLine = rest.join(' · ')
+  useDocumentTitle(mainTitle || undefined)
+  const togglePanel = (p: 'audio' | 'subs' | 'info') => setPanel(cur => (cur === p ? 'none' : p))
 
   return (
     <div
-      className={`player${chrome || !playing || panel !== 'none' ? ' show-chrome' : ''}`}
+      className={`player${chrome || !playing || panel !== 'none' ? ' show-chrome' : ''}${phase === 'ready' ? ' is-ready' : ''}`}
       onMouseMove={poke}
       onTouchStart={poke}
     >
@@ -329,20 +339,28 @@ export function Watch ({ query }: { query: URLSearchParams }) {
                 <p className="overlay-detail">{error}</p>
                 <div className="overlay-actions">
                   <button className="button primary" onClick={() => { setInfo(null); setStats(null); setAttempt(a => a + 1) }}>Try again</button>
-                  <button className="button ghost" onClick={leave}>Pick another source</button>
+                  <button className="button secondary" onClick={leave}>Pick another source</button>
                 </div>
+              </>
+            ) : phase === 'ready' ? (
+              <>
+                <span className="spinner large" aria-hidden />
+                <p className="overlay-title small">Buffering</p>
+                {stats && <p className="overlay-detail">{stats.peers} peers · {speed(stats.downloadSpeed)}</p>}
+                {info?.plan.mode !== 'direct' && <p className="overlay-hint">{info?.plan.reason}</p>}
               </>
             ) : (
               <>
-                <span className="spinner large" aria-hidden />
+                {mainTitle && <TitleArt as="div" className="overlay-logo" name={mainTitle} logo={logo} />}
+                {episodeLine && <p className="overlay-episode">{episodeLine}</p>}
+                <span className="loader" aria-hidden><span /></span>
                 <p className="overlay-title">
-                  {phase === 'connecting' ? 'Connecting to the swarm' : phase === 'probing' ? 'Reading the video' : 'Buffering'}
+                  {phase === 'connecting' ? 'Connecting to the swarm' : 'Reading the video'}
                 </p>
                 <p className="overlay-detail">
                   {phase === 'connecting' && (elapsed > 20 ? `Still asking peers for the torrent info (${elapsed}s). Slow swarms can take a minute.` : 'Asking peers for the torrent info…')}
                   {phase !== 'connecting' && stats && <>{stats.peers} peers · {speed(stats.downloadSpeed)}</>}
                 </p>
-                {phase === 'ready' && info?.plan.mode !== 'direct' && <p className="overlay-hint">{info?.plan.reason}</p>}
               </>
             )}
           </div>
@@ -350,84 +368,123 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       )}
 
       <div className="player-top">
-        <button className="icon-button" onClick={leave} aria-label="Back"><ArrowLeft size={24} /></button>
-        <div className="player-heading">
-          <span className="player-title">{name}</span>
-          {stats && <span className="player-file">{stats.fileName}</span>}
-        </div>
+        <button className="round-button" onClick={leave} aria-label="Back"><ArrowLeft aria-hidden /></button>
       </div>
 
       {resumedFrom !== null && phase === 'ready' && time - resumedFrom < 8 && (
-        <div className="toast">
-          Resumed at {clock(resumedFrom)}
+        <div className="toast" role="status">
+          Resumed at <span className="tabular">{clock(resumedFrom)}</span>
           <button className="link" onClick={() => { setResumedFrom(null); seekTo(0) }}>Start over</button>
         </div>
       )}
 
-      {phase === 'ready' && (
-        <div className="player-bottom">
-          <Scrubber time={time} duration={duration} ranges={stats?.ranges ?? []} onSeek={seekTo} />
-          <div className="controls">
-            <button className="icon-button" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
-              {playing ? <Pause size={26} fill="currentColor" /> : <Play size={26} fill="currentColor" />}
-            </button>
-            <button className="icon-button" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds"><RotateCcw size={22} /></button>
-            <button className="icon-button" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds"><RotateCw size={22} /></button>
-            <div className="volume">
-              <button className="icon-button" onClick={() => { if (video.current) video.current.muted = !video.current.muted }} aria-label={muted ? 'Unmute' : 'Mute'}>
-                {muted || volume === 0 ? <VolumeX size={22} /> : <Volume2 size={22} />}
-              </button>
-              <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="Volume"
-                onChange={e => { const v = video.current; if (v) { v.volume = Number(e.target.value); v.muted = false } }} />
-            </div>
-            <span className="time">{clock(time)} <span className="muted">/ {clock(duration)}</span></span>
-            <span className="spacer" />
-            {stats && (
-              <button className={`icon-button labeled${stats.pinned ? ' on' : ''}`} onClick={togglePin} title={stats.pinned ? 'Downloading the whole file for offline viewing. Click to stop.' : 'Download the whole file to watch later without buffering'}>
-                <Download size={20} />
-                <span>{stats.pinned ? (stats.progress >= 1 ? 'Downloaded' : `${Math.floor(stats.progress * 100)}%`) : 'Download'}</span>
-              </button>
-            )}
-            {info && info.probe.audio.length > 1 && (
-              <button className="icon-button" onClick={() => setPanel(p => (p === 'audio' ? 'none' : 'audio'))} aria-label="Audio track" aria-expanded={panel === 'audio'}><AudioLines size={22} /></button>
-            )}
-            <button className={`icon-button${subChoice ? ' on' : ''}`} onClick={() => setPanel(p => (p === 'subs' ? 'none' : 'subs'))} aria-label="Subtitles" aria-expanded={panel === 'subs'}><Captions size={22} /></button>
-            <button className="icon-button" onClick={() => setPanel(p => (p === 'info' ? 'none' : 'info'))} aria-label="Stream info" aria-expanded={panel === 'info'}><Info size={22} /></button>
-            <button className="icon-button" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}>
-              {fullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
-            </button>
-          </div>
+      {phase === 'ready' && !showOverlay && (
+        <div className="center-controls">
+          <button className="icon-button" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds"><RotateCcw aria-hidden /></button>
+          <button className="icon-button play" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
+            {playing ? <Pause aria-hidden fill="currentColor" /> : <Play aria-hidden fill="currentColor" />}
+          </button>
+          <button className="icon-button" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds"><RotateCw aria-hidden /></button>
         </div>
       )}
 
+      <div className="player-bottom">
+        <div className="player-heading">
+          <h1 className="player-title">{mainTitle}</h1>
+          {(episodeLine || stats) && (
+            <p className="player-sub">
+              {episodeLine && <span className="player-episode">{episodeLine}</span>}
+              {stats && <span className="player-file">{stats.fileName}</span>}
+            </p>
+          )}
+        </div>
+        {phase === 'ready' && (
+          <>
+            <Scrubber time={time} duration={duration} ranges={stats?.ranges ?? []} onSeek={seekTo} />
+            <div className="controls">
+              <div className="controls-group">
+                <button className="icon-button play" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
+                  {playing ? <Pause aria-hidden fill="currentColor" /> : <Play aria-hidden fill="currentColor" />}
+                </button>
+                <button className="icon-button skip" onClick={() => seekTo(now() - 10)} aria-label="Back 10 seconds"><RotateCcw aria-hidden /></button>
+                <button className="icon-button skip" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds"><RotateCw aria-hidden /></button>
+                <div className="volume">
+                  <button className="icon-button" onClick={() => { if (video.current) video.current.muted = !video.current.muted }} aria-label={muted ? 'Unmute' : 'Mute'}>
+                    {muted || volume === 0 ? <VolumeX aria-hidden /> : <Volume2 aria-hidden />}
+                  </button>
+                  <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="Volume"
+                    style={{ '--fill': `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties}
+                    onChange={e => { const v = video.current; if (v) { v.volume = Number(e.target.value); v.muted = false } }} />
+                </div>
+                <span className="time">{clock(time)} <span className="muted">/ {clock(duration)}</span></span>
+              </div>
+              <div className="controls-group">
+                {stats && (
+                  <button className={`icon-button labeled${stats.pinned ? ' on' : ''}`} onClick={togglePin} aria-label={stats.pinned ? (stats.progress >= 1 ? 'Downloaded' : `Downloading, ${Math.floor(stats.progress * 100)}%`) : 'Download'} title={stats.pinned ? 'Downloading the whole file for offline viewing. Click to stop.' : 'Download the whole file to watch later without buffering'}>
+                    {stats.pinned && stats.progress >= 1 ? <CircleArrowDown aria-hidden /> : <Download aria-hidden />}
+                    {stats.pinned && stats.progress < 1
+                      ? <span className="keep">{Math.floor(stats.progress * 100)}%</span>
+                      : <span>{stats.pinned ? 'Downloaded' : 'Download'}</span>}
+                  </button>
+                )}
+                {info && info.probe.audio.length > 1 && (
+                  <button className={`icon-button${panel === 'audio' ? ' open' : ''}`} onClick={() => togglePanel('audio')} aria-label="Audio track" aria-expanded={panel === 'audio'}><AudioLines aria-hidden /></button>
+                )}
+                <button className={`icon-button${subChoice ? ' on' : ''}${panel === 'subs' ? ' open' : ''}`} onClick={() => togglePanel('subs')} aria-label="Subtitles" aria-expanded={panel === 'subs'}><Captions aria-hidden /></button>
+                <button className={`icon-button${panel === 'info' ? ' open' : ''}`} onClick={() => togglePanel('info')} aria-label="Stream info" aria-expanded={panel === 'info'}><Info aria-hidden /></button>
+                <button className="icon-button" onClick={toggleFullscreen} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}>
+                  {fullscreen ? <Minimize aria-hidden /> : <Maximize aria-hidden />}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       {panel === 'audio' && info && (
         <div className="panel" role="dialog" aria-label="Audio track">
-          <p className="panel-title">Audio</p>
-          {info.probe.audio.map((a, i) => (
-            <button key={i} className={`panel-item${i === audioTrack ? ' active' : ''}`} onClick={() => chooseAudio(i)}>
-              {a.title || a.language?.toUpperCase() || `Track ${i + 1}`} <span className="muted">{a.codec.toUpperCase()}{a.channels ? ` ${a.channels}ch` : ''}</span>
-            </button>
-          ))}
+          <PanelHead title="Audio" onClose={() => setPanel('none')} />
+          <div className="panel-body">
+            {info.probe.audio.map((a, i) => (
+              <button key={i} className={`panel-item${i === audioTrack ? ' active' : ''}`} onClick={() => chooseAudio(i)} aria-pressed={i === audioTrack}>
+                <span className="panel-item-main">
+                  <span className="panel-item-label">{a.title || (a.language ? languageName(a.language) : `Track ${i + 1}`)}</span>
+                  <span className="panel-item-sub">{a.codec.toUpperCase()}{a.channels ? ` · ${a.channels} channels` : ''}</span>
+                </span>
+                {i === audioTrack && <Check className="panel-check" aria-hidden />}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
       {panel === 'subs' && (
         <div className="panel" role="dialog" aria-label="Subtitles">
-          <p className="panel-title">Subtitles</p>
-          <button className={`panel-item${!subChoice ? ' active' : ''}`} onClick={() => chooseSub(null)}>Off</button>
-          {subs.length === 0 && <p className="muted small">No subtitles found for this title.</p>}
-          {subs.slice(0, 40).map(s => (
-            <button key={s.id} className={`panel-item${subChoice?.id === s.id ? ' active' : ''}`} onClick={() => chooseSub(s)} title={s.release}>
-              {s.label} {s.match >= 40 && <span className="tag">matches release</span>}
-              <span className="muted small ellipsis">{s.release}</span>
+          <PanelHead title="Subtitles" onClose={() => setPanel('none')} />
+          <div className="panel-body">
+            <button className={`panel-item${!subChoice ? ' active' : ''}`} onClick={() => chooseSub(null)} aria-pressed={!subChoice}>
+              <span className="panel-item-main"><span className="panel-item-label">Off</span></span>
+              {!subChoice && <Check className="panel-check" aria-hidden />}
             </button>
-          ))}
+            {subs.length === 0 && <p className="panel-empty">No subtitles found for this title.</p>}
+            {subs.slice(0, 40).map(s => (
+              <button key={s.id} className={`panel-item${subChoice?.id === s.id ? ' active' : ''}`} onClick={() => chooseSub(s)} title={s.release} aria-pressed={subChoice?.id === s.id}>
+                <span className="panel-item-main">
+                  <span className="panel-item-label">{/^[a-z]{2,3}$/.test(s.label) ? languageName(s.label) : s.label}{s.match >= 40 && <span className="match">Matches release</span>}</span>
+                  {s.release && <span className="panel-item-sub ellipsis">{s.release}</span>}
+                </span>
+                {subChoice?.id === s.id && <Check className="panel-check" aria-hidden />}
+              </button>
+            ))}
+          </div>
           {subChoice && (
             <div className="sub-offset">
               <span>Timing</span>
-              <button className="chip" onClick={() => setSubOffset(o => o - 0.5)}>−0.5s</button>
-              <span className="tabular">{subOffset > 0 ? '+' : ''}{subOffset.toFixed(1)}s</span>
-              <button className="chip" onClick={() => setSubOffset(o => o + 0.5)}>+0.5s</button>
+              <span className="stepper">
+                <button className="chip" onClick={() => setSubOffset(o => o - 0.5)} aria-label="Show subtitles 0.5 seconds earlier">−0.5s</button>
+                <span className="tabular offset-value">{subOffset > 0 ? '+' : ''}{subOffset.toFixed(1)}s</span>
+                <button className="chip" onClick={() => setSubOffset(o => o + 0.5)} aria-label="Show subtitles 0.5 seconds later">+0.5s</button>
+              </span>
             </div>
           )}
         </div>
@@ -435,7 +492,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
       {panel === 'info' && stats && (
         <div className="panel" role="dialog" aria-label="Stream info">
-          <p className="panel-title">Stream</p>
+          <PanelHead title="Stream" onClose={() => setPanel('none')} />
           <dl className="info-grid">
             <dt>Playback</dt><dd>{info ? `${info.plan.mode} · ${info.plan.reason}` : '—'}</dd>
             <dt>Video</dt><dd>{info?.probe.video ? `${info.probe.video.codec} ${info.probe.video.width}×${info.probe.video.height}${info.probe.video.hdr ? ' HDR' : ''}` : '—'}</dd>
@@ -446,6 +503,15 @@ export function Watch ({ query }: { query: URLSearchParams }) {
           </dl>
         </div>
       )}
+    </div>
+  )
+}
+
+function PanelHead ({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="panel-head">
+      <p className="panel-title">{title}</p>
+      <button className="icon-button small" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`}><X aria-hidden /></button>
     </div>
   )
 }
@@ -462,7 +528,7 @@ function Scrubber ({ time, duration, ranges, onSeek }: { time: number; duration:
   return (
     <div
       ref={bar}
-      className="scrubber"
+      className={`scrubber${drag !== null ? ' dragging' : ''}`}
       role="slider"
       tabIndex={0}
       aria-label="Seek"
@@ -480,7 +546,7 @@ function Scrubber ({ time, duration, ranges, onSeek }: { time: number; duration:
         <span className="scrubber-played" style={{ width: `${shown * 100}%` }} />
       </div>
       <span className="scrubber-thumb" style={{ left: `${shown * 100}%` }} />
-      {hover !== null && duration > 0 && <span className="scrubber-tip" style={{ left: `${hover * 100}%` }}>{clock(hover * duration)}</span>}
+      {hover !== null && duration > 0 && <span className="scrubber-tip" style={{ left: `clamp(1.75rem, ${hover * 100}%, calc(100% - 1.75rem))` }}>{clock(hover * duration)}</span>}
     </div>
   )
 }

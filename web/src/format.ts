@@ -21,4 +21,18 @@ export const RES_LABEL: Record<string, string> = { '2160p': '4K', '1080p': '1080
 export const LANG_NAME: Record<string, string> = {
   en: 'English', hi: 'Hindi', fr: 'French', es: 'Spanish', it: 'Italian', ru: 'Russian', de: 'German', pt: 'Portuguese',
   uk: 'Ukrainian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', pl: 'Polish', tr: 'Turkish', multi: 'Multi-audio', dual: 'Dual audio',
+  pob: 'Portuguese (Brazil)', pb: 'Portuguese (Brazil)',
+}
+
+const displayNames = (() => { try { return new Intl.DisplayNames(['en'], { type: 'language' }) } catch { return null } })()
+
+/** An English name for a language code ("cze" → "Czech"); bare codes look like debug output in a menu. */
+export function languageName (code: string): string {
+  const known = LANG_NAME[code.toLowerCase()]
+  if (known) return known
+  try {
+    const name = displayNames?.of(code)
+    if (name && name.toLowerCase() !== code.toLowerCase()) return name
+  } catch {}
+  return code.toUpperCase()
 }

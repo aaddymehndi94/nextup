@@ -17,7 +17,7 @@ not built). *(assumption: viewing happens mostly in the evening, in low ambient 
 
 ## Product Purpose
 
-nextup finds any film or episode, shows it the way a streaming service would (artwork, synopsis, cast), lists
+nexttupp finds any film or episode, shows it the way a streaming service would (artwork, synopsis, cast), lists
 every torrent that can play it with live swarm health, and plays the chosen one in the browser within seconds.
 Success: search → pick → watching, with no technical knowledge needed and no stalls.
 
@@ -40,11 +40,12 @@ YouTube/Netflix-style recommendation.
 - Built: search, title details with episodes, ranked sources with live seeds/peers, streaming with direct play /
   remux / NVENC transcode, OpenSubtitles, pin-to-download.
 - Not built yet: accounts, recommendations, continue-watching sync, music, native apps.
-- Torrent payload is never hosted by nextup; it links the user to swarms.
+- Torrent payload is never hosted by nexttupp; it links the user to swarms.
 
 ## Brand Commitments
 
-Name: **nextup** (lowercase). Formerly "afterglow" in an earlier brief; that name is retired.
+Name: **nexttupp** (lowercase), at nexttupp.com. Formerly "nextup", and "afterglow" in an earlier brief; both names
+are retired. The wordmark sets the name in Mona Sans Expanded so the two t's share one crossbar.
 
 ## Evidence on Hand
 

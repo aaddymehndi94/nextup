@@ -106,7 +106,7 @@ if (process.env.HEVC_HASH) {
   try {
     await page.evaluate(() => { window.__first = undefined })
     const q = new URLSearchParams({ ih: process.env.HEVC_HASH, f: '0', type: 'movie', id: 'tt0063350', s: 'tt0063350', n: 'Night of the Living Dead (4K HEVC test)' })
-    await page.evaluate(() => localStorage.removeItem('nextup:progress:tt0063350'))
+    await page.evaluate(() => ['nexttupp:', 'nextup:'].forEach(p => localStorage.removeItem(p + 'progress:tt0063350')))
     const start = Date.now()
     await page.goto(`${BASE}/watch?${q}`, { waitUntil: 'domcontentloaded' })
     const ms = await waitForPlayback(3, 180000)
@@ -136,7 +136,7 @@ if (process.env.HEVC_HASH) {
 if (process.env.REMUX_HASH) {
   try {
     const q = new URLSearchParams({ ih: process.env.REMUX_HASH, f: '0', type: 'movie', id: 'tt0063350', s: 'tt0063350', n: 'Night of the Living Dead (MKV remux test)' })
-    await page.evaluate(() => localStorage.removeItem('nextup:progress:tt0063350'))
+    await page.evaluate(() => ['nexttupp:', 'nextup:'].forEach(p => localStorage.removeItem(p + 'progress:tt0063350')))
     await page.evaluate(() => { window.__first = undefined })
     const start = Date.now()
     await page.goto(`${BASE}/watch?${q}`, { waitUntil: 'domcontentloaded' })
