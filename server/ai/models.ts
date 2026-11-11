@@ -65,7 +65,7 @@ const OPENAI_TIER: Record<string, number> = { nano: 0, luna: 0, mini: 1, terra: 
 const OPENAI_ID = /^gpt-(\d+)(?:\.(\d+))?(?:-(nano|mini|luna|terra|sol|astra))?$/
 
 /** The fields of the Models API's entries that matter (an API key lists `id`; ChatGPT sign-in lists `slug`). */
-export interface OpenAiModelInfo { id?: string; slug?: string; display_name?: string; visibility?: string; created?: number }
+export interface OpenAiModelInfo { id?: string; slug?: string; display_name?: string; visibility?: string; supported_in_api?: boolean; created?: number }
 
 const titleCase = (s: string) => s.replace(/(^|-)([a-z])/g, (_m, d: string, c: string) => `${d ? ' ' : ''}${c.toUpperCase()}`)
 
@@ -74,7 +74,7 @@ export function openAiModels (list: OpenAiModelInfo[], provider: AiProvider): Ai
   const out: Array<AiModel & { gen: number }> = []
   for (const m of list) {
     const id = m.slug ?? m.id
-    if (!id || (m.visibility && m.visibility !== 'list')) continue
+    if (!id || (m.visibility && m.visibility !== 'list') || m.supported_in_api === false) continue
     const p = OPENAI_ID.exec(id)
     if (!p) continue
     const gen = Number(p[1]) * 100 + Number(p[2] ?? 0)

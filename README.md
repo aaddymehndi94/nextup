@@ -86,7 +86,7 @@ itself isn't stored). While the setting is on, also its home-network addresses (
 
 ## AI picks (optional)
 
-**AI picks** in the profile menu connects a model of the viewer's own: **Sign in with ChatGPT** (uses a Plus or
+**AI settings** in the profile menu connects a model of the viewer's own: **Sign in with ChatGPT** (uses a Plus or
 Pro plan, no key, no extra bill), a **Claude API key** or an **OpenAI API key**. Then home offers **Get AI
 picks** (a row chosen from your taste, each with its reason) and search offers **Ask AI** for questions like
 "a cosy 90s sitcom". A model is asked only when you press one of those buttons; answers are saved (picks until

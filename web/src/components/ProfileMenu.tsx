@@ -100,7 +100,7 @@ export function ProfileMenu () {
           </a>
           <a href="/ai" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/ai') }}>
             <Sparkles className="menu-icon" aria-hidden />
-            <span className="menu-label">AI picks</span>
+            <span className="menu-label">AI settings</span>
           </a>
           <a href="/profiles" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/profiles') }}>
             <Pencil className="menu-icon" aria-hidden />

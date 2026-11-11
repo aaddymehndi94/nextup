@@ -21,7 +21,7 @@ const perMillion = (m: AiModel) => (m.price ? `$${m.price.input} in / $${m.price
 export function Ai () {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const priv = usePrivate()
-  useDocumentTitle('AI picks')
+  useDocumentTitle('AI settings')
 
   const refresh = useCallback(() => api.ai().then(status => { setLoad({ state: 'ok', status }); return status }), [])
   useEffect(() => { refresh().catch(err => setLoad({ state: 'error', message: (err as Error).message })) }, [refresh])
@@ -46,7 +46,7 @@ export function Ai () {
       <TopBar solid />
       <div className="account-body">
         <header className="account-head">
-          <h1 className="account-title">AI picks</h1>
+          <h1 className="account-title">AI settings</h1>
           <p className="account-lede">
             Optional. Connect ChatGPT, Claude or OpenAI and nexttupp can suggest picks from your taste, and answer searches like
             “a cosy 90s sitcom” or “something like Severance but funnier”.

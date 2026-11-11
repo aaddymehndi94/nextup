@@ -25,6 +25,8 @@ import { normTitle, resolveAll } from './resolve.ts'
 // (owner-only file mode), are never sent to the browser and are never synced. See docs/adr/0009.
 
 const MODELS_TTL_MS = 12 * 3600_000
+/** An empty list (a provider hiccup, or a list it sent in a shape not yet understood) is asked for again sooner. */
+const EMPTY_MODELS_TTL_MS = 60_000
 const SEARCH_TTL_MS = 14 * 24 * 3600_000
 const DEFAULT_DAILY_LIMIT = 50
 /** Typical tokens per request, for estimates until this computer has its own averages. */
@@ -69,6 +71,8 @@ export class AiService {
   private readonly inflight = new Map<string, Promise<unknown>>()
   private refreshing: Promise<ChatgptSession> | null = null
   private loadingModels = new Set<AiProvider>()
+  /** A ChatGPT sign-in is being finished (tokens, then models): still "signing in" to the settings page. */
+  private connecting = false
 
   constructor (deps: AiDeps) {
     this.d = deps
@@ -113,7 +117,7 @@ export class AiService {
     const out: AiModel[] = []
     for (const p of this.connected()) {
       const m = this.state.models?.[p]
-      if (!m || this.now() - m.at > MODELS_TTL_MS) void this.loadModels(p).catch(() => {})
+      if (!m || this.now() - m.at > (m.list.length ? MODELS_TTL_MS : EMPTY_MODELS_TTL_MS)) void this.loadModels(p).catch(() => {})
       out.push(...(m?.list ?? []))
     }
     return out
@@ -155,7 +159,7 @@ export class AiService {
       dailyLimit: this.state.dailyLimit,
       estimate: active ? { picks: this.estimate(active.model, 'picks'), search: this.estimate(active.model, 'search') } : null,
       usage: { today: today.requests, month },
-      signingIn: this.d.chatgpt.signingIn,
+      signingIn: this.d.chatgpt.signingIn || this.connecting,
     }
   }
 
@@ -185,12 +189,18 @@ export class AiService {
   }
 
   async chatgptCallback (query: Record<string, string | undefined>): Promise<void> {
-    const s = await this.d.chatgpt.finish(query)
-    this.state.chatgpt = s
-    this.state.chatgptLast = { clientId: s.clientId, email: s.email }
-    this.write()
-    this.d.log?.('ai: ChatGPT connected')
-    await this.loadModels('chatgpt').catch(err => this.d.log?.(`ai: ChatGPT models: ${(err as Error).message}`))
+    // The page polls while signing in; it must not see a gap between the sign-in ending and the connection
+    // (with its models) being saved, or it stops looking and shows the Sign in button again.
+    this.connecting = true
+    try {
+      const s = await this.d.chatgpt.finish(query)
+      this.state.chatgpt = s
+      this.state.chatgptLast = { clientId: s.clientId, email: s.email }
+      this.write()
+      this.d.log?.('ai: ChatGPT connected')
+      const list = await this.loadModels('chatgpt').catch(err => { this.d.log?.(`ai: ChatGPT models: ${(err as Error).message}`); return [] })
+      if (!list.length) this.d.log?.('ai: ChatGPT sent no usable models')
+    } finally { this.connecting = false }
   }
 
   async disconnect (p: AiProvider): Promise<{ revoked?: boolean }> {

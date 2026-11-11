@@ -124,8 +124,15 @@ function openAiError (provider: AiProvider, err: unknown): AiError {
 
 async function openAiModelsOf (cred: Credential): Promise<AiModel[]> {
   try {
-    const list: OpenAiModelInfo[] = []
-    for await (const m of openai(cred).models.list()) list.push(m as unknown as OpenAiModelInfo)
+    const client = openai(cred)
+    let list: OpenAiModelInfo[] = []
+    if (cred.provider === 'chatgpt') {
+      // A ChatGPT plan's list comes as { models: [...] }, not the API's paginated { data: [...] }.
+      const body = await client.get<{ models?: OpenAiModelInfo[]; data?: OpenAiModelInfo[] }>('/models')
+      list = body?.models ?? body?.data ?? []
+    } else {
+      for await (const m of client.models.list()) list.push(m as unknown as OpenAiModelInfo)
+    }
     return openAiModels(list, cred.provider)
   } catch (err) { throw openAiError(cred.provider, err) }
 }
