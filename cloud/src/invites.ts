@@ -1,13 +1,16 @@
 import { type AccountRow, accountJson, authenticate, RESET_TTL_MS, requireAdmin } from './auth.ts'
 import { makeVerifier, randomToken, sha256Hex, TOKEN } from './crypto.ts'
 import { type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
-import { credential, displayName, email, plainText, str, UUID } from './validate.ts'
+import { credential, displayName, email, int, plainText, str, UUID } from './validate.ts'
 
-// Invite-only sign-up (any member can invite; links are single-use and expire after 7 days) and the
-// admin endpoints: list accounts, disable/enable, reset links, list and revoke any invite.
+// Invite-only sign-up and the admin endpoints: list accounts, disable/enable, reset links, list and revoke
+// any invite. Any member can invite. An invite is for one person, or a group link that up to `maxUses`
+// people can join with (for a group chat); either way it expires after 7 days and can be stopped early.
 
 export const INVITE_TTL_MS = 7 * 24 * 3600_000
 const PENDING_LIMIT = { member: 10, admin: 100 }
+/** The most people one group link can let in. */
+export const MAX_USES = { member: 10, admin: 50 }
 const SMALL_BODY = 4096
 
 interface InviteRow {
@@ -20,6 +23,8 @@ interface InviteRow {
   used_at: number | null
   used_by: string | null
   revoked_at: number | null
+  max_uses: number
+  use_count: number
 }
 
 type Person = { id: string; email: string; displayName: string | null } | null
@@ -37,7 +42,9 @@ const person = (id: string | null, mail: string | null, name: string | null): Pe
 
 type InviteListRow = InviteRow & { u_email: string | null; u_name: string | null; c_email: string | null; c_name: string | null }
 
-function inviteJson (r: InviteListRow, now: number, withCreator: boolean) {
+type Joiner = { invite_id: string; id: string; email: string; display_name: string | null }
+
+function inviteJson (r: InviteListRow, now: number, withCreator: boolean, joined: Map<string, Person[]>) {
   return {
     id: r.id,
     note: r.note,
@@ -48,8 +55,24 @@ function inviteJson (r: InviteListRow, now: number, withCreator: boolean) {
     usedAt: r.used_at,
     usedBy: person(r.used_by, r.u_email, r.u_name),
     revokedAt: r.revoked_at,
+    maxUses: r.max_uses,
+    uses: r.use_count,
+    joined: joined.get(r.id) ?? [],
     ...(withCreator ? { createdBy: person(r.created_by, r.c_email, r.c_name) } : {}),
   }
+}
+
+/** Everyone who joined with each of these invites, in the order they joined. */
+async function joinedBy (env: Env, where: string, ...binds: unknown[]): Promise<Map<string, Person[]>> {
+  const rows = await env.DB.prepare(`SELECT a.invite_id, a.id, a.email, a.display_name FROM accounts a JOIN invites i ON i.id = a.invite_id
+                                      WHERE ${where} ORDER BY a.created_at`).bind(...binds).all<Joiner>()
+  const out = new Map<string, Person[]>()
+  for (const j of rows.results) {
+    const list = out.get(j.invite_id) ?? []
+    list.push(person(j.id, j.email, j.display_name))
+    out.set(j.invite_id, list)
+  }
+  return out
 }
 
 const INVITE_SELECT = `SELECT i.*, u.email AS u_email, u.display_name AS u_name, c.email AS c_email, c.display_name AS c_name
@@ -65,10 +88,12 @@ const resetUrl = (ctx: Ctx, token: string) => `${ctx.url.origin}/reset#${token}`
 export async function createInvite (ctx: Ctx): Promise<Response> {
   const { account } = await authenticate(ctx)
   let note: string | null = null
+  let maxUses = 1
   if (ctx.req.headers.get('content-length') !== '0' && ctx.req.body) {
     const body = await readJson(ctx.req, SMALL_BODY)
-    onlyKeys(body, ['note'])
+    onlyKeys(body, ['note', 'maxUses'])
     if (body.note !== undefined && body.note !== null) note = plainText(body.note, 'note', 80)
+    if (body.maxUses !== undefined && body.maxUses !== null) maxUses = int(body.maxUses, 'maxUses', 1, MAX_USES[account.role])
   }
   const { env, now } = ctx
   const pending = await env.DB.prepare('SELECT COUNT(*) AS n FROM invites WHERE created_by = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?')
@@ -78,10 +103,10 @@ export async function createInvite (ctx: Ctx): Promise<Response> {
   const token = randomToken('nxi_')
   const id = crypto.randomUUID()
   const expiresAt = now + INVITE_TTL_MS
-  await env.DB.prepare(`INSERT INTO invites (id, token_hash, created_by, role, note, created_at, expires_at) VALUES (?, ?, ?, 'member', ?, ?, ?)`)
-    .bind(id, await sha256Hex(token), account.id, note, now, expiresAt).run()
+  await env.DB.prepare(`INSERT INTO invites (id, token_hash, created_by, role, note, created_at, expires_at, max_uses) VALUES (?, ?, ?, 'member', ?, ?, ?, ?)`)
+    .bind(id, await sha256Hex(token), account.id, note, now, expiresAt, maxUses).run()
   return json({
-    invite: { id, note, role: 'member', status: 'pending', createdAt: now, expiresAt, usedAt: null, usedBy: null, revokedAt: null },
+    invite: { id, note, role: 'member', status: 'pending', createdAt: now, expiresAt, usedAt: null, usedBy: null, revokedAt: null, maxUses, uses: 0, joined: [] },
     token,
     url: inviteUrl(env, token),
   }, 201)
@@ -90,13 +115,15 @@ export async function createInvite (ctx: Ctx): Promise<Response> {
 export async function listMyInvites (ctx: Ctx): Promise<Response> {
   const { account } = await authenticate(ctx)
   const rows = await ctx.env.DB.prepare(`${INVITE_SELECT} WHERE i.created_by = ? ORDER BY i.created_at DESC LIMIT 200`).bind(account.id).all<InviteListRow>()
-  return json({ invites: rows.results.map(r => inviteJson(r, ctx.now, false)) })
+  const joined = await joinedBy(ctx.env, 'i.created_by = ?', account.id)
+  return json({ invites: rows.results.map(r => inviteJson(r, ctx.now, false, joined)) })
 }
 
 async function revoke (ctx: Ctx, id: string, byAccount: AccountRow, any: boolean): Promise<Response> {
   if (!UUID.test(id)) throw new HttpError(404, 'not_found', 'No such invite')
   const r = await ctx.env.DB.prepare('SELECT * FROM invites WHERE id = ?').bind(id).first<InviteRow>()
   if (!r || (!any && r.created_by !== byAccount.id)) throw new HttpError(404, 'not_found', 'No such invite')
+  // A group link that still has places can be stopped; one that is full (or a used one-person invite) can't.
   if (r.used_at !== null) throw new HttpError(409, 'already_used', 'That invite has already been used')
   if (r.revoked_at === null) {
     await ctx.env.DB.prepare('UPDATE invites SET revoked_at = ?, revoked_by = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL')
@@ -119,11 +146,11 @@ export async function acceptInvite (ctx: Ctx): Promise<Response> {
   const cred = credential(body)
   const name = displayName(body.displayName)
   const { env, now } = ctx
-  const invalid = new HttpError(400, 'invalid_invite', 'This invite link is invalid, already used or expired. Ask for a new one.')
+  const invalid = new HttpError(400, 'invalid_invite', 'This invite link is invalid, already used up or expired. Ask for a new one.')
   if (!TOKEN.test(token) || !token.startsWith('nxi_')) throw invalid
   const tokenHash = await sha256Hex(token)
-  // Valid = unused, unrevoked, unexpired, and its creator (if any; NULL is the bootstrap invite) still enabled.
-  const VALID = `i.token_hash = ?1 AND i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?2
+  // Valid = a place left, unrevoked, unexpired, and its creator (if any; NULL is the bootstrap invite) still enabled.
+  const VALID = `i.token_hash = ?1 AND i.used_at IS NULL AND i.use_count < i.max_uses AND i.revoked_at IS NULL AND i.expires_at > ?2
                  AND (i.created_by IS NULL OR EXISTS (SELECT 1 FROM accounts c WHERE c.id = i.created_by AND c.disabled_at IS NULL))`
   const [inv, taken] = await env.DB.batch<{ id: string; role: 'admin' | 'member'; created_by: string | null } | { one: number }>([
     env.DB.prepare(`SELECT i.id, i.role, i.created_by FROM invites i WHERE ${VALID}`).bind(tokenHash, now),
@@ -135,15 +162,18 @@ export async function acceptInvite (ctx: Ctx): Promise<Response> {
 
   const hash = await makeVerifier(cred.key, cred.salt, cred.iterations)
   const id = crypto.randomUUID()
-  // One transaction: the account is only inserted while the invite is still valid, then the invite is
-  // marked used. Two simultaneous sign-ups with one token: the second inserts nothing.
+  // One transaction: the account is only inserted while the invite still has a place, then that place is
+  // taken (and the invite closed when it was the last). Simultaneous sign-ups with a one-person invite: the
+  // second inserts nothing; with a group link, no more than max_uses get in.
   let results: D1Result[]
   try {
     results = await env.DB.batch([
-      env.DB.prepare(`INSERT INTO accounts (id, email, display_name, role, password_hash, invited_by, created_at, password_changed_at)
-                      SELECT ?3, ?4, ?5, i.role, ?6, i.created_by, ?2, ?2 FROM invites i WHERE ${VALID}`)
+      env.DB.prepare(`INSERT INTO accounts (id, email, display_name, role, password_hash, invited_by, invite_id, created_at, password_changed_at)
+                      SELECT ?3, ?4, ?5, i.role, ?6, i.created_by, i.id, ?2, ?2 FROM invites i WHERE ${VALID}`)
         .bind(tokenHash, now, id, mail, name, hash),
-      env.DB.prepare('UPDATE invites SET used_at = ?2, used_by = ?3 WHERE token_hash = ?1 AND used_at IS NULL AND EXISTS (SELECT 1 FROM accounts WHERE id = ?3)')
+      env.DB.prepare(`UPDATE invites SET use_count = use_count + 1, used_by = COALESCE(used_by, ?3),
+                             used_at = CASE WHEN use_count + 1 >= max_uses THEN ?2 ELSE NULL END
+                       WHERE token_hash = ?1 AND used_at IS NULL AND EXISTS (SELECT 1 FROM accounts WHERE id = ?3)`)
         .bind(tokenHash, now, id),
       // Using a bootstrap invite retires any other unused bootstrap invites.
       env.DB.prepare(`UPDATE invites SET revoked_at = ?2 WHERE created_by IS NULL AND used_at IS NULL AND revoked_at IS NULL AND token_hash != ?1
@@ -228,7 +258,8 @@ export async function adminResetLink (ctx: Ctx): Promise<Response> {
 export async function adminListInvites (ctx: Ctx): Promise<Response> {
   await requireAdmin(ctx)
   const rows = await ctx.env.DB.prepare(`${INVITE_SELECT} ORDER BY i.created_at DESC LIMIT 500`).all<InviteListRow>()
-  return json({ invites: rows.results.map(r => inviteJson(r, ctx.now, true)) })
+  const joined = await joinedBy(ctx.env, '1 = 1')
+  return json({ invites: rows.results.map(r => inviteJson(r, ctx.now, true, joined)) })
 }
 
 export async function adminRevokeInvite (ctx: Ctx): Promise<Response> {

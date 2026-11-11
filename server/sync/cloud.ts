@@ -23,6 +23,8 @@ export interface CloudAccount { id: string; email: string; displayName: string |
 export interface CloudInvite {
   id: string; note: string | null; role: string; status: 'pending' | 'used' | 'expired' | 'revoked'
   createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { id: string; email: string; displayName: string | null } | null; revokedAt: number | null
+  /** How many people the link lets in (1 = a one-person invite), how many have joined, and who. Older APIs leave these out. */
+  maxUses?: number; uses?: number; joined?: { id: string; email: string; displayName: string | null }[]
 }
 export interface PullPage extends Batch { cursor: string; more: boolean; serverTime: number }
 
@@ -117,9 +119,14 @@ export class CloudClient {
 
   logout (token: string) { return this.request<void>('POST', '/v1/auth/logout', { token, timeoutMs: 5000 }) }
   account (token: string) { return this.request<{ account: CloudAccount }>('GET', '/v1/account', { token }) }
-  createInvite (token: string, note?: string) {
-    return this.request<{ invite: CloudInvite; token: string; url: string }>('POST', '/v1/invites', { token, body: note ? { note } : {} })
+  createInvite (token: string, opts: { note?: string; maxUses?: number } = {}) {
+    const body: Record<string, unknown> = {}
+    if (opts.note) body.note = opts.note
+    if (opts.maxUses && opts.maxUses > 1) body.maxUses = opts.maxUses
+    return this.request<{ invite: CloudInvite; token: string; url: string }>('POST', '/v1/invites', { token, body })
   }
+
+  revokeInvite (token: string, id: string) { return this.request<void>('DELETE', `/v1/invites/${encodeURIComponent(id)}`, { token }) }
 
   listInvites (token: string) { return this.request<{ invites: CloudInvite[] }>('GET', '/v1/invites', { token }) }
   push (token: string, batch: Batch) {

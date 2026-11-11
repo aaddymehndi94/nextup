@@ -35,6 +35,7 @@ export interface AccountStatus {
 export interface Invite {
   id: string; note: string | null; status: 'pending' | 'used' | 'expired' | 'revoked'
   createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { email: string; displayName: string | null } | null
+  maxUses?: number; uses?: number; joined?: { email: string; displayName: string | null }[]
 }
 
 // Phones and TVs at home (server/lan). Settings change only on the computer itself (`local`).
@@ -188,7 +189,8 @@ export const api = {
   logout: () => req<AccountStatus>('/api/account/logout', json('POST', {})),
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
   invites: () => req<{ invites: Invite[] }>('/api/account/invites'),
-  createInvite: () => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', {})),
+  createInvite: (maxUses = 1) => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', { maxUses })),
+  revokeInvite: (id: string) => req<void>(`/api/account/invites/${encodeURIComponent(id)}`, json('DELETE', {})),
   castDevices: (refresh = false) => req<{ devices: CastDevice[] }>(`/api/cast/devices${refresh ? '?refresh=1' : ''}`),
   cast: () => req<CastStatus>('/api/cast'),
   castStart: (body: CastStartRequest) => req<CastStatus>('/api/cast', json('POST', body)),

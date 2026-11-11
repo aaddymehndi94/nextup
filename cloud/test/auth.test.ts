@@ -128,6 +128,66 @@ describe('invites and sign-up', () => {
     expect(used.status).toBe(409)
   })
 
+  it('a group link lets in up to maxUses people, then closes', async () => {
+    const admin = await makeAdmin()
+    const r = await call('POST', '/v1/invites', { token: admin.token, body: { maxUses: 3 } })
+    expect(r.status).toBe(201)
+    expect(r.body.invite).toMatchObject({ maxUses: 3, uses: 0, joined: [], status: 'pending' })
+    const token = r.body.token
+    const emails = [uniqueEmail(), uniqueEmail(), uniqueEmail()]
+    expect((await accept(token, emails[0], PASSWORD, { displayName: 'Ann' })).status).toBe(201)
+    let mine = await call('GET', '/v1/invites', { token: admin.token })
+    expect(mine.body.invites.find((i: { id: string }) => i.id === r.body.invite.id)).toMatchObject({ status: 'pending', uses: 1, usedAt: null })
+    expect((await accept(token, emails[1])).status).toBe(201)
+    expect((await accept(token, emails[2])).status).toBe(201)
+    const full = await accept(token, uniqueEmail())
+    expect(full.status).toBe(400)
+    expect(full.body.error).toBe('invalid_invite')
+
+    mine = await call('GET', '/v1/invites', { token: admin.token })
+    const inv = mine.body.invites.find((i: { id: string }) => i.id === r.body.invite.id)
+    expect(inv).toMatchObject({ status: 'used', uses: 3, maxUses: 3, usedBy: { email: emails[0], displayName: 'Ann' } })
+    expect(inv.usedAt).not.toBeNull()
+    expect(inv.joined.map((p: { email: string }) => p.email)).toEqual(emails)
+    // Everyone who joined is recorded as invited by the link's maker.
+    const accounts = await call('GET', '/v1/admin/accounts', { token: admin.token })
+    for (const e of emails) expect(accounts.body.accounts.find((a: { email: string }) => a.email === e).invitedBy.id).toBe(admin.id)
+    const adminList = await call('GET', '/v1/admin/invites', { token: admin.token })
+    expect(adminList.body.invites.find((i: { id: string }) => i.id === inv.id).joined).toHaveLength(3)
+  })
+
+  it('simultaneous sign-ups never overfill a group link', async () => {
+    const admin = await makeAdmin()
+    const r = await call('POST', '/v1/invites', { token: admin.token, body: { maxUses: 2 } })
+    const results = await Promise.all([0, 1, 2, 3].map(() => accept(r.body.token, uniqueEmail())))
+    expect(results.map(x => x.status).sort()).toEqual([201, 201, 400, 400])
+  })
+
+  it('a group link with places left can be stopped; members can make links for up to 10', async () => {
+    const admin = await makeAdmin()
+    const alice = await makeMember(admin)
+    const big = await call('POST', '/v1/invites', { token: alice.token, body: { maxUses: 11 } })
+    expect(big.status).toBe(400)
+    const r = await call('POST', '/v1/invites', { token: alice.token, body: { maxUses: 10, note: 'film club' } })
+    expect(r.status).toBe(201)
+    expect((await accept(r.body.token, uniqueEmail())).status).toBe(201)
+    expect((await call('DELETE', `/v1/invites/${r.body.invite.id}`, { token: alice.token })).status).toBe(204)
+    expect((await accept(r.body.token, uniqueEmail())).status).toBe(400)
+    const mine = await call('GET', '/v1/invites', { token: alice.token })
+    expect(mine.body.invites.find((i: { id: string }) => i.id === r.body.invite.id)).toMatchObject({ status: 'revoked', uses: 1, maxUses: 10 })
+    expect((await call('POST', '/v1/invites', { token: admin.token, body: { maxUses: 50 } })).status).toBe(201)
+    expect((await call('POST', '/v1/invites', { token: admin.token, body: { maxUses: 51 } })).status).toBe(400)
+    expect((await call('POST', '/v1/invites', { token: admin.token, body: { maxUses: 0 } })).status).toBe(400)
+  })
+
+  it('a one-person invite reports one place', async () => {
+    const admin = await makeAdmin()
+    const inv = await invite(admin)
+    await accept(inv.token, uniqueEmail())
+    const mine = await call('GET', '/v1/invites', { token: admin.token })
+    expect(mine.body.invites.find((i: { id: string }) => i.id === inv.id)).toMatchObject({ status: 'used', maxUses: 1, uses: 1 })
+  })
+
   it('limits unused invites per member', async () => {
     const admin = await makeAdmin()
     const alice = await makeMember(admin)

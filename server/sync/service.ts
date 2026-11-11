@@ -210,9 +210,13 @@ export class SyncService {
     return this.session.token
   }
 
-  async createInvite (note?: string): Promise<{ code: string; url: string; invite: CloudInvite }> {
-    const r = await this.authed(t => this.cloud.createInvite(t, note?.trim() || undefined))
+  async createInvite (opts: { note?: string; maxUses?: number } = {}): Promise<{ code: string; url: string; invite: CloudInvite }> {
+    const r = await this.authed(t => this.cloud.createInvite(t, { note: opts.note?.trim() || undefined, maxUses: opts.maxUses }))
     return { code: r.token, url: r.url, invite: r.invite }
+  }
+
+  async revokeInvite (id: string): Promise<void> {
+    await this.authed(t => this.cloud.revokeInvite(t, id))
   }
 
   async invites (): Promise<CloudInvite[]> {

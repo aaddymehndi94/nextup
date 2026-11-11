@@ -10,8 +10,9 @@ Everything else stays on the user's machine. The API accepts only IMDb ids (`tt1
 (`tt123:1:2`), numbers, timestamps and a few enums. It has no field for a title, source, torrent info
 hash, magnet link or file name, and rejects any payload that tries to add one (see [Validation](#validation)).
 
-**Status: local only.** Nothing has been deployed. `wrangler.jsonc` holds a placeholder `database_id`.
-See [Deploying](#deploying-needs-the-owners-approval) for what a deploy would create.
+**Status: deployed** at `https://api.nexttupp.com` (Worker `nexttupp-cloud`, D1 `nexttupp`, migrations
+applied with `npx wrangler d1 migrations apply nexttupp --remote`). See
+[Deploying](#deploying-needs-the-owners-approval).
 
 ## Run it locally
 
@@ -139,23 +140,27 @@ the key is the PBKDF2 output.
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
-| `POST /v1/invites` | bearer | none, or `{ note?: string (≤80) }` | `201 { invite: Invite, token: "nxi_…", url: "<PUBLIC_URL>/join?code=nxi_…" }` · `409 too_many_invites` |
+| `POST /v1/invites` | bearer | none, or `{ note?: string (≤80), maxUses?: 1–10 (admin 1–50) }` | `201 { invite: Invite, token: "nxi_…", url: "<PUBLIC_URL>/join?code=nxi_…" }` · `409 too_many_invites` |
 | `GET /v1/invites` | bearer | | `200 { invites: Invite[] }`, your own, newest first |
-| `DELETE /v1/invites/:id` | bearer | | `204` · `404` if it isn't yours · `409 already_used` |
+| `DELETE /v1/invites/:id` | bearer | | `204` · `404` if it isn't yours · `409 already_used` (used, or a full group link) |
 | `POST /v1/invites/accept` | – | `{ token, email, salt, iterations, key, displayName? }` | `201 { account: Account }`, then log in · `400 invalid_invite` · `409 email_taken` |
 
-`Invite` = `{ id, note, role, status: "pending"|"used"|"expired"|"revoked", createdAt, expiresAt, usedAt, usedBy: {id, email, displayName}|null, revokedAt }`.
+`Invite` = `{ id, note, role, status: "pending"|"used"|"expired"|"revoked", createdAt, expiresAt, usedAt, usedBy: {id, email, displayName}|null, revokedAt, maxUses, uses, joined: [{id, email, displayName}] }`.
+`status: "used"` means no places are left; `usedBy` is the first person who joined, `joined` everyone, in order.
 
-- An invite is single-use and expires **7 days** after creation. Only its hash is stored, so the code is
+- An invite is for one person (`maxUses` 1, the default) or a **group link** that up to `maxUses` people
+  can join with, for sharing in a group chat. Either kind expires **7 days** after creation and can be
+  stopped early with `DELETE`, even after some people have joined. Only its hash is stored, so the code is
   shown once, in the create response. The `token` is the **invite code**; people share it as is or as the
   link `https://nexttupp.com/join?code=<code>` (`PUBLIC_URL` is the website). The app's Join form takes
   either. The website's `/join` page should send `Referrer-Policy: no-referrer` and drop the code from the
-  address bar once read, since a query string can reach the site's logs. A leaked code is still single-use
-  and expires.
+  address bar once read, since a query string can reach the site's logs. A leaked code still lets in no
+  more than its `maxUses`, and expires.
 - A member can have at most 10 unused invites at a time (an admin, 100).
 - An invite is valid only while its creator's account is enabled. Disabling an account revokes its unused invites.
-- Who invited whom is recorded in `accounts.invited_by` and `invites.used_by`.
-- Signing up is atomic: two simultaneous sign-ups with one token create one account (tested).
+- Who invited whom is recorded in `accounts.invited_by`, and which invite each person used in `accounts.invite_id`.
+- Signing up is atomic: simultaneous sign-ups with one token never let in more than `maxUses` (tested).
+- The website's `/invite` page makes, shares (the phone's share sheet) and stops invites, signed in the same way as `/watch`.
 - `GET /join?code=…` (or `/join#…`) and `GET /reset#…` serve small HTML forms (strict CSP; script at
   `/app.js`) for people who open a link in a browser. `/join` here is the fallback for the website's page;
   `/reset` links point here (the Worker's own origin).
@@ -370,7 +375,7 @@ design. In short:
 |---|---|---|
 | `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `invited_by`, `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
 | `sessions` | `token_hash` | bearer sessions: `created_at`, `last_used_at`, `expires_at` |
-| `invites` | `id`, `token_hash` unique | `created_by` (NULL = bootstrap), role, note, `expires_at`, `used_at`/`used_by`, `revoked_at`/`revoked_by` |
+| `invites` | `id`, `token_hash` unique | `created_by` (NULL = bootstrap), role, note, `expires_at`, `max_uses`, `use_count`, `used_at` (full) / `used_by` (first), `revoked_at`/`revoked_by` |
 | `password_resets` | `token_hash` | admin-issued, single-use, 24 h |
 | `login_attempts` | `key` (SHA-256 of email or IP) | failure count, window, `locked_until` |
 | `server_keys` | `name` | random keys generated in D1: `prelogin` (the fake-salt HMAC key, also used for `net_hash`) |

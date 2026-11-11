@@ -278,12 +278,26 @@ function PhonesAndTvs ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) =
   )
 }
 
+/** Group links that the app makes let this many people in (the API allows members up to 10). */
+const GROUP_SIZE = 10
+
+const isGroup = (i: Invite) => (i.maxUses ?? 1) > 1
+const who = (p: { email: string; displayName: string | null }) => p.displayName ?? p.email
+
 function inviteState (i: Invite, now: number): string {
-  if (i.status === 'used') return `Joined${i.usedBy ? `: ${i.usedBy.displayName ?? i.usedBy.email}` : ''}`
+  const days = Math.ceil((i.expiresAt - now) / 86_400_000)
+  const left = days <= 1 ? 'expires within a day' : `expires in ${days} days`
+  if (isGroup(i)) {
+    const joined = `${i.uses ?? 0} of ${i.maxUses} joined`
+    if (i.status === 'used') return `Full · ${joined}`
+    if (i.status === 'revoked') return `Stopped · ${joined}`
+    if (i.status === 'expired' || i.expiresAt <= now) return `Expired · ${joined}`
+    return `${joined} · ${left}`
+  }
+  if (i.status === 'used') return `Joined${i.usedBy ? `: ${who(i.usedBy)}` : ''}`
   if (i.status === 'revoked') return 'Cancelled'
   if (i.status === 'expired' || i.expiresAt <= now) return 'Expired'
-  const days = Math.ceil((i.expiresAt - now) / 86_400_000)
-  return `Waiting · ${days <= 1 ? 'expires within a day' : `expires in ${days} days`}`
+  return `Waiting · ${left}`
 }
 
 async function copy (text: string, what: string) {
@@ -297,58 +311,83 @@ async function copy (text: string, what: string) {
 
 function Invites () {
   const [invites, setInvites] = useState<Invite[] | null>(null)
-  const [fresh, setFresh] = useState<{ code: string; url: string } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [fresh, setFresh] = useState<{ code: string; url: string; group: boolean } | null>(null)
+  const [busy, setBusy] = useState<'one' | 'group' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => { api.invites().then(r => setInvites(r.invites)).catch(() => setInvites([])) }, [])
+  const reload = useCallback(() => api.invites().then(r => setInvites(r.invites)).catch(() => setInvites(list => list ?? [])), [])
+  useEffect(() => { void reload() }, [reload])
 
-  const create = async () => {
-    setBusy(true)
+  const create = async (group: boolean) => {
+    setBusy(group ? 'group' : 'one')
     setError(null)
     try {
-      const r = await api.createInvite()
-      setFresh({ code: r.code, url: r.url })
+      const r = await api.createInvite(group ? GROUP_SIZE : 1)
+      setFresh({ code: r.code, url: r.url, group })
       setInvites(list => [r.invite, ...(list ?? [])])
     } catch (err) { setError((err as Error).message) }
-    setBusy(false)
+    setBusy(null)
+  }
+
+  const stop = async (i: Invite) => {
+    setError(null)
+    try {
+      await api.revokeInvite(i.id)
+      toast(isGroup(i) ? 'Group link stopped' : 'Invite cancelled')
+      await reload()
+    } catch (err) { setError((err as Error).message) }
   }
 
   const now = Date.now()
   return (
     <section className="account-section" aria-labelledby="invite-h">
-      <h2 id="invite-h" className="section-title">Invite a friend</h2>
-      <p className="account-note">Send them a link. It works once, for 7 days, and gives them their own account.</p>
+      <h2 id="invite-h" className="section-title">Invite friends</h2>
+      <p className="account-note">
+        A link for one person works once. A group link lets up to {GROUP_SIZE} people join, for sharing in a group chat.
+        Links last 7 days and give everyone their own account. On your phone, make them at nexttupp.com/invite.
+      </p>
       {fresh
         ? (
           <div className="invite-box">
             <label className="field">
-              <span className="field-label">Invite link</span>
+              <span className="field-label">{fresh.group ? `Group link · up to ${GROUP_SIZE} people` : 'Invite link · for one person'}</span>
               <input readOnly value={fresh.url} onFocus={e => e.currentTarget.select()} spellCheck={false} />
             </label>
             <div className="invite-actions">
               <button type="button" className="button secondary" onClick={() => copy(fresh.url, 'Link')}><Copy aria-hidden />Copy link</button>
               <button type="button" className="text-button" onClick={() => copy(fresh.code, 'Code')}>Copy code only</button>
+              <button type="button" className="text-button" onClick={() => setFresh(null)}>Make another</button>
             </div>
-            <p className="fine-print">They can open the link, or paste the code into nexttupp under Account, Join with an invite. This is the only time the code is shown.</p>
+            <p className="fine-print">They can open the link, or paste the code into nexttupp under Account, Join with an invite. This is the only time the link is shown.</p>
           </div>
           )
         : (
           <div className="actions">
-            <button type="button" className="button primary" onClick={create} disabled={busy}>
-              {busy && <span className="spinner" aria-hidden />}{busy ? 'Creating…' : 'Create an invite'}
+            <button type="button" className="button primary" onClick={() => create(false)} disabled={busy !== null}>
+              {busy === 'one' && <span className="spinner" aria-hidden />}{busy === 'one' ? 'Creating…' : 'Invite one person'}
+            </button>
+            <button type="button" className="button secondary" onClick={() => create(true)} disabled={busy !== null}>
+              {busy === 'group' && <span className="spinner" aria-hidden />}{busy === 'group' ? 'Creating…' : 'Group link'}
             </button>
           </div>
           )}
       {error && <p className="form-error" role="alert">{error}</p>}
       {invites && invites.length > 0 && (
         <ul className="invite-list" aria-label="Your invites">
-          {invites.slice(0, 8).map(i => (
-            <li key={i.id} className="invite-row">
-              <span>Invite from {new Date(i.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>
-              <span className="invite-state">{inviteState(i, now)}</span>
-            </li>
-          ))}
+          {invites.slice(0, 8).map(i => {
+            const open = i.status === 'pending' && i.expiresAt > now
+            const date = new Date(i.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+            return (
+              <li key={i.id} className="invite-row">
+                <span>{isGroup(i) ? 'Group link' : 'Invite'} from {date}</span>
+                <span className="invite-state">
+                  {inviteState(i, now)}
+                  {open && <button type="button" className="text-button invite-stop" onClick={() => stop(i)}>{isGroup(i) ? 'Stop' : 'Cancel'}</button>}
+                </span>
+                {isGroup(i) && (i.joined?.length ?? 0) > 0 && <span className="invite-joined">{i.joined!.map(who).join(', ')}</span>}
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>

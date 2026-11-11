@@ -409,6 +409,21 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .watch-row-meta { font-size: 0.8125rem; color: var(--text-3); }
 .watch-status { margin-top: 1.25rem; min-height: 1.5em; font-size: 0.9375rem; color: var(--text-2); text-wrap: pretty; }
 .join-foot .link { background: none; border: 0; padding: 0; font: inherit; color: var(--text-2); cursor: pointer; }
+.join-foot .sep { margin-inline: 0.25rem; opacity: 0.6; }
+
+/* ---------- Invite friends ---------- */
+.invite-choices { margin-top: 2.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.invite-choices .button, .invite-made-actions .button { width: 100%; justify-content: center; }
+.invite-choice-note { margin-top: 0.25rem; font-size: 0.875rem; color: var(--text-3); text-wrap: pretty; }
+.invite-made { margin-top: 2.25rem; }
+.invite-made .code { margin-top: 0; }
+.invite-made-label { margin-bottom: 0.75rem; font-size: 0.875rem; font-weight: 600; color: var(--text-2); }
+.invite-made-actions { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.invite-again { margin-top: 1rem; }
+.invite-again .link { background: none; border: 0; padding: 0; font: inherit; font-size: 0.9375rem; cursor: pointer; }
+.invite-list-title { margin-top: 2.75rem; font-size: 1.0625rem; font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.01em; }
+.invite-list-title + .watch-list { margin-top: 0.75rem; }
+.watch-list:not(:empty) + .join-foot { border-top: 0; }
 
 /* ---------- 404 ---------- */
 .lost { flex: 1; display: grid; place-items: center; text-align: center; padding-block: 6rem; }

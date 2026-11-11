@@ -84,9 +84,20 @@ export function registerAccountRoutes (app: FastifyInstance, sync: SyncService):
 
   app.post('/api/account/invites', async (req, reply) => {
     guard(req)
-    const note = body(req).note
+    const { note, maxUses } = body(req)
     try {
-      return reply.code(201).send(await sync.createInvite(typeof note === 'string' ? note.slice(0, 80) : undefined))
+      return reply.code(201).send(await sync.createInvite({
+        note: typeof note === 'string' ? note.slice(0, 80) : undefined,
+        maxUses: Number.isInteger(maxUses) ? maxUses as number : undefined,
+      }))
+    } catch (err) { throw toHttp(err) }
+  })
+
+  app.delete<{ Params: { id: string } }>('/api/account/invites/:id', async (req, reply) => {
+    guard(req)
+    try {
+      await sync.revokeInvite(req.params.id)
+      return reply.code(204).send()
     } catch (err) { throw toHttp(err) }
   })
 

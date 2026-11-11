@@ -1117,6 +1117,8 @@ h1, h2, h3, p { margin: 0; }
 .invite-list { list-style: none; width: 100%; margin: 0.5rem 0 0; padding: 0; border-bottom: 1px solid var(--line); }
 .invite-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 1rem; padding: 0.625rem 0; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .invite-state { color: var(--text-3); }
+.invite-stop { margin-left: 0.75rem; font-size: inherit; }
+.invite-joined { flex-basis: 100%; color: var(--text-3); font-size: 0.875rem; }
 .switch-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.25rem; width: 100%; cursor: pointer; }
 .switch-text { display: flex; flex-direction: column; gap: 0.25rem; }
 .switch-label { font-weight: 600; }
