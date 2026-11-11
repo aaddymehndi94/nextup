@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Tv, Volume2, VolumeX, X,
 } from 'lucide-react'
@@ -24,6 +24,13 @@ function loadProgress (streamId: string): Progress | null {
 }
 function saveProgress (streamId: string, p: Progress) {
   writeKey(progressKey(streamId), JSON.stringify(p))
+}
+
+// Subtitle text size, as a multiple of the default; one choice for every title, saved as `nexttupp:subs-size`.
+const SUB_SIZES = [0.75, 0.875, 1, 1.25, 1.5, 1.75]
+function loadSubSize (): number {
+  const n = Number(readKey('subs-size'))
+  return SUB_SIZES.includes(n) ? n : 1
 }
 
 const IMDB_ID = /^tt\d+$/
@@ -95,6 +102,12 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const [subChoice, setSubChoice] = useState<SubtitleOption | null>(null)
   const [cues, setCues] = useState<Cue[]>([])
   const [subOffset, setSubOffset] = useState(0)
+  const [subSize, setSubSize] = useState(loadSubSize)
+  const stepSubSize = (by: 1 | -1) => {
+    const next = SUB_SIZES[Math.min(SUB_SIZES.length - 1, Math.max(0, SUB_SIZES.indexOf(subSize) + by))]
+    setSubSize(next)
+    writeKey('subs-size', next === 1 ? null : String(next))
+  }
 
   const sessionId = stats?.id
   const duration = info?.probe.durationSec ?? 0
@@ -604,7 +617,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     >
       <video ref={video} className="player-video" playsInline onClick={() => { if (panel !== 'none') setPanel('none'); else togglePlay() }} onDoubleClick={toggleFullscreen} />
 
-      {activeCue && !casting && <div className="subtitle" aria-live="off"><span>{activeCue.text}</span></div>}
+      {activeCue && !casting && <div className="subtitle" aria-live="off" style={{ '--sub-scale': subSize } as CSSProperties}><span>{activeCue.text}</span></div>}
 
       {casting && (
         <div className="cast-screen">
@@ -784,6 +797,16 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </button>
             ))}
           </div>
+          {subChoice && !casting && (
+            <div className="sub-offset">
+              <span>Size</span>
+              <span className="stepper">
+                <button className="chip" onClick={() => stepSubSize(-1)} disabled={subSize === SUB_SIZES[0]} aria-label="Smaller subtitles">A−</button>
+                <span className="tabular offset-value">{Math.round(subSize * 100)}%</span>
+                <button className="chip" onClick={() => stepSubSize(1)} disabled={subSize === SUB_SIZES[SUB_SIZES.length - 1]} aria-label="Bigger subtitles">A+</button>
+              </span>
+            </div>
+          )}
           {subChoice && !casting && (
             <div className="sub-offset">
               <span>Timing</span>
