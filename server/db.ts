@@ -171,6 +171,29 @@ ${outboxTriggers([
     ['feature_prefs', 'NEW.profile_id', 'NEW.feature'],
   ])}
   `,
+  // AI (server/ai). What a model answered, kept until the viewer asks again, and a log of requests for the
+  // usage line in AI settings. Local only: neither table is synced.
+  `
+  CREATE TABLE ai_results (
+    profile_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,              -- 'picks' | 'search'
+    key         TEXT NOT NULL,              -- '' for picks; the normalised query for search
+    model       TEXT NOT NULL,
+    at          INTEGER NOT NULL,
+    data        TEXT NOT NULL,              -- JSON: [{ id, type, why, seed }]
+    PRIMARY KEY (profile_id, kind, key)
+  ) WITHOUT ROWID;
+  CREATE TABLE ai_usage (
+    at            INTEGER NOT NULL,
+    provider      TEXT NOT NULL,
+    model         TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost          REAL                      -- USD, when the model's price is known
+  );
+  CREATE INDEX ai_usage_at ON ai_usage (at);
+  `,
 ]
 
 /**

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Info, Search, SlidersHorizontal, ThumbsDown, ThumbsUp, X } from 'lucide-react'
-import type { HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
+import { Check, Info, RefreshCw, Search, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react'
+import type { AiPicksResponse, AiSearchResponse, HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
 import { api } from '../api.ts'
 import { useDocumentTitle, useLoaded, useScrolled } from '../hooks.ts'
 import { navigate, onLinkClick } from '../router.ts'
+import { usePrivate } from '../private.ts'
 import { noteSource } from '../storage.ts'
 import { EMPTY_STATE, useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
@@ -145,7 +146,7 @@ function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId
   return { item, label: data.coldStart ? 'Popular now' : item.reason.text, rowId: row.id }
 }
 
-function Feed ({ tab }: { tab?: MediaType }) {
+function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null; onAi: (a: AiPicksResponse) => void }) {
   const { load, refresh } = useHomeFeed(tab)
   const paging = useFeedPaging(tab, load.state === 'ok' ? load.data : null)
   const bottom = useNearBottom(paging.loadPage, paging.more, paging.extra.length)
@@ -244,6 +245,9 @@ function Feed ({ tab }: { tab?: MediaType }) {
   const anchor = rows.find(r => r.kind === 'continue') ?? rows.find(r => r.kind === 'onboarding')
   const shelves: React.ReactNode[] = []
   if (!anchor && !tab) shelves.push(<Downloads key="downloads" />)
+  // AI picks go just below Top picks (or the first row of picks on a new profile), and only once.
+  const aiAfter = rows.find(r => r.kind === 'top') ?? rows.find(r => isRecRow(r))
+  const aiRow = <AiPicksRow key="ai" ai={ai} onAi={onAi} tab={tab} hidden={hidden} onRemove={notInterested} />
   for (const row of rows) {
     if (row.kind === 'continue') {
       shelves.push(
@@ -287,7 +291,9 @@ function Feed ({ tab }: { tab?: MediaType }) {
       )
     }
     if (row === anchor && !tab) shelves.push(<Downloads key="downloads" />)
+    if (row === aiAfter) shelves.push(aiRow)
   }
+  if (!aiAfter) shelves.push(aiRow)
 
   return (
     <>
@@ -295,6 +301,108 @@ function Feed ({ tab }: { tab?: MediaType }) {
       <div className="shelves" onClickCapture={e => noteSource(e)}>{shelves}</div>
       <div ref={bottom} className="feed-end" aria-hidden />
     </>
+  )
+}
+
+// ---- AI (optional: only when a provider is connected, and a model is asked only on a button press) ----
+
+function useAiPicks (): [AiPicksResponse | null, (a: AiPicksResponse) => void] {
+  const [ai, setAi] = useState<AiPicksResponse | null>(null)
+  const priv = usePrivate()
+  useEffect(() => {
+    let live = true
+    api.aiPicks().then(a => { if (live) setAi(a) }).catch(() => { if (live) setAi(null) })
+    return () => { live = false }
+  }, [priv])
+  return [ai, setAi]
+}
+
+const DAY_MS = 86_400_000
+function since (at: number): string {
+  const days = Math.floor((Date.now() - at) / DAY_MS)
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`
+}
+
+function AiPicksRow ({ ai, onAi, tab, hidden, onRemove }: {
+  ai: AiPicksResponse | null; onAi: (a: AiPicksResponse) => void; tab?: MediaType; hidden: Set<string>; onRemove: (it: RecItem) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  if (!ai || (!ai.available && !ai.picks)) return null
+  const ask = async () => {
+    setBusy(true)
+    try { onAi(await api.makeAiPicks()) } catch (err) { toast(`No AI picks this time. ${(err as Error).message}`) }
+    setBusy(false)
+  }
+  const items = (ai.picks?.items ?? []).filter(it => (!tab || it.type === tab) && !hidden.has(it.id))
+  if (!items.length) {
+    if (!ai.available) return null
+    return (
+      <section className="ai-invite" aria-labelledby="ai-invite-h">
+        <div className="ai-invite-text">
+          <h2 id="ai-invite-h" className="row-title"><Sparkles aria-hidden className="ai-spark" />AI picks</h2>
+          <p className="account-note">{ai.picks ? 'Ask again for new picks from your taste.' : 'Picks from your taste, chosen by AI and checked against the catalogue.'} {ai.hint ? `${ai.hint}.` : ''}</p>
+        </div>
+        <button type="button" className="button secondary" onClick={() => { void ask() }} disabled={busy}>
+          {busy && <span className="spinner" aria-hidden />}
+          {busy ? 'Asking…' : 'Get AI picks'}
+        </button>
+      </section>
+    )
+  }
+  return (
+    <Row
+      title="AI picks"
+      caption={`${ai.picks!.model} · ${since(ai.picks!.at)}`}
+      id="row-ai"
+      className="row-rec row-kind-ai"
+      source="ai"
+      aside={ai.available
+        ? (
+          <button type="button" className="row-link" onClick={() => { void ask() }} disabled={busy} title={ai.hint}>
+            {busy ? <span className="spinner" aria-hidden /> : <RefreshCw aria-hidden />}{busy ? 'Asking…' : 'Refresh'}
+          </button>
+          )
+        : undefined}
+    >
+      {items.map(it => <RecCard key={it.id} item={it} onRemove={onRemove} />)}
+    </Row>
+  )
+}
+
+type AiSearchLoad = { state: 'idle' } | { state: 'loading' } | { state: 'ok'; data: AiSearchResponse } | { state: 'error'; message: string }
+
+/** "Ask AI" above the search results: asks only when pressed; a repeat of a saved search is answered from it. */
+function AiSearch ({ q, hint }: { q: string; hint?: string }) {
+  const [load, setLoad] = useState<AiSearchLoad>({ state: 'idle' })
+  const ask = (refresh: boolean) => {
+    setLoad({ state: 'loading' })
+    api.aiSearch(q, refresh).then(data => setLoad({ state: 'ok', data })).catch(err => setLoad({ state: 'error', message: (err as Error).message }))
+  }
+  if (load.state === 'idle') {
+    return (
+      <div className="ai-ask">
+        <button type="button" className="button secondary" onClick={() => ask(false)}><Sparkles aria-hidden />Ask AI</button>
+        <span className="account-note">Suggestions for “{q}” in your own words{hint ? ` · ${hint}` : ''}</span>
+      </div>
+    )
+  }
+  return (
+    <section className="ai-results" aria-labelledby="ai-results-h" aria-live="polite" onClickCapture={e => noteSource(e, 'ai-search')}>
+      <h2 id="ai-results-h" className="page-heading"><Sparkles aria-hidden className="ai-spark" />AI suggestions</h2>
+      {load.state === 'loading' && <div className="grid">{Array.from({ length: 6 }, (_, i) => <PosterSkeleton key={i} />)}</div>}
+      {load.state === 'error' && <p className="notice" role="alert">{load.message}</p>}
+      {load.state === 'ok' && (
+        <>
+          <p className="account-note">
+            {load.data.model}{load.data.cached ? ` · saved answer from ${since(load.data.at)}` : ''}
+            {' · '}<button type="button" className="text-button inline" onClick={() => ask(true)}>Ask again</button>
+          </p>
+          {load.data.items.length
+            ? <div className="grid">{load.data.items.map(it => <RecCard key={it.id} item={it} />)}</div>
+            : <p className="notice">Nothing it suggested could be found in the catalogue. Try different words.</p>}
+        </>
+      )}
+    </section>
   )
 }
 
@@ -488,6 +596,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
   const base = TABS.find(t => t.tab === tab)?.href ?? '/'
   const [query, setQuery] = useState(initialQuery)
   const results = useQueryResults(query)
+  const [ai, setAi] = useAiPicks()
   const input = useRef<HTMLInputElement>(null)
   const scrolled = useScrolled()
   const q = query.trim()
@@ -553,6 +662,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
 
       {results ? (
         <section className="results" aria-live="polite" onClickCapture={e => noteSource(e, 'search')}>
+          {ai?.available && q.length >= 3 && <AiSearch key={q} q={q} hint={ai.hint} />}
           {results.state === 'ok' && results.data.length > 0 && (
             <h2 className="page-heading">Results for <span className="quiet">“{q}”</span></h2>
           )}
@@ -568,7 +678,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
             <div className="grid">{results.data.map(t => <PosterCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
           )}
         </section>
-      ) : <Feed key={tab ?? 'all'} tab={tab} />}
+      ) : <Feed key={tab ?? 'all'} tab={tab} ai={ai} onAi={setAi} />}
     </main>
   )
 }

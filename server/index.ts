@@ -29,6 +29,10 @@ import { CastDiscovery, parseStaticDevices } from './cast/discovery.ts'
 import { registerCastRoutes } from './cast/routes.ts'
 import { CastService, type CastToken } from './cast/service.ts'
 import { hasPrivateHeader, refuseInPrivate, relayableImage } from './private.ts'
+import { ChatgptAuth } from './ai/chatgpt.ts'
+import { providers as aiProviders } from './ai/providers.ts'
+import { registerAiRoutes } from './ai/routes.ts'
+import { AiService } from './ai/service.ts'
 
 // No line per request: the log would otherwise be a record of every search and title opened. LOG_REQUESTS=1
 // brings them back for debugging, except for private mode (and streams of a private session), which never logs.
@@ -47,6 +51,8 @@ const tasteStore = new SqliteTasteStore(db)
 const itemCache = new ItemCache(db, { baseUrl: config.cinemetaUrl })
 const loadCfSafe = () => loadCf(config.dataDir).catch(err => { app.log.warn(`CF model not loaded: ${(err as Error).message}`); return null })
 const reco = new RecoService({ store: tasteStore, items: itemCache, cf: await loadCfSafe(), log: msg => app.log.info(msg) })
+// Optional AI picks and search (server/ai): off until someone connects a provider here; asks only when told to.
+const ai = new AiService({ db, dataDir: config.dataDir, items: itemCache, reco, store: tasteStore, providers: aiProviders, chatgpt: new ChatgptAuth(), log: msg => app.log.info(msg) })
 // Phones and TVs at home (server/lan): a second listener on the home network, behind a cookie gate.
 let lan: LanService | undefined
 const sync = new SyncService({
@@ -459,6 +465,7 @@ registerLanRoutes(app, lan, { signedIn: () => sync.signedIn, redeemHandoff: (cod
 // ---- Profiles, taste and recommendations ----------------------------------------
 
 registerTasteRoutes(app, tasteStore, reco)
+registerAiRoutes(app, ai, tasteStore, { port: () => config.port })
 
 // ---- Web app (production build) ----------------------------------------------
 

@@ -4,6 +4,7 @@ import './styles.css'
 import { loadProfiles, useProfiles } from './profiles.ts'
 import { useLocation } from './router.ts'
 import { Account } from './pages/Account.tsx'
+import { Ai } from './pages/Ai.tsx'
 import { Home } from './pages/Home.tsx'
 import { Profiles } from './pages/Profiles.tsx'
 import { Taste } from './pages/Taste.tsx'
@@ -18,6 +19,7 @@ function Route () {
   if (path === '/watch') return <Watch key={query.toString()} query={query} />
   if (path === '/taste') return <Taste />
   if (path === '/account') return <Account code={query.get('code')} />
+  if (path === '/ai') return <Ai />
   if (path === '/profiles') return <Profiles mode="manage" />
   if (path === '/films' || path === '/series') return <Home key={path} initialQuery={query.get('q') ?? ''} tab={path === '/films' ? 'movie' : 'series'} />
   return <Home key="/" initialQuery={query.get('q') ?? ''} />

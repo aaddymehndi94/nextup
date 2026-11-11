@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, CircleUserRound, Pencil, SlidersHorizontal, VenetianMask } from 'lucide-react'
+import { Check, CircleUserRound, Pencil, SlidersHorizontal, Sparkles, VenetianMask } from 'lucide-react'
 import { setPrivate, usePrivate } from '../private.ts'
 import { chooseProfile, useProfiles } from '../profiles.ts'
 import { navigate } from '../router.ts'
@@ -97,6 +97,10 @@ export function ProfileMenu () {
           <a href="/taste" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/taste') }}>
             <SlidersHorizontal className="menu-icon" aria-hidden />
             <span className="menu-label">Your taste</span>
+          </a>
+          <a href="/ai" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/ai') }}>
+            <Sparkles className="menu-icon" aria-hidden />
+            <span className="menu-label">AI picks</span>
           </a>
           <a href="/profiles" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/profiles') }}>
             <Pencil className="menu-icon" aria-hidden />

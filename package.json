@@ -17,10 +17,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
     "@fastify/static": "^10.1.10",
     "fastify": "^5.12.8",
     "lucide-react": "^1.71.0",
     "multicast-dns": "7.2.5",
+    "openai": "7.45.1",
     "webtorrent": "3.0.21"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { isPrivate } from './private.ts'
 import type {
+  AiPicksResponse, AiProvider, AiSearchResponse, AiSettingsRequest, AiSignInResponse, AiStatus,
   ClientCaps, CreateProfileRequest, DismissReason, FeaturePrefRequest, HealthResponse, HomeMoreResponse, HomeResponse, MediaType, OnboardingResponse,
   OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, RowMoreResponse, SessionStats, SimilarResponse,
   SourcesResponse, TasteSummary, TitleDetail, TitleState, TitleSummary, UpdateProfileRequest,
@@ -232,4 +233,13 @@ export const api = {
   taste: () => req<TasteSummary>('/api/me/taste'),
   /** Boost (1), block (-1) or reset (0) a taste feature by its key from TasteSummary. */
   setFeaturePref: (feature: string, value: FeaturePrefRequest['value']) => req<TasteSummary>('/api/me/taste/feature', json('PUT', { feature, value })),
+  // AI (optional). Only the POSTs below ask a model; everything else reads what is saved.
+  ai: () => req<AiStatus>('/api/ai'),
+  aiKey: (provider: 'anthropic' | 'openai', key: string) => req<AiStatus>('/api/ai/key', json('PUT', { provider, key })),
+  aiSettings: (body: AiSettingsRequest) => req<AiStatus>('/api/ai', json('PATCH', body)),
+  aiChatgpt: () => req<AiSignInResponse>('/api/ai/chatgpt', json('POST', {})),
+  aiDisconnect: (provider: AiProvider) => req<AiStatus & { revoked?: boolean }>(`/api/ai/${provider}`, json('DELETE')),
+  aiPicks: () => req<AiPicksResponse>('/api/ai/picks'),
+  makeAiPicks: () => req<AiPicksResponse>('/api/ai/picks', json('POST', {})),
+  aiSearch: (q: string, refresh = false) => req<AiSearchResponse>('/api/ai/search', json('POST', { q, refresh })),
 }

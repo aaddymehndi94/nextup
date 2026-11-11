@@ -84,6 +84,18 @@ seen, plus a keyed hash of its public IP address so the phone can tell it's on t
 itself isn't stored). While the setting is on, also its home-network addresses (like
 `http://192.168.1.20:4545`), so the phone knows where to go. Signing out removes the device.
 
+## AI picks (optional)
+
+**AI picks** in the profile menu connects a model of the viewer's own: **Sign in with ChatGPT** (uses a Plus or
+Pro plan, no key, no extra bill), a **Claude API key** or an **OpenAI API key**. Then home offers **Get AI
+picks** (a row chosen from your taste, each with its reason) and search offers **Ask AI** for questions like
+"a cosy 90s sitcom". A model is asked only when you press one of those buttons; answers are saved (picks until
+Refresh, searches for 14 days), every title it names is checked against Cinemeta and dropped if it isn't
+there, and titles you've already rated or watched never come back. The default model is the cheapest, newest
+one (Claude Haiku, or the newest GPT "luna"); a set of picks costs well under a cent. There's a daily request
+cap (50 by default), and the page shows use and cost. Keys stay in a file on this computer only you can read;
+they're never synced. Private mode never uses AI. Details: [ADR 0009](docs/adr/0009-ai-picks-and-search.md).
+
 ## How it works
 
 ```
@@ -96,6 +108,7 @@ web (React)  ──►  server (Node 24, Fastify)
                    ├─ library     downloads kept for offline viewing, resumed on restart
                    ├─ taste       profiles, likes, My List, progress → SQLite (nexttupp.db), sync-ready
                    ├─ reco        content + CF ranking → personalised home rows, each with a reason
+                   ├─ ai          optional: ChatGPT / Claude / OpenAI on the viewer's account → AI picks, Ask AI
                    ├─ lan         phones at home: a cookie-gated listener on the home-network address
                    ├─ cast        Chromecast discovery (mDNS) and control (Cast v2), tokenised TV streams
                    └─ sync        optional sign-in; outbox push + pull ──►  cloud (Worker + D1, accounts and taste only)

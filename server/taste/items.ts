@@ -144,6 +144,8 @@ export interface ItemCacheOptions {
   intervalMs?: number
 }
 
+export interface SearchHit extends ItemRef { name?: string; year?: number }
+
 export class ItemCache {
   private readonly db: DatabaseSync
   private readonly baseUrl: string
@@ -157,6 +159,8 @@ export class ItemCache {
   private readonly listeners: Array<() => void> = []
   private readonly stmts = new Map<string, StatementSync>()
   private crawling: Promise<void> | null = null
+  /** Names and years from search results (which aren't stored as titles), by id. */
+  private readonly searchNames = new Map<string, { name: string; year?: number }>()
   /** Bumped whenever titles are added or changed. */
   version = 0
 
@@ -306,15 +310,29 @@ export class ItemCache {
     return ids
   }
 
-  /** Titles matching a search (Cinemeta matches names of people too). Results are thin; call ensure() for metadata. */
-  async search (type: MediaType, query: string): Promise<ItemRef[]> {
+  /** Titles matching a search (Cinemeta matches names of people too), with name and year when known. Call ensure() for metadata. */
+  async search (type: MediaType, query: string): Promise<SearchHit[]> {
     const key = `search:${type}:${query.toLowerCase()}`
     const cached = this.cachedPage(key, TTL.search)
-    if (cached) return cached.map(id => ({ id, type }))
+    if (cached) return cached.map(id => this.hit(id, type))
     const body = await this.limiter.run(() => this.get(`${this.baseUrl}/catalog/${type}/top/search=${encodeURIComponent(query)}.json`)) as { metas?: CinemetaMeta[] }
+    // Search results are thin (no genres or people), so they aren't stored as titles; their names and years are
+    // kept in memory so a caller can tell which result it wants before fetching it (AI suggestions, server/ai).
+    if (this.searchNames.size > 5000) this.searchNames.clear()
+    for (const m of body?.metas ?? []) {
+      const id = m.imdb_id ?? m.id ?? ''
+      const year = Number(/\d{4}/.exec(String(m.releaseInfo ?? m.year ?? ''))?.[0]) || undefined
+      if (/^tt\d+$/.test(id) && m.name) this.searchNames.set(id, { name: decodeEntities(m.name), year })
+    }
     const ids = (body?.metas ?? []).map(m => m.imdb_id ?? m.id ?? '').filter(id => /^tt\d+$/.test(id))
     this.savePage(key, ids)
-    return ids.map(id => ({ id, type }))
+    return ids.map(id => this.hit(id, type))
+  }
+
+  private hit (id: string, type: MediaType): SearchHit {
+    const it = this.items.get(id)
+    const named = it ? { name: it.name, year: it.year } : this.searchNames.get(id)
+    return named ? { id, type, ...named } : { id, type }
   }
 
   /** Pages to crawl for the candidate pool, shallow pages of every catalog first. */

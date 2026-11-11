@@ -40,6 +40,18 @@ function avatar (v: unknown): string | null | undefined {
   return v
 }
 
+/** The profile a request is for: the `x-nexttupp-profile` header, or the first profile. */
+export function profileFrom (store: TasteStore, req: FastifyRequest): Profile {
+  const h = req.headers[PROFILE_HEADER]
+  if (typeof h === 'string' && h) {
+    if (!UUID.test(h)) throw new HttpError(400, 'Bad profile id')
+    const p = store.getProfile(h)
+    if (!p) throw new HttpError(404, 'That profile no longer exists. Choose a profile again.')
+    return p
+  }
+  return store.defaultProfile()
+}
+
 export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, reco: RecoService): void {
   // Private mode saves nothing: no likes, list, progress, dismissals, taste tuning or profile changes.
   app.addHook('preHandler', async req => {
@@ -50,16 +62,7 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
     }
   })
 
-  function profileOf (req: FastifyRequest): Profile {
-    const h = req.headers[PROFILE_HEADER]
-    if (typeof h === 'string' && h) {
-      if (!UUID.test(h)) throw new HttpError(400, 'Bad profile id')
-      const p = store.getProfile(h)
-      if (!p) throw new HttpError(404, 'That profile no longer exists. Choose a profile again.')
-      return p
-    }
-    return store.defaultProfile()
-  }
+  const profileOf = (req: FastifyRequest): Profile => profileFrom(store, req)
 
   // ---- Profiles ----------------------------------------------------------------
 

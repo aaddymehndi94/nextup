@@ -232,7 +232,7 @@ export interface ProgressRequest {
 export interface ProgressResponse { progress: WatchProgress }
 
 export type ReasonKind =
-  | 'liked' | 'person' | 'genre' | 'cf' | 'quality' | 'explore' | 'continue' | 'list' | 'similar' | 'popular'
+  | 'liked' | 'person' | 'genre' | 'cf' | 'quality' | 'explore' | 'continue' | 'list' | 'similar' | 'popular' | 'ai'
 
 export interface RecReason {
   kind: ReasonKind
@@ -343,3 +343,66 @@ export interface TasteSummary {
 }
 
 export interface FeaturePrefRequest { feature: string; value: 1 | -1 | 0 }
+
+// ---- AI (optional; server/ai) -------------------------------------------------------------------------------
+// Off until someone connects a provider on the computer itself. Nothing calls a model unless the viewer asks:
+// "Get AI picks", "Refresh" or "Ask AI" in search. Keys and tokens never leave the computer's server.
+
+/** chatgpt: Sign in with ChatGPT (the person's Plus/Pro plan); anthropic / openai: an API key. */
+export type AiProvider = 'chatgpt' | 'anthropic' | 'openai'
+
+export interface AiModel {
+  id: string
+  provider: AiProvider
+  name: string
+  /** 0 = the provider's cheapest line. */
+  tier: number
+  createdAt?: number
+  /** USD per million tokens, when known. Absent for ChatGPT plans (no per-request charge). */
+  price?: { input: number; output: number }
+}
+
+export interface AiConnection {
+  provider: AiProvider
+  /** "Key ending 4f2a", or the ChatGPT account's email. */
+  label: string
+  connectedAt: number
+  /** The last request failed in a way the person must fix (key revoked, out of credit, plan limit). */
+  problem?: string
+}
+
+export interface AiStatus {
+  /** Settings change only on the computer that runs nexttupp; phones and TVs can still use AI. */
+  local: boolean
+  connections: AiConnection[]
+  /** Models of every connected provider, each provider's "Automatic" choice first. */
+  models: AiModel[]
+  /** The person's choice; null = Automatic (the cheapest, newest model). */
+  choice: string | null
+  /** What a request would use now. */
+  active: { model: AiModel; auto: boolean } | null
+  /** Most AI requests a day (all profiles), so a stuck button can't run up a bill. 0 = no limit. */
+  dailyLimit: number
+  /** Rough cost of each kind of request with the active model: "about $0.002", "uses your ChatGPT plan". */
+  estimate: { picks: string; search: string } | null
+  usage: { today: number; month: { requests: number; inputTokens: number; outputTokens: number; costUsd: number | null } }
+  /** A ChatGPT sign-in was started and hasn't finished. */
+  signingIn: boolean
+}
+
+export interface AiKeyRequest { provider: 'anthropic' | 'openai'; key: string }
+export interface AiSettingsRequest { choice?: string | null; dailyLimit?: number }
+export interface AiSignInResponse { url: string }
+
+/** AI picks for one profile, saved until the viewer asks for new ones. Items carry reason.kind 'ai'. */
+export interface AiPicks { items: RecItem[]; at: number; model: string }
+export interface AiPicksResponse {
+  /** AI is connected and allowed here (not in private mode). */
+  available: boolean
+  picks: AiPicks | null
+  /** "Claude Haiku 5.5 · about $0.002" for the button. */
+  hint?: string
+}
+
+export interface AiSearchRequest { q: string; refresh?: boolean }
+export interface AiSearchResponse { items: RecItem[]; at: number; model: string; cached: boolean }
