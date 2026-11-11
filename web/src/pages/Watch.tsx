@@ -41,6 +41,10 @@ function serverPosition (type: MediaType, imdbId: string, streamId: string): Pro
     .catch(() => undefined)
 }
 
+/** screen.orientation, with lock(): only Chromium has it, so TypeScript's DOM types leave it out. */
+type LockableOrientation = ScreenOrientation & { lock?: (o: 'landscape') => Promise<void> }
+const orientation = (): LockableOrientation | undefined => (screen as { orientation?: LockableOrientation }).orientation
+
 export function Watch ({ query }: { query: URLSearchParams }) {
   const infoHash = query.get('ih') ?? ''
   const fileIdx = query.get('f') !== null ? Number(query.get('f')) : undefined
@@ -388,8 +392,14 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   }
 
   const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-    else document.documentElement.requestFullscreen().catch(() => {})
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return }
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => {
+      // On a phone, a wide picture turns sideways to fill the screen, as in other video apps. Browsers allow
+      // the lock only in fullscreen and only on phones and tablets (Android); elsewhere it just fails.
+      const v = video.current
+      if (v && v.videoWidth > 0 && v.videoWidth < v.videoHeight) return
+      orientation()?.lock?.('landscape').catch(() => {})
+    }).catch(() => {})
   }, [])
 
   // Video element events.
@@ -506,7 +516,10 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => () => window.clearTimeout(hideTimer.current), [])
 
   useEffect(() => {
-    const onFs = () => setFullscreen(Boolean(document.fullscreenElement))
+    const onFs = () => {
+      setFullscreen(Boolean(document.fullscreenElement))
+      if (!document.fullscreenElement) try { orientation()?.unlock() } catch { /* never locked */ }
+    }
     document.addEventListener('fullscreenchange', onFs)
     return () => document.removeEventListener('fullscreenchange', onFs)
   }, [])
