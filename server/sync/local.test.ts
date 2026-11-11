@@ -213,4 +213,36 @@ describe('signing in on a second computer', () => {
     expect(a.store.titleState(me.id, MOVIE).rating).toBe(-1)
     expect(a.store.listProfiles().map(x => x.name).sort()).toEqual(['Guest', 'Me'])
   })
+
+  it('a new install’s untouched "Me" becomes the account’s profile instead of joining it', () => {
+    const owner = a.store.createProfile({ name: 'Aadarsh' })
+    a.store.setRating(owner.id, MOVIE, 1)
+    a.db.prepare('UPDATE profiles SET account_id = ?').run(ACCOUNT)
+    relay(a.db, b.db)
+    // B is a new install: it made its starter "Me" (only browsed, so impressions but nothing that syncs).
+    const starter = b.db.prepare("INSERT INTO profiles (id, account_id, name, avatar, created_at, updated_at) VALUES (?, NULL, 'Me', NULL, ?, ?)")
+    const bMe = uuidv7(clock)
+    starter.run(bMe, clock, clock)
+    b.store.recordImpressions(bMe, [OTHER.id])
+
+    expect(linkProfiles(b.db, ACCOUNT, clock)).toEqual({ [bMe]: owner.id })
+    expect(b.store.listProfiles().map(x => x.name)).toEqual(['Aadarsh'])
+    expect(relay(b.db, a.db).batch.profiles).toHaveLength(0)
+  })
+
+  it('keeps a "Me" that has been used, and any other new profile, as profiles of their own', () => {
+    const owner = a.store.createProfile({ name: 'Aadarsh' })
+    a.db.prepare('UPDATE profiles SET account_id = ?').run(ACCOUNT)
+    relay(a.db, b.db)
+    const used = b.db.prepare("INSERT INTO profiles (id, account_id, name, avatar, created_at, updated_at) VALUES (?, NULL, 'Me', NULL, ?, ?)")
+    const bMe = uuidv7(clock)
+    used.run(bMe, clock, clock)
+    b.store.setInList(bMe, SERIES, true)
+    const kids = b.store.createProfile({ name: 'Kids' })
+
+    expect(linkProfiles(b.db, ACCOUNT, clock)).toEqual({})
+    expect(b.store.listProfiles().map(x => x.name).sort()).toEqual(['Aadarsh', 'Kids', 'Me'])
+    expect(relay(b.db, a.db).batch.profiles.map(x => x.id).sort()).toEqual([bMe, kids.id].sort())
+    expect(owner.id).toBeTruthy()
+  })
 })

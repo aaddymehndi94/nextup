@@ -320,12 +320,23 @@ function enqueueProfile (db: DatabaseSync, pid: string): void {
   }
 }
 
+/** The name of the profile a new install makes for itself (SqliteTasteStore.defaultProfile). */
+const STARTER_NAME = 'Me'
+
+/** True when a profile has nothing that syncs: no likes, list, progress, dismissals, preferences or events. */
+function isEmptyProfile (db: DatabaseSync, pid: string): boolean {
+  const tables = [...Object.keys(KEY2), 'events']
+  return tables.every(t => db.prepare(`SELECT 1 FROM ${t} WHERE profile_id = ? LIMIT 1`).get(pid) === undefined)
+}
+
 /**
  * Runs once per sign-in, after the account's data has been pulled. Each profile on this device that
  * isn't on any account yet joins this one: if the account already has a live profile with the same name
  * (the default "Me" on a second computer, say), the two become one, keeping the newer of any two rows
- * about the same title. Otherwise it is added as a new profile. Profiles that belong to another account
- * are left alone. Returns { local id → account profile id } for the merged ones.
+ * about the same title. The untouched "Me" a new install makes for itself becomes the account's first
+ * profile instead, so signing in on a new computer doesn't add an empty "Me" to every device. Any other
+ * profile is added as a new one. Profiles that belong to another account are left alone. Returns
+ * { local id → account profile id } for the merged ones, so the app can switch to the profile it became.
  */
 export function linkProfiles (db: DatabaseSync, accountId: string, now: number): Record<string, string> {
   const merged: Record<string, string> = {}
@@ -334,8 +345,9 @@ export function linkProfiles (db: DatabaseSync, accountId: string, now: number):
     const local = db.prepare('SELECT * FROM profiles WHERE account_id IS NULL AND deleted_at IS NULL ORDER BY created_at, id').all() as Row[]
     const taken = new Set<string>()
     for (const l of local) {
-      const match = remote.find(r => !taken.has(String(r.id)) && sameName(r.name, l.name))
       const lid = String(l.id)
+      const match = remote.find(r => !taken.has(String(r.id)) && sameName(r.name, l.name)) ??
+        (remote.length && sameName(l.name, STARTER_NAME) && isEmptyProfile(db, lid) ? remote[0] : undefined)
       if (match) {
         const mid = String(match.id)
         taken.add(mid)
