@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, Play, Trash2 } from 'lucide-react'
-import { api, type LibraryItem } from '../api.ts'
+import { api, type LibraryItem, imageUrl } from '../api.ts'
 import { bytes, speed } from '../format.ts'
 import { useLoaded } from '../hooks.ts'
 import { navigate } from '../router.ts'
@@ -83,7 +83,7 @@ function waiting (swarm: LibraryItem['swarm']): string {
 }
 
 function DownloadArt ({ imdbId, title }: { imdbId: string; title: string }) {
-  const src = `https://images.metahub.space/background/medium/${imdbId}/img`
+  const src = imageUrl(`https://images.metahub.space/background/medium/${imdbId}/img`)
   const [failed, setFailed] = useState(false)
   const [loaded, onLoad] = useLoaded(src)
   if (failed) return <span className="download-fallback">{title}</span>

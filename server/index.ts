@@ -1,4 +1,4 @@
-import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
+import Fastify, { type FastifyReply, type FastifyRequest, LogController } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -28,8 +28,14 @@ import { LanService } from './lan/service.ts'
 import { CastDiscovery, parseStaticDevices } from './cast/discovery.ts'
 import { registerCastRoutes } from './cast/routes.ts'
 import { CastService, type CastToken } from './cast/service.ts'
+import { hasPrivateHeader, refuseInPrivate, relayableImage } from './private.ts'
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, exposeHeadRoutes: false })
+// Requests from private mode (and streams of a private session) leave no log lines at all.
+const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL ?? 'info' },
+  logController: new LogController({ disableRequestLogging: req => isPrivateRequest(req) }),
+  exposeHeadRoutes: false,
+})
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
 const transcodes = new TranscodeRegistry()
 const library = new Library(config.dataDir, engine)
@@ -86,6 +92,47 @@ app.setErrorHandler((err: Error & { status?: number; statusCode?: number }, req,
 
 // Before every route: localhost must say so (DNS rebinding), and anything from the network needs a phone's cookie.
 registerLanGate(app, lan)
+
+// ---- Private mode -----------------------------------------------------------
+
+const SESSION_IN_URL = /^\/(?:stream|api\/sessions)\/([0-9a-f]{40}-\d{1,6})(?:[/?]|$)/
+const CAST_IN_URL = /^\/cast\/([^/?]+)\//
+
+/** A request from private mode, or for the video of a private session (the player's <video> can't send headers). */
+function isPrivateRequest (req: FastifyRequest): boolean {
+  if (hasPrivateHeader(req)) return true
+  const url = req.url
+  const sid = SESSION_IN_URL.exec(url)?.[1]
+  if (sid) return engine.isPrivate(sid)
+  const token = CAST_IN_URL.exec(url)?.[1]
+  if (token) {
+    const g = cast.verify(token, req.socket.remoteAddress)
+    return Boolean(g && engine.isPrivate(g.sessionId))
+  }
+  return false
+}
+
+app.addHook('onRequest', async req => {
+  if (isPrivateRequest(req)) req.log.level = 'silent' // errors and ffmpeg warnings included
+})
+// Nor may the browser keep a copy: no API response or video byte of a private request goes in its cache.
+app.addHook('onSend', async (req, reply) => {
+  if (isPrivateRequest(req)) reply.header('cache-control', 'no-store')
+})
+
+/**
+ * Posters and backgrounds for private mode: fetched here and passed on uncached, so the browser's image
+ * cache doesn't end up listing what was browsed. Only the image hosts Cinemeta links to.
+ */
+app.get<{ Querystring: { u?: string } }>('/api/img', async (req, reply) => {
+  const u = relayableImage(req.query.u)
+  if (!u) throw new HttpError(400, 'Not an image this can fetch')
+  const res = await fetch(u, { signal: AbortSignal.timeout(15_000), redirect: 'error' }).catch(() => null)
+  const type = res?.headers.get('content-type') ?? ''
+  if (!res?.ok || !res.body || !/^image\//.test(type)) throw new HttpError(502, 'Image unavailable')
+  reply.header('content-type', type).header('cache-control', 'no-store')
+  return reply.send(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream))
+})
 
 function session (id: string): Session {
   if (!SESSION_ID.test(id)) throw new HttpError(400, 'Bad session id')
@@ -169,7 +216,7 @@ app.post<{ Body: OpenSessionRequest }>('/api/sessions', async req => {
     fileName: typeof body.fileName === 'string' ? body.fileName : undefined,
     trackers: Array.isArray(body.trackers) ? body.trackers.filter(t => typeof t === 'string' && /^(udp|https?|wss?):\/\//.test(t)).slice(0, 30) : [],
     title: typeof body.title === 'string' ? body.title.slice(0, 200) : undefined,
-  })
+  }, { private: hasPrivateHeader(req) })
   return engine.stats(s)
 })
 
@@ -200,17 +247,29 @@ interface KeepBody {
 }
 
 app.post<{ Body: KeepBody }>('/api/library', async (req, reply) => {
-  const { sessionId, infoHash, type, imdbId, streamId, title } = req.body ?? {}
+  refuseInPrivate(req, 'download titles')
+  const { type, imdbId, streamId, title } = req.body ?? {}
+  let { sessionId, infoHash } = req.body ?? {}
   if (!type || !isType(type) || !imdbId || !IMDB_ID.test(imdbId) || !streamId || !STREAM_ID.test(streamId)) throw new HttpError(400, 'type, imdbId and streamId are required')
+  // Keeping what a private session is playing: download it afresh into the downloads folder (engine.open).
+  let privateFile: { fileIdx: number; fileName: string } | undefined
+  if (sessionId && engine.isPrivate(sessionId)) {
+    const s = session(sessionId)
+    privateFile = { fileIdx: Number(s.id.split('-')[1]), fileName: s.file.name }
+    infoHash = s.infoHash
+    sessionId = undefined
+  }
   if (!sessionId) {
     if (!infoHash || !/^[0-9a-fA-F]{40}$/.test(infoHash)) throw new HttpError(400, 'sessionId or infoHash is required')
-    const { fileIdx, fileName, trackers } = req.body
+    const { trackers } = req.body
+    const fileIdx = privateFile?.fileIdx ?? req.body.fileIdx
+    const fileName = privateFile?.fileName ?? req.body.fileName
     const idx = Number.isInteger(fileIdx) && (fileIdx as number) >= 0 && (fileIdx as number) < 100_000 ? fileIdx as number : -1
     const id = `${infoHash.toLowerCase()}-${Math.max(0, idx)}`
     const existing = library.get(id)
     if (existing) return existing
-    const open = engine.get(id)
-    if (open) {
+    const open = privateFile ? undefined : engine.get(id)
+    if (open && !engine.isPrivate(open.id)) {
       engine.pin(open)
       library.add({ id, infoHash: open.infoHash, fileIdx: Number(id.split('-')[1]), fileName: open.file.name, title: (title ?? open.file.name).slice(0, 200), type, imdbId, streamId, addedAt: Date.now() })
       return library.get(id)

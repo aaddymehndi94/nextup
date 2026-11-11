@@ -143,8 +143,8 @@ export class RecoService {
 
   // ---- Public ------------------------------------------------------------------------
 
-  /** The home screen, or with `type` the Films or Series tab. */
-  home (profile: Profile, type?: MediaType): HomeResponse {
+  /** The home screen, or with `type` the Films or Series tab. `record: false` (private mode) notes nothing as shown. */
+  home (profile: Profile, type?: MediaType, opts: { record?: boolean } = {}): HomeResponse {
     const now = this.now()
     const index = this.getIndex()
     const key = `${this.indexVersion}:${this.profileVersion.get(profile.id) ?? 0}:${Math.floor(now / ROTATION_MS)}`
@@ -153,13 +153,20 @@ export class RecoService {
     if (hit && hit.key === key && now - hit.at < HOME_TTL_MS) return { ...hit.value, warming: this.isWarming(profile.id) }
     if (!this.warming.has(profile.id) && !hit) this.scheduleWarm(profile.id, 0)
     const out = buildHome(this.input(profile.id), type)
-    this.store.recordImpressions(profile.id, out.shown)
+    if (opts.record !== false) this.store.recordImpressions(profile.id, out.shown)
     const value: HomeResponse = { profile, coldStart: out.coldStart, warming: this.isWarming(profile.id) || index.size < 500, rows: out.rows }
     this.homeCache.set(cacheKey, { key, at: now, value })
     return value
   }
 
-  async similar (profile: Profile, ref: ItemRef, k = 20): Promise<RecItem[]> {
+  /** `cache: false` (private mode): only titles already known, so opening one adds nothing to the cache. */
+  async similar (profile: Profile, ref: ItemRef, k = 20, opts: { cache?: boolean } = {}): Promise<RecItem[]> {
+    if (opts.cache === false) {
+      const known = this.getIndex().indexOf(ref.id) !== undefined
+      const cf = this.cf
+      const neighbors = known && cf && ref.type === 'movie' ? safe(() => cf.neighbors(ref.id, 80), []) : null
+      return known ? similarItems(this.input(profile.id), ref.id, neighbors, k) : []
+    }
     await withTimeout(this.items.ensure([ref]), 4000)
     const it = this.items.lookup(ref.id)
     if (it) await withTimeout(this.expand([it.id]), 2500)

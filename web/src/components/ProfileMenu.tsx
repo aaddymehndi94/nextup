@@ -1,15 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, CircleUserRound, Pencil, SlidersHorizontal } from 'lucide-react'
+import { Check, CircleUserRound, Pencil, SlidersHorizontal, VenetianMask } from 'lucide-react'
+import { setPrivate, usePrivate } from '../private.ts'
 import { chooseProfile, useProfiles } from '../profiles.ts'
 import { navigate } from '../router.ts'
+import { toast } from '../toast.ts'
 import { Avatar } from './Avatar.tsx'
 
 /**
- * The active profile's avatar in the masthead. Opens a small menu: switch profile, see "Your taste",
- * manage profiles, and the optional account (sign-in and sync). Arrow keys move through it (remote friendly); Escape closes it.
+ * The active profile's avatar in the masthead. Opens a small menu: switch profile, private mode, see
+ * "Your taste", manage profiles, and the optional account (sign-in and sync). Arrow keys move through it
+ * (remote friendly); Escape closes it. While private mode is on, a "Private" label sits beside the avatar.
  */
 export function ProfileMenu () {
   const profiles = useProfiles()
+  const priv = usePrivate()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
@@ -17,7 +21,7 @@ export function ProfileMenu () {
 
   useEffect(() => {
     if (!open) return
-    const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    const items = () => [...(root.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
     items()[0]?.focus()
     const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
     const onKey = (e: KeyboardEvent) => {
@@ -40,9 +44,19 @@ export function ProfileMenu () {
   if (profiles.status !== 'ready' || !profiles.active) return null
   const { active } = profiles
   const go = (to: string) => { setOpen(false); navigate(to) }
+  const togglePrivate = () => {
+    setOpen(false)
+    setPrivate(!priv)
+    toast(priv ? 'Private mode is off.' : 'Private mode is on. Nothing you watch or do in this window is saved, and it ends when you close it.')
+  }
 
   return (
     <div className="profile-menu" ref={root}>
+      {priv && (
+        <button type="button" className="private-pill" onClick={() => setOpen(o => !o)} aria-label="Private mode is on. Open the menu to turn it off.">
+          <VenetianMask aria-hidden /><span>Private</span>
+        </button>
+      )}
       <button
         ref={button}
         type="button"
@@ -73,6 +87,12 @@ export function ProfileMenu () {
               </button>
             ))}
           </div>
+          <div className="menu-rule" role="separator" />
+          <button type="button" role="menuitemcheckbox" aria-checked={priv} className="menu-item" onClick={togglePrivate}>
+            <VenetianMask className="menu-icon" aria-hidden />
+            <span className="menu-label">Private mode</span>
+            <span className={`menu-switch${priv ? ' is-on' : ''}`} aria-hidden />
+          </button>
           <div className="menu-rule" role="separator" />
           <a href="/taste" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/taste') }}>
             <SlidersHorizontal className="menu-icon" aria-hidden />

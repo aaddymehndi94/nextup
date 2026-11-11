@@ -1,3 +1,4 @@
+import { isPrivate } from './private.ts'
 import type {
   ClientCaps, CreateProfileRequest, DismissReason, FeaturePrefRequest, HealthResponse, HomeResponse, MediaType, OnboardingResponse,
   OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, SessionStats, SimilarResponse,
@@ -95,6 +96,23 @@ export function onProfileGone (fn: () => void): () => void {
   goneListeners.add(fn)
   return () => { goneListeners.delete(fn) }
 }
+/** Image fields in API responses. In private mode they load through the server's uncached relay (/api/img). */
+const IMAGE_KEYS = new Set(['poster', 'background', 'logo', 'thumbnail'])
+
+function relayImages (value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(relayImages)
+  if (!value || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = IMAGE_KEYS.has(k) && typeof v === 'string' && v.startsWith('https://') ? imageUrl(v) : relayImages(v)
+  }
+  return out
+}
+
+/** An image URL as it should load now: through the uncached relay in private mode. */
+export const imageUrl = (url: string): string =>
+  isPrivate() && url.startsWith('https://') ? `/api/img?u=${encodeURIComponent(url)}` : url
+
 const profileScoped = (path: string) => path.startsWith('/api/me') || /^\/api\/title\/[^/]+\/[^/]+\/similar/.test(path)
 
 async function req<T> (path: string, init?: RequestInit): Promise<T> {
@@ -103,7 +121,8 @@ async function req<T> (path: string, init?: RequestInit): Promise<T> {
   try {
     const headers = new Headers(init?.headers)
     if (sentProfile) headers.set('x-nexttupp-profile', sentProfile)
-    res = await fetch(path, { ...init, headers })
+    if (isPrivate()) headers.set('x-nexttupp-private', '1')
+    res = await fetch(path, { ...init, headers, ...(isPrivate() ? { cache: 'no-store' as const } : {}) })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
     throw new ApiError('Can’t reach nexttupp on this computer. Is it running?', 0)
@@ -114,7 +133,7 @@ async function req<T> (path: string, init?: RequestInit): Promise<T> {
     if (res.status === 404 && sentProfile && sentProfile === activeProfile && profileScoped(path)) goneListeners.forEach(fn => fn())
     throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
   }
-  return body as T
+  return (isPrivate() ? relayImages(body) : body) as T
 }
 
 /**
@@ -122,6 +141,7 @@ async function req<T> (path: string, init?: RequestInit): Promise<T> {
  * request outlive the page; sendBeacon can't carry the profile header. Failures are ignored.
  */
 function sendProgressOnExit (body: ProgressRequest): void {
+  if (isPrivate()) return
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (activeProfile) headers['x-nexttupp-profile'] = activeProfile
   try {

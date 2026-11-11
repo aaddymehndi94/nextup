@@ -5,6 +5,7 @@ import type {
 import { plainText } from '../../cloud/src/validate.ts'
 import { UUID } from '../db.ts'
 import { HttpError } from '../http.ts'
+import { hasPrivateHeader, refuseInPrivate } from '../private.ts'
 import { isTunableFeature } from '../reco/taste.ts'
 import type { TasteStore } from '../store.ts'
 import type { RecoService } from './service.ts'
@@ -40,6 +41,15 @@ function avatar (v: unknown): string | null | undefined {
 }
 
 export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, reco: RecoService): void {
+  // Private mode saves nothing: no likes, list, progress, dismissals, taste tuning or profile changes.
+  app.addHook('preHandler', async req => {
+    if (req.method === 'GET' || req.method === 'HEAD') return
+    const path = req.url.split('?')[0]
+    if (path.startsWith('/api/me/') || path === '/api/profiles' || path.startsWith('/api/profiles/')) {
+      refuseInPrivate(req, 'like titles, change My List or edit profiles')
+    }
+  })
+
   function profileOf (req: FastifyRequest): Profile {
     const h = req.headers[PROFILE_HEADER]
     if (typeof h === 'string' && h) {
@@ -150,10 +160,12 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
 
   app.get<{ Querystring: { type?: string } }>('/api/me/home', async req => {
     const { type } = req.query
-    return reco.home(profileOf(req), type === 'movie' || type === 'series' ? type : undefined)
+    return reco.home(profileOf(req), type === 'movie' || type === 'series' ? type : undefined, { record: !hasPrivateHeader(req) })
   })
 
-  app.get<TitleParams>('/api/title/:type/:id/similar', async req => ({ items: await reco.similar(profileOf(req), title(req.params)) }))
+  app.get<TitleParams>('/api/title/:type/:id/similar', async req => ({
+    items: await reco.similar(profileOf(req), title(req.params), 20, { cache: !hasPrivateHeader(req) }),
+  }))
 
   app.get('/api/me/onboarding', async req => reco.onboarding(profileOf(req)))
 

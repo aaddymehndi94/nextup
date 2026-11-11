@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { imageUrl } from '../api.ts'
 import { Play, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { Rating, RecItem } from '../../../shared/types.ts'
 import { useLoaded } from '../hooks.ts'
@@ -59,7 +60,7 @@ export function ContinueCard ({ item, onRemove }: { item: RecItem; onRemove: (it
 }
 
 function LandscapeArt ({ item }: { item: RecItem }) {
-  const src = item.background ?? `https://images.metahub.space/background/medium/${item.id}/img`
+  const src = item.background ?? imageUrl(`https://images.metahub.space/background/medium/${item.id}/img`)
   const [failed, setFailed] = useState(false)
   const [loaded, onLoad] = useLoaded(src)
   if (failed) return <span className="download-fallback">{item.name}</span>

@@ -1,5 +1,6 @@
 import WebTorrent, { type Torrent, type TorrentFile } from 'webtorrent'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { OpenSessionRequest, SessionStats } from '../../shared/types.ts'
 import { DEFAULT_TRACKERS } from '../config.ts'
@@ -23,6 +24,8 @@ export interface Session {
   torrent: Torrent
   file: TorrentFile
   pinned: boolean
+  /** Opened in private mode: nothing about it is logged, and its torrent's data is deleted when it closes. */
+  private: boolean
   activeStreams: number
   lastActive: number
   /** Open readers, oldest first. Only the newest gets urgent priority. */
@@ -68,6 +71,10 @@ export class TorrentEngine {
   private readonly patient = new Set<string>()
   private readonly downloadsDir: string
   private readonly torrentsDir: string
+  /** Private-mode torrents, each in a random folder under here; wiped when they close and at every start. */
+  private readonly privateDir: string
+  /** Info hash → that private torrent's folder. */
+  private readonly privateTorrents = new Map<string, string>()
   private readonly sweeper: NodeJS.Timeout
   private readonly idleMs: number
 
@@ -75,8 +82,12 @@ export class TorrentEngine {
     this.idleMs = idleMs
     this.downloadsDir = join(dataDir, 'downloads')
     this.torrentsDir = join(dataDir, 'torrents')
+    this.privateDir = join(dataDir, 'private')
     mkdirSync(this.downloadsDir, { recursive: true })
     mkdirSync(this.torrentsDir, { recursive: true })
+    // Whatever a private session left behind when the app last stopped without cleaning up (a crash, a power cut).
+    rmSync(this.privateDir, { recursive: true, force: true })
+    mkdirSync(this.privateDir, { recursive: true })
     // uTP is off on purpose: in our benchmark it cut throughput from ~20 MB/s to ~2 MB/s
     // and took 30s to deliver the first 4 MiB. TCP-only peers are plentiful. See docs/adr/0001.
     this.client = new WebTorrent({ utp: false, maxConns: 80 })
@@ -87,14 +98,18 @@ export class TorrentEngine {
 
   /**
    * `patient` waits for metadata as long as it takes instead of giving up after 90s. A kept download
-   * uses it, because a sparse swarm can take minutes to produce one peer.
+   * uses it, because a sparse swarm can take minutes to produce one peer. `private` (private mode) keeps
+   * a torrent this opens out of the downloads folder and the saved metadata, and deletes it on close.
    */
-  async open (req: OpenSessionRequest, opts: { patient?: boolean } = {}): Promise<Session> {
+  async open (req: OpenSessionRequest, opts: { patient?: boolean; private?: boolean } = {}): Promise<Session> {
     const infoHash = req.infoHash.toLowerCase()
     if (!/^[0-9a-f]{40}$/.test(infoHash)) throw new EngineError('Invalid info hash', 400)
 
+    // A download to keep, of a torrent a private session still has open: start it again in the downloads
+    // folder, or the kept file would be deleted along with the private one.
+    if (opts.patient && !opts.private && this.privateTorrents.has(infoHash)) await this.dropPrivate(infoHash)
     if (opts.patient) this.patient.add(infoHash)
-    const torrent = await this.getTorrent(infoHash, req.trackers ?? [], opts.patient === true)
+    const torrent = await this.getTorrent(infoHash, req.trackers ?? [], opts.patient === true, opts.private === true)
     this.patient.delete(infoHash)
     const idx = pickFile(torrent.files, req.fileIdx, req.fileName)
     if (idx < 0) throw new EngineError('No video file found in this torrent', 422)
@@ -102,9 +117,10 @@ export class TorrentEngine {
     const id = sessionId(infoHash, idx)
     let session = this.sessions.get(id)
     if (!session) {
-      session = { id, infoHash, title: req.title, torrent, file: torrent.files[idx], pinned: false, activeStreams: 0, lastActive: Date.now(), readers: [] }
+      session = { id, infoHash, title: req.title, torrent, file: torrent.files[idx], pinned: false, private: false, activeStreams: 0, lastActive: Date.now(), readers: [] }
       this.sessions.set(id, session)
     }
+    if (opts.private || this.privateTorrents.has(infoHash)) session.private = true
     session.lastActive = Date.now()
     return session
   }
@@ -119,7 +135,13 @@ export class TorrentEngine {
     return [...this.sessions.values()].filter(s => !s.torrent.destroyed)
   }
 
-  private async getTorrent (infoHash: string, trackers: string[], patient: boolean): Promise<Torrent> {
+  /** True for a session opened in private mode, or one on a torrent a private session opened. */
+  isPrivate (id: string): boolean {
+    const s = this.sessions.get(id)
+    return Boolean(s && (s.private || this.privateTorrents.has(s.infoHash)))
+  }
+
+  private async getTorrent (infoHash: string, trackers: string[], patient: boolean, isPrivate: boolean): Promise<Torrent> {
     const existing = await this.client.get(infoHash)
     if (existing && !existing.destroyed) {
       if (existing.ready) return existing
@@ -135,15 +157,18 @@ export class TorrentEngine {
       const torrentId = existsSync(saved)
         ? readFileSync(saved)
         : `magnet:?xt=urn:btih:${infoHash}${announce.map(t => `&tr=${encodeURIComponent(t)}`).join('')}`
-      const torrent = this.client.add(torrentId, {
-        path: join(this.downloadsDir, infoHash),
-        deselect: true,
-        announce,
-        strategy: 'sequential',
-      })
-      const ready = await this.waitReady(torrent, patient)
-      if (!existsSync(saved) && ready.torrentFile) writeFileSync(saved, ready.torrentFile)
-      return ready
+      // A private torrent's folder has a random name, so not even the folder says what it was.
+      const path = isPrivate ? join(this.privateDir, randomUUID()) : join(this.downloadsDir, infoHash)
+      if (isPrivate) this.privateTorrents.set(infoHash, path)
+      const torrent = this.client.add(torrentId, { path, deselect: true, announce, strategy: 'sequential' })
+      try {
+        const ready = await this.waitReady(torrent, patient)
+        if (!isPrivate && !existsSync(saved) && ready.torrentFile) writeFileSync(saved, ready.torrentFile)
+        return ready
+      } catch (err) {
+        if (isPrivate) this.forgetPrivate(infoHash)
+        throw err
+      }
     })()
     this.pending.set(infoHash, p)
     try { return await p } finally { this.pending.delete(infoHash) }
@@ -269,10 +294,25 @@ export class TorrentEngine {
       const idle = sessions.every(s => !s.pinned && s.activeStreams === 0 && now - s.lastActive > this.idleMs)
       if (!idle) continue
       for (const s of sessions) this.sessions.delete(s.id)
+      if (this.privateTorrents.has(torrent.infoHash)) { void this.dropPrivate(torrent.infoHash); continue }
       // Keep the data on disk: re-opening is instant for the parts already downloaded.
       this.client.remove(torrent, { destroyStore: false }).catch(() => {})
       console.log(`[engine] stopped idle torrent ${torrent.name}`)
     }
+  }
+
+  /** Stops a private torrent and deletes everything it wrote. */
+  private async dropPrivate (infoHash: string): Promise<void> {
+    for (const s of this.sessions.values()) if (s.infoHash === infoHash) this.sessions.delete(s.id)
+    const t = await this.client.get(infoHash)
+    if (t && !t.destroyed) await this.client.remove(t, { destroyStore: true }).catch(() => {})
+    this.forgetPrivate(infoHash)
+  }
+
+  private forgetPrivate (infoHash: string): void {
+    const path = this.privateTorrents.get(infoHash)
+    this.privateTorrents.delete(infoHash)
+    if (path) rmSync(path, { recursive: true, force: true })
   }
 
   /** Peers connected to a torrent that may still be waiting for metadata; null if it isn't loaded. */
@@ -293,11 +333,16 @@ export class TorrentEngine {
     this.sessions.delete(session.id)
     if (session.pinned) return
     const stillUsed = [...this.sessions.values()].some(s => s.torrent === session.torrent)
-    if (!stillUsed) await this.client.remove(session.torrent, { destroyStore: false }).catch(() => {})
+    if (stillUsed) return
+    if (this.privateTorrents.has(session.infoHash)) await this.dropPrivate(session.infoHash)
+    else await this.client.remove(session.torrent, { destroyStore: false }).catch(() => {})
   }
 
   destroy (): Promise<void> {
     clearInterval(this.sweeper)
-    return new Promise(resolve => this.client.destroy(() => resolve()))
+    return new Promise(resolve => this.client.destroy(() => {
+      rmSync(this.privateDir, { recursive: true, force: true })
+      resolve()
+    }))
   }
 }

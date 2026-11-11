@@ -3,12 +3,13 @@ import {
   ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Tv, Volume2, VolumeX, X,
 } from 'lucide-react'
 import type { MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
-import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption } from '../api.ts'
+import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption, imageUrl } from '../api.ts'
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { navigate } from '../router.ts'
 import { readKey, readSessionKey, writeKey } from '../storage.ts'
+import { isPrivate } from '../private.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { toast } from '../toast.ts'
 
@@ -54,7 +55,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const streamId = query.get('s') ?? imdbId
   const name = query.get('n') ?? ''
   const caps = useMemo(detectCaps, [])
-  const backdrop = imdbId ? `https://images.metahub.space/background/large/${imdbId}/img` : undefined
+  const backdrop = imdbId ? imageUrl(`https://images.metahub.space/background/large/${imdbId}/img`) : undefined
 
   const video = useRef<HTMLVideoElement>(null)
   const [phase, setPhase] = useState<Phase>('connecting')
@@ -231,6 +232,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (prev && Math.abs(prev.position - position) < 1 && Date.now() - prev.at < 5000) return
     lastSent.current = { position, at: Date.now() }
     const body: ProgressRequest = { type, id: imdbId, streamId, position, duration: d }
+    if (isPrivate()) return // private mode: no Continue watching, no taste
     if (exit) api.progressOnExit(body)
     else api.progress(body).catch(() => {})
   }, [type, imdbId, streamId])
@@ -582,7 +584,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
   const showOverlay = phase !== 'ready' || (buffering && !error && !casting)
   const elapsed = Math.round((Date.now() - phaseStarted) / 1000)
-  const logo = imdbId ? `https://images.metahub.space/logo/medium/${imdbId}/img` : undefined
+  const logo = imdbId ? imageUrl(`https://images.metahub.space/logo/medium/${imdbId}/img`) : undefined
   // "Show · S1E1 Pilot" → title and episode line.
   const [mainTitle, ...rest] = name.split(' · ')
   const episodeLine = rest.join(' · ')
