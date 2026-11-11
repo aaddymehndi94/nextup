@@ -411,6 +411,9 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .join-foot .link { background: none; border: 0; padding: 0; font: inherit; color: var(--text-2); cursor: pointer; }
 .join-foot .sep { margin-inline: 0.25rem; opacity: 0.6; }
 
+/* Signed in on this browser (signed-in.js): members see "Invite friends" where others see "Download". */
+html:not(.signed-in) .signed-in-only, html.signed-in .signed-out-only { display: none; }
+
 /* ---------- Invite friends ---------- */
 .invite-choices { margin-top: 2.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .invite-choices .button, .invite-made-actions .button { width: 100%; justify-content: center; }
