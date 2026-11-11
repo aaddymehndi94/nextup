@@ -130,7 +130,8 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
     const position = Number(b.position)
     const duration = Number(b.duration)
     if (!Number.isFinite(position) || !Number.isFinite(duration) || duration <= 0 || duration > 86_400 || position < 0) throw new HttpError(400, 'Bad position or duration')
-    return { progress: store.recordProgress(p.id, { ...t, streamId: b.streamId, position, duration }) }
+    const from = typeof b.from === 'string' && /^[a-z]+(:[^\s]{1,200})?$/.test(b.from) ? b.from : undefined
+    return { progress: store.recordProgress(p.id, { ...t, streamId: b.streamId, position, duration, from }) }
   })
 
   app.delete<TitleParams & { Querystring: { forget?: string } }>('/api/me/progress/:type/:id', async req => {
@@ -161,6 +162,20 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
   app.get<{ Querystring: { type?: string } }>('/api/me/home', async req => {
     const { type } = req.query
     return reco.home(profileOf(req), type === 'movie' || type === 'series' ? type : undefined, { record: !hasPrivateHeader(req) })
+  })
+
+  app.get<{ Querystring: { type?: string; from?: string } }>('/api/me/home/more', async req => {
+    const { type, from } = req.query
+    const n = Number(from)
+    if (!Number.isInteger(n) || n < 0 || n > 200) throw new HttpError(400, 'from must be a row number')
+    return reco.homeMore(profileOf(req), type === 'movie' || type === 'series' ? type : undefined, n, { record: !hasPrivateHeader(req) })
+  })
+
+  app.get<{ Querystring: { type?: string; id?: string; have?: string } }>('/api/me/row', async req => {
+    const { type, id, have } = req.query
+    if (typeof id !== 'string' || !/^[a-z]+(:[^\s]{1,200})?$/.test(id)) throw new HttpError(400, 'Bad row id')
+    const ids = typeof have === 'string' && have ? have.split(',').filter(x => /^tt\d{1,10}$/.test(x)).slice(0, 400) : []
+    return { items: reco.rowMore(profileOf(req), type === 'movie' || type === 'series' ? type : undefined, id, ids) }
   })
 
   app.get<TitleParams>('/api/title/:type/:id/similar', async req => ({

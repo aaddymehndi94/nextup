@@ -30,10 +30,11 @@ import { registerCastRoutes } from './cast/routes.ts'
 import { CastService, type CastToken } from './cast/service.ts'
 import { hasPrivateHeader, refuseInPrivate, relayableImage } from './private.ts'
 
-// Requests from private mode (and streams of a private session) leave no log lines at all.
+// No line per request: the log would otherwise be a record of every search and title opened. LOG_REQUESTS=1
+// brings them back for debugging, except for private mode (and streams of a private session), which never logs.
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'info' },
-  logController: new LogController({ disableRequestLogging: req => isPrivateRequest(req) }),
+  logController: new LogController({ disableRequestLogging: req => process.env.LOG_REQUESTS !== '1' || isPrivateRequest(req) }),
   exposeHeadRoutes: false,
 })
 const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)

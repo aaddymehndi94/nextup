@@ -1,7 +1,7 @@
-import type { HomeResponse, MediaType, OnboardingResponse, Profile, RecItem, TasteSummary } from '../../shared/types.ts'
+import type { HomeMoreResponse, HomeResponse, HomeRow, MediaType, OnboardingResponse, Profile, RecItem, TasteSummary } from '../../shared/types.ts'
 import type { CfModel } from '../reco/cf.ts'
 import { ContentIndex } from '../reco/content.ts'
-import { buildHome, myList, onboardingItems, similarItems } from '../reco/home.ts'
+import { buildHome, moreForRow, myList, onboardingItems, shownOf, similarItems } from '../reco/home.ts'
 import type { RankInput } from '../reco/rank.ts'
 import { COLD_START_POSITIVES, computeSignals, exclusions, type Signal, strength } from '../reco/signals.ts'
 import { summarizeTaste } from '../reco/taste.ts'
@@ -16,6 +16,8 @@ import type { ItemCache } from './items.ts'
 /** Rows rotate (because-seeds, exploration, tie-breaks) every this many ms. */
 const ROTATION_MS = 6 * 3600_000
 const HOME_TTL_MS = 5 * 60_000
+/** Rows per page below the first screen. */
+const HOME_PAGE = 3
 
 type Log = (msg: string) => void
 
@@ -31,7 +33,8 @@ export class RecoService {
   private lastRebuild = 0
   private cfKnown: Set<string> = new Set()
   private readonly profileVersion = new Map<string, number>()
-  private readonly homeCache = new Map<string, { key: string; at: number; value: HomeResponse }>()
+  /** `value` is the first screen; `all` every row, for the pages that load as the viewer scrolls. */
+  private readonly homeCache = new Map<string, { key: string; at: number; value: HomeResponse; all: HomeRow[] }>()
   private readonly warming = new Map<string, Promise<void>>()
   private readonly warmAgain = new Set<string>()
   private readonly warmTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -145,18 +148,45 @@ export class RecoService {
 
   /** The home screen, or with `type` the Films or Series tab. `record: false` (private mode) notes nothing as shown. */
   home (profile: Profile, type?: MediaType, opts: { record?: boolean } = {}): HomeResponse {
+    const { entry, fresh } = this.homeEntry(profile, type)
+    if (!fresh) return { ...entry.value, warming: this.isWarming(profile.id) }
+    if (opts.record !== false) this.store.recordImpressions(profile.id, shownOf(entry.value.rows))
+    return entry.value
+  }
+
+  /** The next few rows below `from`, as the viewer scrolls down. A profile change in between can shift them; the client skips rows it has. */
+  homeMore (profile: Profile, type: MediaType | undefined, from: number, opts: { record?: boolean } = {}): HomeMoreResponse {
+    const { all } = this.homeEntry(profile, type).entry
+    const rows = all.slice(Math.max(0, from), Math.max(0, from) + HOME_PAGE)
+    if (opts.record !== false && rows.length) this.store.recordImpressions(profile.id, shownOf(rows))
+    return { rows, more: from + HOME_PAGE < all.length }
+  }
+
+  /** More titles for one row, scrolled to its end. */
+  rowMore (profile: Profile, type: MediaType | undefined, rowId: string, have: string[]): RecItem[] {
+    this.getIndex()
+    return moreForRow(this.input(profile.id), rowId, have, type)
+  }
+
+  private homeEntry (profile: Profile, type?: MediaType): { entry: { key: string; at: number; value: HomeResponse; all: HomeRow[] }; fresh: boolean } {
     const now = this.now()
     const index = this.getIndex()
     const key = `${this.indexVersion}:${this.profileVersion.get(profile.id) ?? 0}:${Math.floor(now / ROTATION_MS)}`
     const cacheKey = type ? `${profile.id}:${type}` : profile.id
     const hit = this.homeCache.get(cacheKey)
-    if (hit && hit.key === key && now - hit.at < HOME_TTL_MS) return { ...hit.value, warming: this.isWarming(profile.id) }
+    if (hit && hit.key === key && now - hit.at < HOME_TTL_MS) return { entry: hit, fresh: false }
     if (!this.warming.has(profile.id) && !hit) this.scheduleWarm(profile.id, 0)
     const out = buildHome(this.input(profile.id), type)
-    if (opts.record !== false) this.store.recordImpressions(profile.id, out.shown)
-    const value: HomeResponse = { profile, coldStart: out.coldStart, warming: this.isWarming(profile.id) || index.size < 500, rows: out.rows }
-    this.homeCache.set(cacheKey, { key, at: now, value })
-    return value
+    const value: HomeResponse = {
+      profile,
+      coldStart: out.coldStart,
+      warming: this.isWarming(profile.id) || index.size < 500,
+      rows: out.rows.slice(0, out.firstPage),
+      more: out.rows.length > out.firstPage,
+    }
+    const entry = { key, at: now, value, all: out.rows }
+    this.homeCache.set(cacheKey, entry)
+    return { entry, fresh: true }
   }
 
   /** `cache: false` (private mode): only titles already known, so opening one adds nothing to the cache. */

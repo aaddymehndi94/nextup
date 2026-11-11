@@ -1,7 +1,7 @@
 import { isPrivate } from './private.ts'
 import type {
-  ClientCaps, CreateProfileRequest, DismissReason, FeaturePrefRequest, HealthResponse, HomeResponse, MediaType, OnboardingResponse,
-  OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, SessionStats, SimilarResponse,
+  ClientCaps, CreateProfileRequest, DismissReason, FeaturePrefRequest, HealthResponse, HomeMoreResponse, HomeResponse, MediaType, OnboardingResponse,
+  OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, RowMoreResponse, SessionStats, SimilarResponse,
   SourcesResponse, TasteSummary, TitleDetail, TitleState, TitleSummary, UpdateProfileRequest,
 } from '../../shared/types.ts'
 
@@ -222,6 +222,11 @@ export const api = {
 
   // Recommendations.
   home: (type?: MediaType) => req<HomeResponse>(`/api/me/home${type ? `?type=${type}` : ''}`),
+  /** The home rows below the first `from`, a few at a time, as the viewer scrolls down. */
+  homeMore: (from: number, type?: MediaType) => req<HomeMoreResponse>(`/api/me/home/more?from=${from}${type ? `&type=${type}` : ''}`),
+  /** More titles for a row scrolled to its end, skipping the ones it has. */
+  rowMore: (id: string, have: string[], type?: MediaType) =>
+    req<RowMoreResponse>(`/api/me/row?id=${encodeURIComponent(id)}&have=${have.join(',')}${type ? `&type=${type}` : ''}`).then(r => r.items),
   similar: (type: MediaType, id: string) => req<SimilarResponse>(`/api/title/${t(type, id)}/similar`),
   onboarding: () => req<OnboardingResponse>('/api/me/onboarding'),
   taste: () => req<TasteSummary>('/api/me/taste'),

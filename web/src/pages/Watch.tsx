@@ -1,8 +1,8 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Tv, Volume2, VolumeX, X,
+  ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, SkipForward, Tv, Volume2, VolumeX, X,
 } from 'lucide-react'
-import type { MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
+import type { Episode, MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
 import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption, imageUrl } from '../api.ts'
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
@@ -12,6 +12,7 @@ import { readKey, readSessionKey, writeKey } from '../storage.ts'
 import { isPrivate } from '../private.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { toast } from '../toast.ts'
+import { watchSource } from './Title.tsx'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
@@ -25,6 +26,11 @@ function loadProgress (streamId: string): Progress | null {
 function saveProgress (streamId: string, p: Progress) {
   writeKey(progressKey(streamId), JSON.stringify(p))
 }
+
+// Next episode: offered for the last stretch of an episode, and started after a short countdown once it ends.
+const NEXT_OFFER_SEC = 40
+const NEXT_COUNTDOWN = 8
+const EPISODE_ID = /^tt\d+:(\d+):(\d+)$/
 
 // Subtitle text size, as a multiple of the default; one choice for every title, saved as `nexttupp:subs-size`.
 const SUB_SIZES = [0.75, 0.875, 1, 1.25, 1.5, 1.75]
@@ -102,6 +108,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const [subChoice, setSubChoice] = useState<SubtitleOption | null>(null)
   const [cues, setCues] = useState<Cue[]>([])
   const [subOffset, setSubOffset] = useState(0)
+  const [ended, setEnded] = useState(false)
   const [subSize, setSubSize] = useState(loadSubSize)
   const stepSubSize = (by: 1 | -1) => {
     const next = SUB_SIZES[Math.min(SUB_SIZES.length - 1, Math.max(0, SUB_SIZES.indexOf(subSize) + by))]
@@ -244,7 +251,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     const prev = lastSent.current
     if (prev && Math.abs(prev.position - position) < 1 && Date.now() - prev.at < 5000) return
     lastSent.current = { position, at: Date.now() }
-    const body: ProgressRequest = { type, id: imdbId, streamId, position, duration: d }
+    const body: ProgressRequest = { type, id: imdbId, streamId, position, duration: d, from: readSessionKey(`from:${imdbId}`) ?? undefined }
     if (isPrivate()) return // private mode: no Continue watching, no taste
     if (exit) api.progressOnExit(body)
     else api.progress(body).catch(() => {})
@@ -426,10 +433,10 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       if (v.src && !exited.current) lastPosition.current = origin.current + v.currentTime
     }
     const settled = () => { if (seekPending.current) { seekPending.current = false; reportRef.current() } }
-    const onPlaying = () => { setBuffering(false); setPlaying(true); played.current = true; settled() }
+    const onPlaying = () => { setBuffering(false); setPlaying(true); setEnded(false); played.current = true; settled() }
     const onSeeked = () => { if (v.paused) settled() }
     const onPause = () => { setPlaying(false); if (!v.ended) reportRef.current() }
-    const onEnded = () => reportRef.current()
+    const onEnded = () => { setEnded(true); reportRef.current() }
     const onWaiting = () => setBuffering(true)
     const onCanPlay = () => setBuffering(false)
     const onVolume = () => { setMuted(v.muted); setVolume(v.volume) }
@@ -567,6 +574,47 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePlay, seekTo, toggleFullscreen, poke]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- Next episode -------------------------------------------------------------------------
+  const [next, setNext] = useState<{ ep: Episode; series: string } | null>(null)
+  const [nextHidden, setNextHidden] = useState(false)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const [goingNext, setGoingNext] = useState(false)
+  useEffect(() => {
+    const m = EPISODE_ID.exec(streamId)
+    if (type !== 'series' || !m || !IMDB_ID.test(imdbId)) return
+    let gone = false
+    api.title('series', imdbId).then(t => {
+      const i = t.episodes.findIndex(e => e.season === Number(m[1]) && e.episode === Number(m[2]))
+      const ep = i >= 0 ? t.episodes.slice(i + 1).find(e => e.season > 0) : undefined
+      if (!gone && ep && !(ep.released && Date.parse(ep.released) > Date.now())) setNext({ ep, series: t.name })
+    }).catch(() => {})
+    return () => { gone = true }
+  }, [type, imdbId, streamId])
+
+  /** Plays the next episode: from this same torrent when it has it (a season pack), else the best source. */
+  const goNext = useCallback(() => {
+    if (!next || goingNext) return
+    const { ep, series } = next
+    setGoingNext(true)
+    setCountdown(null)
+    api.sources('series', ep.id).then(r => {
+      const src = r.sources.find(x => x.infoHash.toLowerCase() === infoHash.toLowerCase()) ?? r.sources[0]
+      if (!src) { setGoingNext(false); toast(`No sources found for S${ep.season}E${ep.episode} yet.`); return }
+      report(true)
+      exited.current = true
+      watchSource(src, { type: 'series', imdbId, streamId: ep.id, name: `${series} · S${ep.season}E${ep.episode} ${ep.name}` }, { replace: true })
+    }).catch(err => { setGoingNext(false); toast(`Couldn’t find the next episode. ${(err as Error).message}`) })
+  }, [next, goingNext, infoHash, imdbId, report])
+
+  const offerNext = Boolean(next) && !nextHidden && !casting && phase === 'ready' && duration > 0 && (ended || duration - time <= NEXT_OFFER_SEC)
+  useEffect(() => {
+    if (!ended || !offerNext || goingNext) { setCountdown(null); return }
+    setCountdown(NEXT_COUNTDOWN)
+    const t = setInterval(() => setCountdown(c => (c === null ? null : Math.max(0, c - 1))), 1000)
+    return () => clearInterval(t)
+  }, [ended, offerNext, goingNext])
+  useEffect(() => { if (countdown === 0) goNext() }, [countdown, goNext])
+
   const leave = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     report(true)
@@ -677,6 +725,19 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {offerNext && next && (
+        <div className="next-episode" role="group" aria-label="Next episode">
+          <button className="button primary" onClick={goNext} disabled={goingNext}>
+            <SkipForward aria-hidden />
+            <span className="next-episode-text">
+              <span>{goingNext ? 'Finding a source…' : countdown !== null ? `Next episode in ${countdown}` : 'Next episode'}</span>
+              <span className="next-episode-name ellipsis">S{next.ep.season}E{next.ep.episode} · {next.ep.name}</span>
+            </span>
+          </button>
+          <button className="icon-button small" onClick={() => { setNextHidden(true); setCountdown(null) }} aria-label="Not now"><X aria-hidden /></button>
         </div>
       )}
 

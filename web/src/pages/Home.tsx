@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Info, Search, SlidersHorizontal, X } from 'lucide-react'
+import { Check, Info, Search, SlidersHorizontal, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
 import { api } from '../api.ts'
 import { useDocumentTitle, useLoaded, useScrolled } from '../hooks.ts'
 import { navigate, onLinkClick } from '../router.ts'
+import { noteSource } from '../storage.ts'
 import { EMPTY_STATE, useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
 import { PosterCard, PosterSkeleton } from '../components/PosterCard.tsx'
@@ -68,6 +69,74 @@ function useHomeFeed (tab?: MediaType) {
 
 const isRecRow = (row: HomeRow) => !['continue', 'list', 'onboarding'].includes(row.kind)
 
+/** Rows that can go on: more titles load when one is scrolled near its end. */
+const ROW_LIMIT = 120
+
+/**
+ * Endless scrolling. Rows below the first screen load a few at a time as the viewer nears the bottom, and a
+ * row scrolled near its end gets more titles in the same spirit, until the server has no more.
+ */
+function useFeedPaging (tab: MediaType | undefined, data: HomeResponse | null) {
+  const [extra, setExtra] = useState<HomeRow[]>([])
+  const [more, setMore] = useState(false)
+  const [added, setAdded] = useState<Map<string, RecItem[]>>(() => new Map())
+  const next = useRef<number | null>(null)
+  const busy = useRef(false)
+  const rowBusy = useRef(new Set<string>())
+  const rowDone = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!data || next.current !== null) return
+    next.current = data.rows.length
+    setMore(Boolean(data.more))
+  }, [data])
+
+  const loadPage = useCallback(() => {
+    const from = next.current
+    if (busy.current || from === null || !more) return
+    busy.current = true
+    api.homeMore(from, tab)
+      .then(r => {
+        next.current = from + r.rows.length
+        setExtra(prev => [...prev, ...r.rows])
+        setMore(r.more && r.rows.length > 0)
+      })
+      .catch(() => setMore(false))
+      .finally(() => { busy.current = false })
+  }, [tab, more])
+
+  const extendRow = useCallback((rowId: string, have: string[]) => {
+    if (rowBusy.current.has(rowId) || rowDone.current.has(rowId) || have.length >= ROW_LIMIT) return
+    rowBusy.current.add(rowId)
+    api.rowMore(rowId, have, tab)
+      .then(items => {
+        const known = new Set(have)
+        const fresh = items.filter(it => !known.has(it.id))
+        if (!fresh.length) { rowDone.current.add(rowId); return }
+        setAdded(prev => new Map(prev).set(rowId, [...(prev.get(rowId) ?? []), ...fresh]))
+      })
+      .catch(() => rowDone.current.add(rowId))
+      .finally(() => rowBusy.current.delete(rowId))
+  }, [tab])
+
+  return { extra, more, loadPage, added, extendRow }
+}
+
+/** Calls `onVisible` while the element is within ~1.5 screens of the viewport (again after each load, if still near). */
+function useNearBottom (onVisible: () => void, active: boolean, deps: unknown) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !active) return
+    const near = () => el.getBoundingClientRect().top < window.innerHeight * 2.5
+    if (near()) onVisible()
+    const io = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) onVisible() }, { rootMargin: '0px 0px 150% 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [onVisible, active, deps])
+  return ref
+}
+
 /** The billboard's title: the top pick once picks are personal, otherwise the most popular film. */
 function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId: string } | null {
   const row = data.coldStart ? data.rows.find(r => r.id.startsWith('popular:')) : data.rows.find(r => r.kind === 'top')
@@ -78,6 +147,8 @@ function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId
 
 function Feed ({ tab }: { tab?: MediaType }) {
   const { load, refresh } = useHomeFeed(tab)
+  const paging = useFeedPaging(tab, load.state === 'ok' ? load.data : null)
+  const bottom = useNearBottom(paging.loadPage, paging.more, paging.extra.length)
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
   // The billboard stays put while rows refresh underneath it.
   const pinned = useRef<{ cold: boolean; pick: ReturnType<typeof billboardOf> } | null>(null)
@@ -115,6 +186,20 @@ function Feed ({ tab }: { tab?: MediaType }) {
       .catch(err => { hide(`continue:${it.id}`, false); toast(`Couldn’t remove that. ${(err as Error).message}`) })
   }, [hide])
 
+  /** A discover row's question: more of this kind of title, or none of it. */
+  const answer = useCallback((row: HomeRow, value: 1 | -1) => {
+    const f = row.feature
+    if (!f) return
+    hide(value === 1 ? `asked:${row.id}` : `row:${row.id}`, true)
+    const undo = () => { hide(`asked:${row.id}`, false); hide(`row:${row.id}`, false) }
+    api.setFeaturePref(f.key, value)
+      .then(() => toast(value === 1 ? `Noted. More “${row.title}” in your picks.` : `Noted. No more “${row.title}” in your picks.`, {
+        label: 'Undo',
+        run: () => { undo(); api.setFeaturePref(f.key, 0).catch(() => {}) },
+      }))
+      .catch(err => { undo(); toast(`Couldn’t save that. ${(err as Error).message}`) })
+  }, [hide])
+
   if (load.state === 'error') return <FallbackFeed />
   if (load.state === 'loading') {
     return (
@@ -138,14 +223,21 @@ function Feed ({ tab }: { tab?: MediaType }) {
   }
   const pick = pinned.current.pick
 
-  const rows = data.rows.map(row => {
-    const items = row.items.filter(it => {
+  const seenRows = new Set<string>()
+  const rows = [...data.rows, ...paging.extra].filter(row => {
+    if (seenRows.has(row.id) || hidden.has(`row:${row.id}`)) return false
+    seenRows.add(row.id)
+    return true
+  }).map(row => {
+    const more = paging.added.get(row.id)
+    const all = more ? [...row.items, ...more.filter(m => !row.items.some(it => it.id === m.id))] : row.items
+    const items = all.filter(it => {
       if (row.kind === 'list') return !hidden.has(`list:${it.id}`)
       if (row.kind === 'continue') return !hidden.has(`continue:${it.id}`)
       // The billboard's title isn't repeated just below it.
       return !hidden.has(it.id) && !(pick && it.id === pick.item.id && row.id === pick.rowId)
     })
-    return { ...row, items }
+    return { ...row, items, have: all.map(it => it.id) }
   }).filter(row => row.items.length > 0 || row.kind === 'onboarding')
 
   // Downloads sit after what the viewer is in the middle of (or, for a new profile, after rating a few).
@@ -155,7 +247,7 @@ function Feed ({ tab }: { tab?: MediaType }) {
   for (const row of rows) {
     if (row.kind === 'continue') {
       shelves.push(
-        <Row key={row.id} title={row.title} variant="landscape" id="row-continue" className="row-continue">
+        <Row key={row.id} title={row.title} variant="landscape" id="row-continue" className="row-continue" source="continue">
           {row.items.map(it => <ContinueCard key={it.id} item={it} onRemove={removeFromContinue} />)}
         </Row>,
       )
@@ -163,7 +255,7 @@ function Feed ({ tab }: { tab?: MediaType }) {
       shelves.push(<Onboarding key={row.id} row={row} onReady={refresh} />)
     } else if (row.kind === 'list') {
       shelves.push(
-        <Row key={row.id} title={row.title} id="row-my-list" className="row-list">
+        <Row key={row.id} title={row.title} id="row-my-list" className="row-list" source="list">
           {row.items.map(it => <RecCard key={it.id} item={it} onRemove={removeFromList} removeLabel="Remove from My List" />)}
         </Row>,
       )
@@ -175,7 +267,20 @@ function Feed ({ tab }: { tab?: MediaType }) {
           caption={row.subtitle}
           id={`row-${row.id.replace(/\W+/g, '-')}`}
           className={`row-rec row-kind-${row.kind}`}
-          aside={row.kind === 'top' ? <a className="row-link" href="/taste" onClick={onLinkClick}><SlidersHorizontal aria-hidden />Why these?</a> : undefined}
+          source={row.id}
+          aside={row.kind === 'top'
+            ? <a className="row-link" href="/taste" onClick={onLinkClick}><SlidersHorizontal aria-hidden />Why these?</a>
+            : row.kind === 'discover' && row.feature
+              ? hidden.has(`asked:${row.id}`)
+                ? <span className="row-link done"><Check aria-hidden />More like this</span>
+                : (
+                  <span className="discover-answer">
+                    <button type="button" className="row-link" onClick={() => answer(row, 1)}><ThumbsUp aria-hidden />More like this</button>
+                    <button type="button" className="row-link" onClick={() => answer(row, -1)}><ThumbsDown aria-hidden />Not for me</button>
+                  </span>
+                  )
+              : undefined}
+          onNearEnd={isRecRow(row) ? () => paging.extendRow(row.id, row.have) : undefined}
         >
           {row.items.map(it => <RecCard key={it.id} item={it} onRemove={isRecRow(row) ? notInterested : undefined} />)}
         </Row>,
@@ -187,7 +292,8 @@ function Feed ({ tab }: { tab?: MediaType }) {
   return (
     <>
       {pick ? <PickBillboard item={pick.item} label={pick.label} /> : <div className="masthead-spacer" />}
-      <div className="shelves">{shelves}</div>
+      <div className="shelves" onClickCapture={e => noteSource(e)}>{shelves}</div>
+      <div ref={bottom} className="feed-end" aria-hidden />
     </>
   )
 }
@@ -446,7 +552,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
       </header>
 
       {results ? (
-        <section className="results" aria-live="polite">
+        <section className="results" aria-live="polite" onClickCapture={e => noteSource(e, 'search')}>
           {results.state === 'ok' && results.data.length > 0 && (
             <h2 className="page-heading">Results for <span className="quiet">“{q}”</span></h2>
           )}

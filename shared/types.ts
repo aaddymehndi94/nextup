@@ -224,7 +224,11 @@ export interface TitleState {
 export interface RatingRequest { value: Rating; /** Where the rating was given, e.g. 'title', 'player', 'onboarding'. */ source?: string }
 export interface DismissRequest { reason: DismissReason }
 /** Sent by the player every ~10 s while playing, and on pause/exit. */
-export interface ProgressRequest { type: MediaType; id: string; streamId: string; position: number; duration: number }
+export interface ProgressRequest {
+  type: MediaType; id: string; streamId: string; position: number; duration: number
+  /** Where the title was opened from: a home row id ("top", "because:tt…", "discover:g:Western"), "search", "similar". */
+  from?: string
+}
 export interface ProgressResponse { progress: WatchProgress }
 
 export type ReasonKind =
@@ -255,7 +259,7 @@ export interface RecItem extends TitleSummary {
 
 export type HomeRowKind =
   | 'continue' | 'list' | 'onboarding' | 'top' | 'because' | 'genre' | 'series' | 'movies' | 'different'
-  | 'popular' | 'acclaimed'
+  | 'popular' | 'acclaimed' | 'discover'
 
 export interface HomeRow {
   /** Stable within a rotation window; use as a React key. */
@@ -264,6 +268,8 @@ export interface HomeRow {
   title: string
   subtitle?: string
   items: RecItem[]
+  /** Discover rows: the feature the row is about, for "More like this" / "Not for me" (PUT /api/me/taste/feature). */
+  feature?: { key: string; label: string }
 }
 
 export interface HomeResponse {
@@ -273,7 +279,13 @@ export interface HomeResponse {
   /** Background work (metadata, candidate expansion) is still filling in; refetch in a few seconds for fuller rows. */
   warming: boolean
   rows: HomeRow[]
+  /** More rows follow: GET /api/me/home/more?from=<rows.length>, as the viewer scrolls down. */
+  more?: boolean
 }
+
+export interface HomeMoreResponse { rows: HomeRow[]; more: boolean }
+/** GET /api/me/row?id=<row id>&have=<ids already in the row>: the row's next titles, empty when it can't go on. */
+export interface RowMoreResponse { items: RecItem[] }
 
 export interface SimilarResponse { items: RecItem[] }
 

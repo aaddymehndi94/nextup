@@ -90,6 +90,15 @@ const PAIRS: Record<string, string> = {
 
 export const genrePlural = (g: string): string => PLURAL[g] ?? g
 
+/** A row label for series: "Romantic comedies" → "Romantic comedy series", "War films" → "War series". */
+export function seriesLabel (label: string): string {
+  if (/\bseries$/i.test(label)) return label
+  const words = label.split(' ')
+  const last = words.pop()!
+  const one = /^films?$/i.test(last) ? '' : last.endsWith('ies') ? `${last.slice(0, -3)}y` : last.endsWith('s') && !last.endsWith('ss') ? last.slice(0, -1) : last
+  return [...words, one, 'series'].filter(Boolean).join(' ')
+}
+
 export function pairLabel (a: string, b: string): string {
   const [x, y] = [a, b].sort()
   const named = PAIRS[`${x}+${y}`]

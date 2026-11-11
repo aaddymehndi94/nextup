@@ -7,7 +7,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
  * With a fine pointer, paddles at the edges page the shelf; keyboard and remote users move
  * through the items themselves.
  */
-export function Row ({ title, caption, aside, children, variant = 'poster', id, className }: {
+export function Row ({ title, caption, aside, children, variant = 'poster', id, className, onNearEnd, source }: {
   title: string
   caption?: ReactNode
   aside?: ReactNode
@@ -15,14 +15,21 @@ export function Row ({ title, caption, aside, children, variant = 'poster', id, 
   variant?: 'poster' | 'landscape'
   id?: string
   className?: string
+  /** Called when the shelf is scrolled to within a screen of its end (to load more titles into it). */
+  onNearEnd?: () => void
+  /** Recorded as where a title was opened from (see noteSource in storage.ts). */
+  source?: string
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ start: true, end: true })
+  const nearEnd = useRef(onNearEnd)
+  nearEnd.current = onNearEnd
 
   const measure = useCallback(() => {
     const el = scroller.current
     if (!el) return
     setEdges({ start: el.scrollLeft <= 4, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 4 })
+    if (el.scrollLeft > 0 && el.scrollLeft + 2 * el.clientWidth >= el.scrollWidth) nearEnd.current?.()
   }, [])
 
   useEffect(() => {
@@ -42,7 +49,7 @@ export function Row ({ title, caption, aside, children, variant = 'poster', id, 
 
   const headingId = id ?? `row-${title.toLowerCase().replace(/\W+/g, '-')}`
   return (
-    <section className={`row row-${variant}${className ? ` ${className}` : ''}`} aria-labelledby={headingId}>
+    <section className={`row row-${variant}${className ? ` ${className}` : ''}`} aria-labelledby={headingId} data-source={source}>
       <header className="row-head">
         <div className="row-heading">
           <h2 className="row-title" id={headingId}>{title}</h2>

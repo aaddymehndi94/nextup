@@ -38,4 +38,16 @@ export function writeKey (name: string, value: string | null, store: Store | nul
 }
 
 export const readSessionKey = (name: string) => readKey(name, session())
+
+/**
+ * Click handler (capture phase) for an area of title links: remembers, for this window, where the clicked title
+ * was opened from: the nearest `data-source` (a home row id), else `fallback`. The player sends it with
+ * progress, so the play can be traced to the row that led to it.
+ */
+export function noteSource (e: { target: EventTarget }, fallback?: string): void {
+  const link = e.target instanceof Element ? e.target.closest('a[href^="/title/"]') : null
+  const id = link?.getAttribute('href')?.split(/[/?]/)[3]
+  const from = link?.closest('[data-source]')?.getAttribute('data-source') ?? fallback
+  if (id && from) writeSessionKey(`from:${id}`, from)
+}
 export const writeSessionKey = (name: string, value: string | null) => writeKey(name, value, session())

@@ -11,6 +11,8 @@ export interface ProgressInput extends ItemRef {
   streamId: string
   position: number
   duration: number
+  /** Where the title was opened from (a home row id, "search", "similar"); kept in the play event's context. */
+  from?: string
 }
 
 // Profiles and per-profile taste state. Every write appends an immutable event and updates the
@@ -213,7 +215,7 @@ export class SqliteTasteStore implements TasteStore {
         .run(profileId, input.streamId, input.id, input.type, season, episode, position, input.duration, maxPos, watched, completedAt, startedAt, at)
 
       // The log gets milestones, not every 10 s ping: a play (new or resumed after 30 min), quartiles, completion.
-      const ctx = { streamId: input.streamId, position: Math.round(position), duration: Math.round(input.duration), watchedSec: Math.round(watched) }
+      const ctx = { streamId: input.streamId, position: Math.round(position), duration: Math.round(input.duration), watchedSec: Math.round(watched), ...(input.from ? { from: input.from } : {}) }
       const frac = input.duration > 0 ? position / input.duration : 0
       const prevFrac = !fresh && Number(prev.duration) > 0 ? Number(prev.position) / Number(prev.duration) : 0
       if (fresh || at - Number(prev.updated_at) > 30 * 60_000) this.event(profileId, input, 'play', frac, ctx, at)

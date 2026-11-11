@@ -20,6 +20,8 @@ export const BLEND = {
   fatiguePerShow: 0.03,
   /** ± half this, deterministic per rotation window, so near-ties rotate instead of freezing. */
   jitter: 0.04,
+  /** Added for a title out in the last few months (fading over about half a year), more the more talked-about it is. */
+  fresh: 0.1,
 }
 
 const CONTENT_TOP = [1, 0.5, 0.25]
@@ -47,6 +49,15 @@ export const popNorm = (it: ItemMeta) => (it.popularity !== undefined ? clamp01(
 
 /** Quality first, popularity second: a well-rated film nobody's talking about beats hyped filler. */
 export const prior = (it: ItemMeta) => 0.7 * ratingNorm(it) + 0.3 * popNorm(it)
+
+/** 1 for a title out this week, fading over about half a year; 0 a year on, before release, or when it's poorly rated. */
+export function freshness (it: ItemMeta, now: number): number {
+  if (it.imdbRating !== undefined && it.imdbRating < 6) return 0
+  const released = it.released ? Date.parse(it.released) : it.year ? Date.UTC(it.year, 6, 1) : Number.NaN
+  if (!Number.isFinite(released)) return 0
+  const days = (now - released) / 86_400_000
+  return days < 0 || days > 365 ? 0 : Math.exp(-days / 150)
+}
 
 /** FNV-1a → [0, 1). Deterministic stand-in for randomness. */
 export function hash01 (s: string): number {
@@ -138,17 +149,20 @@ export interface Shape {
   series: number
   /** Share of positive weight per production country (lower-cased). */
   countries: Map<string, number>
+  /** Share of positive weight on animated titles. */
+  animation: number
 }
 
 export function shapeOf (index: ContentIndex, pos: Seed[]): Shape {
   const seeds = pos.filter(s => s.signal.weight >= 0.3)
-  let w = 0; let wr = 0; let r = 0; let wp = 0; let lp = 0; let lp2 = 0; let movie = 0
+  let w = 0; let wr = 0; let r = 0; let wp = 0; let lp = 0; let lp2 = 0; let movie = 0; let anim = 0
   const countries = new Map<string, number>()
   for (const s of seeds) {
     const it = index.item(s.i)
     const sw = s.signal.weight
     w += sw
     if (it.type === 'movie') movie += sw
+    if (it.genres.includes('Animation')) anim += sw
     for (const c of new Set(it.countries.map(x => x.toLowerCase()))) countries.set(c, (countries.get(c) ?? 0) + sw)
     if (it.imdbRating !== undefined) { wr += sw; r += sw * it.imdbRating }
     if (it.popularity !== undefined) { const x = Math.log10(1 + it.popularity); wp += sw; lp += sw * x; lp2 += sw * x * x }
@@ -162,8 +176,18 @@ export function shapeOf (index: ContentIndex, pos: Seed[]): Shape {
     movie: w ? movie / w : 0.5,
     series: w ? 1 - movie / w : 0.5,
     countries: new Map([...countries].map(([c, v]) => [c, v / w])),
+    animation: w ? anim / w : 0,
   }
 }
+
+/**
+ * Cartoons for someone who has liked none. Genres can't tell Scooby-Doo from Rick and Morty (both
+ * "Animation, Adventure, Comedy"), so all animation is marked down, series most: animated films (Spirited
+ * Away, WALL·E) cross over far more often than cartoon series do. Liking a couple lifts it.
+ */
+export const animationAside = (shape: Shape, it: ItemMeta): boolean =>
+  shape.n >= 5 && shape.animation < 0.05 && it.genres.includes('Animation')
+
 
 /** 0..1: how well a title matches the profile's shape. 1 when the shape is unknown. */
 export function shapeFit (shape: Shape, it: ItemMeta): number {
@@ -180,8 +204,9 @@ export function shapeFit (shape: Shape, it: ItemMeta): number {
     for (const c of it.countries) countryShare = Math.max(countryShare, shape.countries.get(c.toLowerCase()) ?? 0)
   }
   const countryFit = 0.7 + 0.3 * Math.min(1, 5 * countryShare)
+  const animFit = animationAside(shape, it) ? (it.type === 'series' || it.genres.includes('Family') ? 0.45 : 0.75) : 1
   // No films-vs-series term: with mostly-film likes it marked every series down. Rows mix the two by quota instead.
-  return (0.4 + 0.6 * ratingFit) * (0.65 + 0.35 * popFit) * countryFit
+  return (0.4 + 0.6 * ratingFit) * (0.65 + 0.35 * popFit) * countryFit * animFit
 }
 
 export interface Candidate {
@@ -344,6 +369,7 @@ export function scoreAll (p: Prepared, filter?: (it: ItemMeta) => boolean): Cand
     if (boosts.length) score += BLEND.prefBoost * Math.min(2, index.features(i).filter(k => boosts.includes(k)).length)
     const imp = impressions.get(item.id)
     if (imp && imp.count >= 3 && now - imp.lastAt < 21 * 86_400_000) score -= Math.min(BLEND.fatigueMax, BLEND.fatiguePerShow * (imp.count - 2))
+    score += BLEND.fresh * freshness(item, now) * (0.4 + 0.6 * popNorm(item))
     score += (hash01(`${seed}:${item.id}`) - 0.5) * BLEND.jitter
     const nearest: Candidate['top'] = []
     for (let r = 0; r < 3; r++) if (ts[r][i] >= 0 && t[r][i] > 0) nearest.push({ seed: p.pos[ts[r][i]], c: t[r][i] })
@@ -407,12 +433,15 @@ export function explore (p: Prepared, cands: Candidate[], k: number, taken: Set<
   const pool = cands.filter(c => {
     if (taken.has(c.item.id) || c.prior < 0.55 || c.neg >= 0.12) return false
     if ((shares.get(c.item.genres[0]) ?? 0) >= 0.2) return false
+    // "Something different" shouldn't mean children's cartoons; animated films can still turn up.
+    if (animationAside(p.shape, c.item) && (c.item.type === 'series' || c.item.genres.includes('Family'))) return false
     const g = [...c.item.genres].sort()
     for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) if (likedPairs.has(`${g[i]}+${g[j]}`)) return false
     return true
   })
   // Adjacent rather than random: some content overlap, made well, the kind of thing this profile watches.
   return diversify(p.input.index, pool, k, 0.45, {
+    taken,
     relevance: c => 0.4 * c.content + 0.3 * c.prior + 0.3 * c.fit + (hash01(`${p.input.seed}:x:${c.item.id}`) - 0.5) * 0.15,
   })
 }

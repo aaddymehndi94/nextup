@@ -5,7 +5,7 @@ import { api } from '../api.ts'
 import { RES_LABEL } from '../format.ts'
 import { useDocumentTitle, useLoaded } from '../hooks.ts'
 import { navigate } from '../router.ts'
-import { writeSessionKey } from '../storage.ts'
+import { noteSource, writeSessionKey } from '../storage.ts'
 import { useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
 import { RecCard } from '../components/RecCard.tsx'
@@ -358,8 +358,8 @@ function MoreLikeThis ({ type, id }: { type: MediaType; id: string }) {
   const shown = items?.filter(it => !hidden.has(it.id))
   if (shown && shown.length === 0) return null
   return (
-    <div className="title-more">
-      <Row title="More like this" id="more-like-this">
+    <div className="title-more" onClickCapture={e => noteSource(e)}>
+      <Row title="More like this" id="more-like-this" source="similar">
         {shown
           ? shown.map(it => <RecCard key={it.id} item={it} onRemove={notInterested} />)
           : Array.from({ length: 8 }, (_, i) => <PosterSkeleton key={i} />)}
