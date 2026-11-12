@@ -1,5 +1,5 @@
 // Login credentials, opaque tokens and constant-time comparison, on WebCrypto only so the same code runs
-// in the Worker and in Node (scripts/bootstrap-invite.ts).
+// in the Worker and in Node.
 //
 // The password never reaches the server. The client stretches it (Bitwarden's pattern):
 //

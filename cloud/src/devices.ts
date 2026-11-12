@@ -3,7 +3,7 @@ import { b64url, HANDOFF_CODE, keyedHash, randomToken, sha256Hex } from './crypt
 import { bad, type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
 import { oneOf, plainText, UUID } from './validate.ts'
 
-// Watch at home. A computer running nexttupp registers itself while signed in (a heartbeat about once a
+// Watching on a phone. A computer running nexttupp registers itself while signed in (a heartbeat about once a
 // minute) with a name and its addresses on the home network. A phone signed in to the same account lists
 // them, sees which share its network, and asks for a one-time handoff code for one. It then opens
 // http://<lan address>/handoff?code=… on that computer, which redeems the code here with its own session:
@@ -40,7 +40,7 @@ export interface DeviceJson {
   id: string
   name: string
   platform: Platform
-  /** "Watch on phones and TVs at home" is on, and lanUrls says where. */
+  /** "Let phones play from this computer" is on, and lanUrls says where. */
   lan: boolean
   lanUrls: string[]
   lastSeenAt: number
@@ -165,7 +165,7 @@ export async function createHandoff (ctx: Ctx): Promise<Response> {
   ])
   const device = devices.results[0] as DeviceRow | undefined
   if (!device) throw new HttpError(404, 'not_found', 'That computer isn’t signed in to this account any more')
-  if (device.lan !== 1) throw new HttpError(409, 'lan_off', `Watching on phones is turned off on ${device.name}. Turn it on in nexttupp, under Account.`)
+  if (device.lan !== 1) throw new HttpError(409, 'lan_off', `Phones are turned off on ${device.name}. Turn on “Let phones play from this computer” in nexttupp there, under Account.`)
   if (now - device.last_seen_at > REACHABLE_MS) throw new HttpError(409, 'device_offline', `${device.name} hasn’t been online for a while. Open nexttupp on it and try again.`)
   if ((pending.results[0] as { n: number }).n >= PENDING_HANDOFFS) {
     throw new HttpError(429, 'too_many_attempts', 'Too many tries at once. Wait a minute and try again.', { 'retry-after': '60' })

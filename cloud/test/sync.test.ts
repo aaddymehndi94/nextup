@@ -6,7 +6,7 @@ import { call, makeAdmin, makeMember, profile, progressRow, pull, push, T0, type
 let admin: User
 beforeAll(async () => { admin = await makeAdmin() })
 
-const member = () => makeMember(admin)
+const member = () => makeMember()
 
 /** A push touching every section, as the local store would send it. */
 function fullBatch (pid: string) {

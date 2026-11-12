@@ -18,7 +18,7 @@ function Route () {
   if (title) return <Title key={title[2]} type={title[1] as 'movie' | 'series'} id={title[2]} season={query.get('season')} play={query.get('play')} />
   if (path === '/watch') return <Watch key={query.toString()} query={query} />
   if (path === '/taste') return <Taste />
-  if (path === '/account') return <Account code={query.get('code')} />
+  if (path === '/account') return <Account />
   if (path === '/ai') return <Ai />
   if (path === '/profiles') return <Profiles mode="manage" />
   if (path === '/films' || path === '/series') return <Home key={path} initialQuery={query.get('q') ?? ''} tab={path === '/films' ? 'movie' : 'series'} />

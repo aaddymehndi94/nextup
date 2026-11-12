@@ -12,8 +12,8 @@ web
 ## Users
 
 The owner first: one person who watches films and series across a laptop, phone and TV, currently using
-Stremio + Torrentio, and frustrated by it. Later: the owner's household and invited users (login is planned,
-not built). *(assumption: viewing happens mostly in the evening, in low ambient light.)*
+Stremio + Torrentio, and frustrated by it. Later: the owner's household, friends and anyone else who wants
+it (login is planned, not built). *(assumption: viewing happens mostly in the evening, in low ambient light.)*
 
 ## Product Purpose
 

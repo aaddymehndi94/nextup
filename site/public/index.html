@@ -22,7 +22,6 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preload" href="/fonts/MonaSansVF.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
-  <script src="/signed-in.js"></script>
   <script type="module" src="/site.js"></script>
 </head>
 <body>
@@ -34,9 +33,9 @@
       <nav class="masthead-nav" aria-label="Main">
         <a class="hide-sm" href="#features">Features</a>
         <a class="hide-sm" href="#faq">FAQ</a>
-        <a href="/watch">Watch at home</a>
-        <a class="button secondary small signed-out-only" href="#download">Download</a>
-        <a class="button secondary small signed-in-only" href="/invite">Invite friends</a>
+        <a href="/account" data-account-link>Sign in</a>
+        <a class="button secondary small computer-only" href="#download">Download</a>
+        <a class="button secondary small phone-only" href="/watch">Watch on this phone</a>
       </nav>
     </div>
   </header>
@@ -46,6 +45,21 @@
       <div class="wrap">
         <h1 id="hero-title">Find what you’ll love next.</h1>
         <p class="hero-lede">Films and series, picked for you and played right in the app. nexttupp learns what you like, tells you why each pick is there, and runs on your own computer.</p>
+        <form class="find" role="search" data-find novalidate>
+          <label class="find-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <span class="sr-only">Search films and series</span>
+            <input type="search" name="q" placeholder="Search any film or series" autocomplete="off" enterkeyhint="search" maxlength="80">
+          </label>
+          <button class="button secondary small" type="submit">Search</button>
+        </form>
+        <div class="find-answer" role="status" aria-live="polite" data-find-answer>
+          <div class="find-body" data-find-body hidden>
+            <p class="find-title" data-find-title>Films play in the app.</p>
+            <p class="computer-only">This website doesn’t play films. nexttupp is a free app for your computer: download it below, open it, and search for <span data-find-q>it</span> there.</p>
+            <p class="phone-only">This website doesn’t play films. nexttupp is a free app for your computer: download it on your laptop or desktop, open it, and search for <span data-find-q>it</span> there. Then you can watch on this phone, too.</p>
+          </div>
+        </div>
         <div class="get" data-get="#download">
           <a class="button primary large" href="#download" data-get-button>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -159,9 +173,28 @@
       </section>
     </div>
 
-    <section class="wrap invite reveal" aria-labelledby="invite-title">
-      <h2 id="invite-title">Invite-only.</h2>
-      <p>nexttupp is shared between friends. Any member can invite someone, and an invite is how you get an account. Been sent one? Open the link and follow the three steps.</p>
+    <section class="wrap how reveal" id="how" aria-labelledby="how-title">
+      <h2 id="how-title">Anyone can join. It’s&nbsp;free.</h2>
+      <p class="how-lede">No invite and no subscription. Three steps, and you’re watching.</p>
+      <ol class="how-steps">
+        <li>
+          <h3>Get the app</h3>
+          <p>Download nexttupp on your laptop or desktop. Films and series play in the app, not on this website.</p>
+        </li>
+        <li>
+          <h3>Make a free account</h3>
+          <p>Right here or in the app. It keeps your likes and lists, and lets your phone join in. You can also skip it.</p>
+        </li>
+        <li>
+          <h3>Watch at home</h3>
+          <p>On your computer, or on your phone: keep the app open, then go to nexttupp.com/watch on the phone.</p>
+        </li>
+      </ol>
+      <div class="how-actions">
+        <a class="button primary" href="/account#create" data-create-link>Create a free account</a>
+        <a class="button secondary computer-only" href="#download">Download</a>
+        <a class="button secondary phone-only" href="/watch">Watch on this phone</a>
+      </div>
     </section>
 
     <section class="wrap faq reveal" id="faq" aria-labelledby="faq-title">
@@ -170,12 +203,16 @@
       </div>
       <div class="faq-list">
         <details>
+          <summary>Can I watch on this website?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
+          <div class="faq-answer"><p>No. Films and series play in the nexttupp app, on your computer. This website is where you download the app and make your account. Once the app is open on your computer, you can watch on your phone too, at <a href="/watch">nexttupp.com/watch</a>.</p></div>
+        </details>
+        <details>
           <summary>Is it free?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
           <div class="faq-answer"><p>Yes. There’s nothing to buy and no subscription.</p></div>
         </details>
         <details>
           <summary>Do I need an account?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
-          <div class="faq-answer"><p>No. nexttupp works fully without one. An account only syncs your likes, lists, profiles and progress between your devices, and creating one takes an invite from a member.</p></div>
+          <div class="faq-answer"><p>No. nexttupp works fully without one. An account keeps your likes, lists, profiles and progress the same on every computer, and lets you watch on your phone. Anyone can make one for free, <a href="/account#create">right here</a> or in the app: click your profile picture, then <strong>Account</strong>, then <strong>Create account</strong>.</p></div>
         </details>
         <details>
           <summary>My Mac says nexttupp can’t be opened.<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
@@ -193,8 +230,8 @@
           <div class="faq-answer"><p>The <strong>AppImage</strong> runs on most distributions: allow it to run as a program (in its file properties, or with <code>chmod +x</code>), then open it. On Ubuntu, Debian and their relatives, the <strong>.deb</strong> installs it like any other app.</p></div>
         </details>
         <details>
-          <summary>Is there an app for phones or TVs?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
-          <div class="faq-answer"><p>Not a separate one yet, but you can already watch on them at home. With nexttupp running and signed in on your computer, open <a href="/watch">nexttupp.com/watch</a> on your phone, sign in, and tap Watch. To watch on a TV with Chromecast or Google TV built in, press Cast in the player. Both work over your home Wi‑Fi, with your computer doing the work.</p></div>
+          <summary>Can I watch on my phone or TV?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></summary>
+          <div class="faq-answer"><p>Yes, with your computer doing the work. Keep nexttupp open and signed in on your computer. On your phone, go to <a href="/watch">nexttupp.com/watch</a>, sign in with the same account and tap <strong>Connect</strong>: films then play on your phone over your Wi‑Fi. For a TV with Chromecast or Google TV built in, press Cast in the player. There’s no separate phone or TV app yet.</p></div>
         </details>
       </div>
     </section>
@@ -229,7 +266,7 @@
           </ul>
         </div>
       </div>
-      <p class="later">On a phone or TV? <a href="/watch">Watch through your computer at home</a>.</p>
+      <p class="later">To watch on your phone, open <a href="/watch">nexttupp.com/watch</a> on it.</p>
     </section>
   </main>
 
@@ -242,7 +279,8 @@
       <nav aria-label="Footer">
         <a href="/#download">Download</a>
         <a href="/#faq">Questions</a>
-        <a href="/join">Have an invite?</a>
+        <a href="/join">How it works</a>
+        <a href="/account">Your account</a>
       </nav>
       <div class="footer-fine">
         <span>© 2026 nexttupp</span>

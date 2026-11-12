@@ -12,11 +12,6 @@
     // Creates a DNS record and certificate for api.nexttupp.com in the nexttupp.com zone on first deploy.
     { "pattern": "api.nexttupp.com", "custom_domain": true }
   ],
-  "vars": {
-    // The website. Invite links are <PUBLIC_URL>/join?code=nxi_…, a page the website serves. Reset links
-    // use this Worker's own origin (api.nexttupp.com/reset#…).
-    "PUBLIC_URL": "https://nexttupp.com"
-  },
   "d1_databases": [
     {
       "binding": "DB",

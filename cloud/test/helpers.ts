@@ -1,6 +1,5 @@
 import { SELF } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
-import { bootstrapInvite } from '../src/bootstrap.ts'
 import { b64url, fromB64url, KDF_ITERATIONS } from '../src/crypto.ts'
 
 export const BASE = 'https://cloud.test'
@@ -57,9 +56,9 @@ export async function login (email: string, password = PASSWORD, ip = uniqueIp()
   return call('POST', '/v1/auth/login', { body: { email, key: await deriveKey(password, pre.body.salt) }, ip })
 }
 
-/** Signs up with an invite token. `extra` adds or overrides body fields. */
-export async function accept (token: string, email: string, password = PASSWORD, extra: Record<string, unknown> = {}): Promise<Res> {
-  return call('POST', '/v1/invites/accept', { body: { token, email, ...await credential(password), ...extra } })
+/** Signs up, from a fresh IP unless one is given. `extra` adds or overrides body fields. */
+export async function signup (email: string, password = PASSWORD, extra: Record<string, unknown> = {}, ip = uniqueIp()): Promise<Res> {
+  return call('POST', '/v1/auth/signup', { body: { email, ...await credential(password), ...extra }, ip })
 }
 
 async function signIn (email: string, password = PASSWORD): Promise<User> {
@@ -68,27 +67,19 @@ async function signIn (email: string, password = PASSWORD): Promise<User> {
   return { id: r.body.account.id, email, token: r.body.token, role: r.body.account.role }
 }
 
-/** Runs the real bootstrap SQL (forced, since tests share one database) and signs up through it. */
-export async function makeAdmin (): Promise<User> {
-  const { token, sql } = await bootstrapInvite({ force: true })
-  await env.DB.prepare(sql).run()
-  const email = uniqueEmail('admin')
-  const r = await accept(token, email, PASSWORD, { displayName: 'Owner' })
-  if (r.status !== 201) throw new Error(`bootstrap accept: ${r.status} ${JSON.stringify(r.body)}`)
+export async function makeMember (name = 'Friend'): Promise<User> {
+  const email = uniqueEmail('member')
+  const r = await signup(email, PASSWORD, { displayName: name })
+  if (r.status !== 201) throw new Error(`signup: ${r.status} ${JSON.stringify(r.body)}`)
   return signIn(email)
 }
 
-export async function invite (by: User, note?: string): Promise<{ id: string; token: string; url: string; expiresAt: number }> {
-  const r = await call('POST', '/v1/invites', { token: by.token, body: note === undefined ? undefined : { note } })
-  if (r.status !== 201) throw new Error(`invite: ${r.status} ${JSON.stringify(r.body)}`)
-  return { id: r.body.invite.id, token: r.body.token, url: r.body.url, expiresAt: r.body.invite.expiresAt }
-}
-
-export async function makeMember (inviter: User, name = 'Friend'): Promise<User> {
-  const inv = await invite(inviter)
-  const email = uniqueEmail('member')
-  const r = await accept(inv.token, email, PASSWORD, { displayName: name })
-  if (r.status !== 201) throw new Error(`accept: ${r.status} ${JSON.stringify(r.body)}`)
+/** Signs up, then promotes the account the way the README's "first admin" step does, straight in D1. */
+export async function makeAdmin (): Promise<User> {
+  const email = uniqueEmail('admin')
+  const r = await signup(email, PASSWORD, { displayName: 'Owner' })
+  if (r.status !== 201) throw new Error(`signup: ${r.status} ${JSON.stringify(r.body)}`)
+  await env.DB.prepare("UPDATE accounts SET role = 'admin' WHERE email = ?").bind(email).run()
   return signIn(email)
 }
 

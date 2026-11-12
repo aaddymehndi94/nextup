@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Your account · nexttupp</title>
+  <meta name="description" content="Sign in to nexttupp, or create a free account. Then get the app on your computer and start watching.">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/MonaSansVF.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/account.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <a class="wordmark" href="/" aria-label="nexttupp, home">nexttupp</a>
+      <nav class="masthead-nav" aria-label="Main">
+        <a href="/#faq">Questions</a>
+        <a class="button secondary small computer-only" href="/#download">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap narrow join">
+    <!-- Signed out (and the no-JS fallback). -->
+    <div data-view="signin">
+      <h1 data-signin-heading>Welcome back.</h1>
+      <p class="join-lede" data-signin-lede>Sign in to your nexttupp account.</p>
+      <div data-auth></div>
+      <noscript><p class="watch-error">This page needs JavaScript to sign in.</p></noscript>
+      <p class="join-foot">Films and series play in the nexttupp app on your computer, not on this website. Your account keeps your likes and lists the same everywhere, and lets your phone play from your computer.</p>
+    </div>
+
+    <!-- Signed in. -->
+    <div data-view="account" hidden>
+      <h1 data-heading>You’re signed in.</h1>
+      <p class="join-lede" data-lede></p>
+
+      <!-- No computer has signed in yet: the three steps. -->
+      <ol class="steps" data-next="setup" hidden>
+        <li class="step">
+          <div>
+            <h2>Get nexttupp on your computer</h2>
+            <p class="computer-only">It’s a free app for Windows, Mac and Linux. Films and series play in the app, not on this website.</p>
+            <div class="get computer-only" data-get="/#download">
+              <a class="button primary" href="/#download" data-get-button>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                <span data-get-label>Download nexttupp</span>
+              </a>
+              <p class="get-note" data-get-note><a href="/#download">All downloads</a></p>
+            </div>
+            <p class="phone-only">On your laptop or desktop, go to <strong>nexttupp.com</strong> and download it there. It’s free for Windows, Mac and Linux. Films and series play in the app, not on this website.</p>
+          </div>
+        </li>
+        <li class="step">
+          <div>
+            <h2>Sign in to the app</h2>
+            <p>Open nexttupp, click your profile picture in the top-right corner, then:</p>
+            <p class="path">
+              <span>Account</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+              <span>Sign in</span>
+            </p>
+            <p>Use <strong data-email></strong> and the same password.</p>
+          </div>
+        </li>
+        <li class="step">
+          <div>
+            <h2>Start watching</h2>
+            <p>Search for any film or series in the app and press Play. To watch on your phone as well, keep the app open on your computer, then go to <strong>nexttupp.com/watch</strong> on your phone.</p>
+          </div>
+        </li>
+      </ol>
+      <p class="watch-status" role="status" aria-live="polite" data-wait hidden>This page updates by itself once the app is signed in.</p>
+
+      <!-- At least one computer is signed in. -->
+      <div data-next="ready" hidden>
+        <ul class="watch-list" data-list aria-label="Your computers"></ul>
+        <div class="watch-primary phone-only">
+          <a class="button primary large" href="/watch">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+            <span>Watch on this phone</span>
+          </a>
+        </div>
+        <p class="ready-note computer-only">To watch on your phone, keep nexttupp open here, then go to <strong>nexttupp.com/watch</strong> on your phone and sign in.</p>
+        <p class="ready-note">Setting up another computer? <a class="link" href="/#download">Download nexttupp</a> on it and sign in with the same account.</p>
+      </div>
+
+      <p class="join-foot"><span data-who></span><span class="sep" aria-hidden="true"> · </span><button class="link" type="button" data-signout>Sign out</button></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <a class="wordmark" href="/">nexttupp</a>
+        <p class="footer-tag">Films and series, picked for you.</p>
+      </div>
+      <nav aria-label="Footer">
+        <a href="/#download">Download</a>
+        <a href="/#faq">Questions</a>
+        <a href="/join">How it works</a>
+      </nav>
+      <div class="footer-fine">
+        <span>© 2026 nexttupp</span>
+        <span>Set in Mona Sans, under the <a href="/fonts/OFL.txt">SIL Open Font License</a>.</span>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

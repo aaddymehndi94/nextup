@@ -16,7 +16,7 @@ npm start          # http://localhost:4545
 
 For development, `npm run dev` runs the server with reload plus Vite on http://localhost:5173.
 
-To watch on a phone or a TV at home, see [Watch at home](#watch-at-home-phones-and-tvs) below.
+To watch on a phone or a TV, see [Phones and TVs](#phones-and-tvs) below.
 
 | Env var | Default | |
 |---|---|---|
@@ -42,10 +42,10 @@ at the root). The server's `NEXTTUPP_WEB_DIR`, `NEXTTUPP_FFMPEG`/`NEXTTUPP_FFPRO
 
 Everything works without an account. Signing in (profile menu → Account) keeps profiles, likes, My List,
 Continue watching and taste settings the same on every computer you use. Only those sync, by IMDb id:
-never what you search for, sources, torrents or file names. (Watch at home, below, also tells the cloud
-about the computer itself: its name and home-network addresses.) Accounts are invite-only; any member can
-invite from the same page, and the friend pastes the code, or the `https://nexttupp.com/join?code=…` link,
-into Join with an invite.
+never what you search for, sources, torrents or file names. (Phones, below, also tell the cloud about the
+computer itself: its name and home-network addresses.) Anyone can create an account, on the same page under
+Create account or on the website at nexttupp.com/account; no invite is needed. The cloud limits sign-ups to 5 an
+hour from one network.
 
 The password never leaves this computer: the local server stretches it with PBKDF2-SHA256 (600,000
 rounds) and sends only the derived key. The session token is kept in `<NEXTTUPP_DATA>/account.json`
@@ -56,13 +56,13 @@ out keeps everything on the computer. The service itself is in [`cloud/`](cloud/
 
 The public website (nexttupp.com) lives in [`site/`](site/README.md).
 
-## Watch at home (phones and TVs)
+## Phones and TVs
 
 **Phones.** Signed in, the computer also answers on its home-network address. On the phone, open
-**nexttupp.com/watch**, sign in with the same account and tap **Watch on <computer>**: the phone lands on
+**nexttupp.com/watch**, sign in with the same account and tap **Connect to <computer>**: the phone lands on
 the computer's own address (`http://192.168.x.y:4545`) and can bookmark it or add it to the home screen.
 The film still streams from the computer, over the home network; nothing goes through the cloud. The
-setting is **Watch on phones and TVs at home** on the Account page (on by default once signed in), with the
+setting is **Let phones play from this computer** on the Account page (on by default once signed in), with the
 computer's name, its address for bookmarking, and the connected phones, each removable.
 
 How it stays private: every request from another device needs a random, HttpOnly cookie that only a
@@ -124,7 +124,7 @@ npm run typecheck
 node scripts/e2e.mjs out/                  # real Chrome: search → title → play → seek (server on :4545)
 node scripts/seek-bench.mjs <infoHash> 0   # seek latency into undownloaded parts of a file
 node scripts/reco-sanity.mjs http://127.0.0.1:<port> quiet action   # throwaway profiles → home rows with reasons
-CODE=nxi_… node scripts/sync-e2e.mjs       # two local servers + a local Worker: sign-in, invites, sync both ways
+node scripts/sync-e2e.mjs                  # two local servers + a local Worker: sign-up, sign-in, sync both ways
 node scripts/handoff-e2e.mjs …             # phone emulation: nexttupp.com/watch → handoff → the LAN cookie (see header)
 node scripts/cast-e2e.mjs …                # casting to scripts/fake-tv.ts: direct, remux, transcode, ffprobe + Chrome
 node scripts/cast-ui-e2e.mjs …             # the player as a remote, on the computer and a connected phone

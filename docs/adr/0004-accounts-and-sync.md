@@ -76,3 +76,12 @@ npx vitest run server/sync          # outbox, wire mapping, merge rules, profile
 cd cloud && npm test                # the Worker, in workerd with the real migrations
 CODE=nxi_… node scripts/sync-e2e.mjs   # two local servers and a local Worker; see the script's header
 ```
+
+## Update, 2026-11-12: open sign-up
+
+Invites are gone. Anyone can create an account, in the app (Account → Create account) or on the website
+(nexttupp.com/account, and the sign-in form on /watch), with `POST /v1/auth/signup`, limited to 5 sign-ups an
+hour per IP. The website derives the key in the browser exactly as the app does (16-byte salt, PBKDF2-SHA256,
+600,000 rounds), so an account works in both whichever made it. Every new account is a member; the first admin
+is promoted by hand in D1 (see `cloud/README.md`). The owner wanted joining, downloading and signing in to be
+easy for anyone, and the invite steps were the main friction. The `invites` table stays in D1 as history.

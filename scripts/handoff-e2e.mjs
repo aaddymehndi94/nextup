@@ -1,5 +1,5 @@
-// Watch at home, end to end on this machine: a phone-emulated Chrome signs in on nexttupp.com/watch (the
-// local site), taps "Watch on <computer>", and lands on a nexttupp server through its LAN address with the
+// Watching on a phone, end to end on this machine: a phone-emulated Chrome signs in on nexttupp.com/watch
+// (the local site), taps "Connect to <computer>", and lands on a nexttupp server through its LAN address with the
 // LAN cookie set. Then: the cookie is HttpOnly, the phone can't sign the computer out, a browser without the
 // cookie is refused, and the computer's Account page lists the phone.
 //
@@ -43,7 +43,7 @@ try {
   })
   check('signed in and found the laptop', true, `${Date.now() - t0} ms incl. PBKDF2`)
   const label = await page.$eval('[data-primary] button', b => b.textContent.trim())
-  check('one big Watch button', /^Watch on /.test(label), label)
+  check('one big Connect button', /^Connect to /.test(label), label)
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('nexttupp:cloud') || 'null'))
   check('cloud session kept in localStorage', Boolean(stored?.token?.startsWith('nxs_')))
   await page.screenshot({ path: `${out}/2-devices.png` })

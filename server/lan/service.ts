@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { addressFacing, defaultDeviceName, defaultRouteAddress, isLoopback, type LanAddress, lanAddresses, platformOf, type Platform } from './net.ts'
 import { type LanClient, LanStore } from './store.ts'
 
-// "Watch on phones and TVs at home". The main server only ever listens on 127.0.0.1. While this is on (and
+// "Let phones play from this computer". The main server only ever listens on 127.0.0.1. While this is on (and
 // the computer is signed in), or while something is being cast to a TV, a second listener answers on each
 // home-network address, on the same port, and hands requests to the same app. Every request that arrives
 // there must carry a phone's cookie (see gate.ts); a TV gets a tokenised /cast/ URL instead.

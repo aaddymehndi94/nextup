@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>You’re invited · nexttupp</title>
-  <meta name="description" content="You’ve been invited to nexttupp. Download the app, then join with your invite code.">
+  <title>Join nexttupp</title>
+  <meta name="description" content="nexttupp is free and open to everyone. Get the app on your computer, make a free account, and watch on your computer or your phone.">
   <meta name="robots" content="noindex">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#0a0a0b">
@@ -15,7 +15,6 @@
   <link rel="preload" href="/fonts/MonaSansVF.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/site.js"></script>
-  <script type="module" src="/join.js"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -24,34 +23,16 @@
     <div class="wrap masthead-inner">
       <a class="wordmark" href="/" aria-label="nexttupp, home">nexttupp</a>
       <nav class="masthead-nav" aria-label="Main">
-        <a href="/watch">Watch at home</a>
-        <a href="/#faq">Questions</a>
+        <a class="hide-sm" href="/#faq">Questions</a>
+        <a href="/account" data-account-link>Sign in</a>
+        <a class="button secondary small phone-only" href="/watch">Watch on this phone</a>
       </nav>
     </div>
   </header>
 
   <main id="main" class="wrap narrow join">
-    <!-- With a code: shown by join.js. -->
-    <div data-invited hidden>
-      <h1>You’re invited to nexttupp.</h1>
-      <p class="join-lede">A friend has invited you. Install the app, then use this code to create your account. It works for 7 days.</p>
-
-      <div class="code">
-        <code class="code-value" id="invite-code" data-code aria-label="Your invite code"></code>
-        <button class="button secondary" type="button" data-copy>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-copy-icon><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          <span data-copy-label>Copy code</span>
-        </button>
-      </div>
-      <p class="code-help" role="status" aria-live="polite" data-copy-status></p>
-    </div>
-
-    <!-- Without a code (and the no-JS fallback). -->
-    <div data-uninvited>
-      <h1>Join nexttupp.</h1>
-      <p class="join-lede" data-uninvited-lede>nexttupp is invite-only, and invites come from members. If you know someone who uses it, ask them to send you one: it arrives as a link to this page with your code in it.</p>
-      <p class="join-lede">You can still download nexttupp and start watching today. An account only adds syncing between your devices.</p>
-    </div>
+    <h1>Join nexttupp.</h1>
+    <p class="join-lede">It’s free and open to everyone. Films and series play in the nexttupp app on your computer, not on this website. Here’s how to get going.</p>
 
     <ol class="steps">
       <li class="step">
@@ -69,19 +50,24 @@
       </li>
       <li class="step">
         <div>
-          <h2>Open nexttupp and join</h2>
-          <p>Open the profile menu in the top corner, then:</p>
+          <h2>Make a free account</h2>
+          <p>It takes a few seconds. It keeps your likes, lists and progress the same on every computer, and lets you watch on your phone. You can also skip it.</p>
+          <div class="get">
+            <a class="button secondary" href="/account#create" data-create-link>Create a free account</a>
+          </div>
+          <p>Then sign in to the app with it: click your profile picture in the top-right corner, then:</p>
           <p class="path">
             <span>Account</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
-            <span>Join with invite</span>
+            <span>Sign in</span>
           </p>
+          <p>Or make the account in the app itself, under <strong>Account</strong> › <strong>Create account</strong>.</p>
         </div>
       </li>
       <li class="step">
         <div>
-          <h2>Paste the code</h2>
-          <p data-step3>Paste your invite code, choose an email and password, and you’re in. Your likes, lists, profiles and progress then follow you to every computer you sign in on.</p>
+          <h2>Watch on your phone, too</h2>
+          <p>Keep nexttupp open on your computer. On your phone, go to <a class="link" href="/watch">nexttupp.com/watch</a> and sign in with the same account. Films play on your phone, streamed from your computer over your home Wi‑Fi.</p>
         </div>
       </li>
     </ol>
@@ -98,6 +84,7 @@
       <nav aria-label="Footer">
         <a href="/#download">Download</a>
         <a href="/#faq">Questions</a>
+        <a href="/account">Your account</a>
       </nav>
       <div class="footer-fine">
         <span>© 2026 nexttupp</span>

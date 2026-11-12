@@ -8,11 +8,9 @@ import type { SyncService } from './service.ts'
 //
 //   GET  /api/account            status: { signedIn, account?, sync?, notice? }
 //   POST /api/account/login      { email, password }                        → status + { merged }
-//   POST /api/account/join       { code, email, password, displayName? }    → status + { merged }
+//   POST /api/account/signup     { email, password, displayName? }          → status + { merged }
 //   POST /api/account/logout     {}                                         → status
 //   POST /api/account/sync       {}                                         → status after one sync
-//   GET  /api/account/invites                                               → { invites }
-//   POST /api/account/invites    { note? }                                  → { code, url, invite }
 
 function text (v: unknown, name: string, max: number): string {
   if (typeof v !== 'string' || !v.trim() || v.length > max) throw new HttpError(400, `${name} is required`)
@@ -33,7 +31,6 @@ function toHttp (err: unknown): Error {
   if (err.status === 0) return new HttpError(503, 'Can’t reach nexttupp’s sync service. Check your connection and try again.')
   if (err.code === 'invalid_credentials') return new HttpError(401, 'Wrong email or password')
   if (err.code === 'too_many_attempts') return new HttpError(429, err.message)
-  if (err.code === 'invalid_invite') return new HttpError(400, 'That invite is invalid, already used or expired. Ask for a new one.')
   if (err.code === 'email_taken') return new HttpError(409, 'There’s already an account with that email. Sign in instead.')
   return new HttpError(err.status >= 400 && err.status < 500 ? err.status : 502, err.message)
 }
@@ -58,12 +55,12 @@ export function registerAccountRoutes (app: FastifyInstance, sync: SyncService):
     } catch (err) { throw toHttp(err) }
   })
 
-  app.post('/api/account/join', async req => {
+  app.post('/api/account/signup', async req => {
     guard(req)
     const b = body(req)
     const name = typeof b.displayName === 'string' && b.displayName.trim() ? b.displayName.trim().slice(0, 40) : undefined
     try {
-      return withMerged(await sync.join(text(b.code, 'Invite code', 2000), text(b.email, 'Email', 254), password(b.password, true), name))
+      return withMerged(await sync.signup(text(b.email, 'Email', 254), password(b.password, true), name))
     } catch (err) { throw toHttp(err) }
   })
 
@@ -76,29 +73,6 @@ export function registerAccountRoutes (app: FastifyInstance, sync: SyncService):
     guard(req)
     await Promise.race([sync.syncNow(), new Promise(resolve => setTimeout(resolve, 20_000).unref())])
     return sync.status()
-  })
-
-  app.get('/api/account/invites', async () => {
-    try { return { invites: await sync.invites() } } catch (err) { throw toHttp(err) }
-  })
-
-  app.post('/api/account/invites', async (req, reply) => {
-    guard(req)
-    const { note, maxUses } = body(req)
-    try {
-      return reply.code(201).send(await sync.createInvite({
-        note: typeof note === 'string' ? note.slice(0, 80) : undefined,
-        maxUses: Number.isInteger(maxUses) ? maxUses as number : undefined,
-      }))
-    } catch (err) { throw toHttp(err) }
-  })
-
-  app.delete<{ Params: { id: string } }>('/api/account/invites/:id', async (req, reply) => {
-    guard(req)
-    try {
-      await sync.revokeInvite(req.params.id)
-      return reply.code(204).send()
-    } catch (err) { throw toHttp(err) }
   })
 
   // A taste or profile change (not the player's progress pings, which the minute timer carries) syncs

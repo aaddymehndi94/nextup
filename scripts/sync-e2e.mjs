@@ -1,21 +1,19 @@
 // Sign-in and sync, end to end, on this machine only: a local Worker (`cd cloud && npm run dev`, or
 // `wrangler dev --local`) and two nexttupp servers with their own data dirs, standing in for two laptops.
 //
-//   CODE=nxi_… node scripts/sync-e2e.mjs        (CODE: a bootstrap invite, `node cloud/scripts/bootstrap-invite.ts --local`)
+//   node scripts/sync-e2e.mjs
 //   A=http://127.0.0.1:4550 B=http://127.0.0.1:4551 CLOUD=http://127.0.0.1:8799   (the defaults)
 //
 // Start each server with NEXTTUPP_DATA=<its own scratch dir> NEXTTUPP_CLOUD_URL=$CLOUD PORT=…, never the
-// real data dir. Phase 1: one person on two laptops (A joins with the bootstrap code, B signs in to the
-// same account; its own "Me" merges into the account's). Likes, My List and profile deletions go both
-// ways, and removals reach the cloud as tombstones. Phase 2: A invites a friend, who joins on B; the
+// real data dir. Phase 1: one person on two laptops (A creates an account, B signs in to the same
+// account; its own "Me" merges into the account's). Likes, My List and profile deletions go both ways,
+// and removals reach the cloud as tombstones. Phase 2: a friend creates their own account on B; the
 // friend's account sees none of the owner's data.
 import { pbkdf2Sync } from 'node:crypto'
 
 const A = process.env.A ?? 'http://127.0.0.1:4550'
 const B = process.env.B ?? 'http://127.0.0.1:4551'
 const CLOUD = process.env.CLOUD ?? 'http://127.0.0.1:8799'
-const CODE = process.env.CODE
-if (!CODE) { console.error('Set CODE to a bootstrap invite code (node cloud/scripts/bootstrap-invite.ts --local)'); process.exit(2) }
 
 const OWNER = { email: `owner-${Date.now().toString(36)}@example.test`, password: 'owner password 123' }
 const FRIEND = { email: `friend-${Date.now().toString(36)}@example.test`, password: 'friend password 456' }
@@ -65,8 +63,8 @@ const [aMe] = await profiles(A)
 const [bMe] = await profiles(B)
 await api(B, 'PUT', `/api/me/rating/movie/${GODFATHER}`, { value: 1, source: 'title' }, bMe.id)
 
-const joinedA = await api(A, 'POST', '/api/account/join', { code: CODE, email: OWNER.email, password: OWNER.password, displayName: 'Owner' })
-check('A joins with the bootstrap invite code', joinedA.signedIn && joinedA.account.role === 'admin' && joinedA.sync.state === 'synced', joinedA.sync?.state)
+const joinedA = await api(A, 'POST', '/api/account/signup', { email: OWNER.email, password: OWNER.password, displayName: 'Owner' })
+check('A creates an account, no invite needed', joinedA.signedIn && joinedA.account.role === 'member' && joinedA.sync.state === 'synced', joinedA.sync?.state)
 check('the session token never reaches the browser', !JSON.stringify(joinedA).includes('nxs_'))
 const kid = await api(A, 'POST', '/api/profiles', { name: 'Kid' })
 await api(A, 'PUT', `/api/me/rating/movie/${MATRIX}`, { value: 1, source: 'title' }, aMe.id)
@@ -103,15 +101,13 @@ check('the deleted profile is a tombstone in the cloud', cloud.profiles.some(p =
 check('B’s retired local "Me" never reached the cloud', !cloud.profiles.some(p => p.id === bMe.id))
 check('the cloud holds no titles, sources or file names', !/infoHash|magnet|fileName|\.mkv|\.mp4|Matrix|Shawshank/i.test(JSON.stringify(cloud)))
 
-// ---- Phase 2: an invite for a friend ----------------------------------------------------------
+// ---- Phase 2: a friend's own account ----------------------------------------------------------
 
-const inv = await api(A, 'POST', '/api/account/invites', {})
-check('any member can create an invite: a code and a /join?code= link', /^nxi_[A-Za-z0-9_-]{43}$/.test(inv.code) && inv.url.endsWith(`/join?code=${inv.code}`), inv.url.replace(inv.code, '<code>'))
 const out = await api(B, 'POST', '/api/account/logout', {})
 check('B signs out', out.signedIn === false)
 check('signed out, B keeps its local data', (await state(B, aMe.id, MATRIX)).rating === -1)
-const friend = await api(B, 'POST', '/api/account/join', { code: inv.url, email: FRIEND.email, password: FRIEND.password, displayName: 'Friend' })
-check('the friend joins on B by pasting the whole link', friend.signedIn && friend.account.email === FRIEND.email && friend.account.role === 'member')
+const friend = await api(B, 'POST', '/api/account/signup', { email: FRIEND.email, password: FRIEND.password, displayName: 'Friend' })
+check('the friend creates an account on B', friend.signedIn && friend.account.email === FRIEND.email && friend.account.role === 'member')
 const fp = await api(B, 'POST', '/api/profiles', { name: 'Friend' })
 await api(B, 'PUT', `/api/me/rating/movie/${SHAWSHANK}`, { value: 1 }, fp.id)
 await sync(B)
@@ -119,10 +115,8 @@ const friendCloud = await cloudPull(FRIEND)
 check('the friend’s account holds only the friend’s profile', friendCloud.profiles.length === 1 && friendCloud.profiles[0].id === fp.id, friendCloud.profiles.map(p => p.name).join(', '))
 await sync(A)
 check('the owner never sees the friend’s profile', !(await profiles(A)).some(p => p.id === fp.id))
-const invites = await api(A, 'GET', '/api/account/invites')
-check('A’s invite shows who used it', invites.invites.some(i => i.status === 'used' && i.usedBy?.email === FRIEND.email))
-const reused = await fetch(`${B}/api/account/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: inv.code, email: `x${FRIEND.email}`, password: FRIEND.password }) })
-check('an invite works once', reused.status === 400)
+const taken = await fetch(`${B}/api/account/signup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: FRIEND.email, password: FRIEND.password }) })
+check('an email can only have one account', taken.status === 409)
 const csrf = await fetch(`${A}/api/account/logout`, { method: 'POST' })
 check('account writes need a JSON body (no cross-site sign-out)', csrf.status === 415)
 

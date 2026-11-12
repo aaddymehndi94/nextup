@@ -72,7 +72,7 @@ describe('devices', () => {
 
   it('is per account: another account neither sees nor removes it', async () => {
     const admin = await makeAdmin()
-    const friend = await makeMember(admin)
+    const friend = await makeMember()
     const id = crypto.randomUUID()
     await register(admin, id)
     expect((await list(friend)).body.devices).toEqual([])
@@ -126,7 +126,7 @@ describe('phone handoff', () => {
 
   it('another account can’t redeem it, and trying spends it', async () => {
     const admin = await makeAdmin()
-    const other = await makeMember(admin)
+    const other = await makeMember()
     const id = crypto.randomUUID()
     await register(admin, id)
     await register(other, id)

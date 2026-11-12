@@ -1,14 +1,21 @@
-// nexttupp.com: static assets, plus the two things assets can't do on their own.
+// nexttupp.com: static assets, plus the things assets can't do on their own.
 //  1. www.nexttupp.com redirects to the apex (a host-based rule, which _redirects can't express).
-//  2. Security and cache headers on every response.
+//  2. /invite, from when sign-up needed an invite, redirects to /join.
+//  3. The addresses people guess, like /login and /signup, redirect to /account (/account#create for sign-up).
+//  4. Security and cache headers on every response.
 // Unknown paths get 404.html with a 404 status from the assets binding (not_found_handling).
 
 const APEX = 'nexttupp.com'
 
-// connect-src: the /watch page signs in and lists the account's computers through the nexttupp API. A local
+// connect-src: /account and /watch sign in, create accounts and list the account’s computers through the nexttupp API. A local
 // preview can allow a local API as well with `wrangler dev --var DEV_CONNECT_SRC:http://127.0.0.1:8799`; the
 // var isn't set in wrangler.jsonc, so a deploy never has it.
 const API = 'https://api.nexttupp.com'
+
+const SHORTCUTS = {
+  '/signin': '/account', '/sign-in': '/account', '/login': '/account', '/log-in': '/account',
+  '/signup': '/account#create', '/sign-up': '/account#create', '/register': '/account#create', '/create-account': '/account#create',
+}
 const csp = connect => `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 const CSP = csp(API)
 
@@ -28,6 +35,9 @@ export default {
     if (host === 'www.' + APEX || host.startsWith('www.' + APEX + ':')) {
       return Response.redirect(`https://${APEX}${url.pathname}${url.search}`, 301)
     }
+    if (url.pathname === '/invite' || url.pathname === '/invite.html') return Response.redirect(`${url.origin}/join`, 301)
+    const shortcut = SHORTCUTS[url.pathname.toLowerCase().replace(/\/$/, '')]
+    if (shortcut) return Response.redirect(`${url.origin}${shortcut}`, 302)
 
     const res = await env.ASSETS.fetch(request)
     const out = new Response(res.body, res)

@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// <data>/lan.json (mode 0600): this computer's device id and name, the "Watch on phones and TVs at home"
+// <data>/lan.json (mode 0600): this computer's device id and name, the "Let phones play from this computer"
 // setting, and the phones allowed in. A phone holds a random 256-bit token in an HttpOnly cookie; only its
 // SHA-256 is kept here.
 

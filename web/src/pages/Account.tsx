@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, LogOut, RefreshCw, X } from 'lucide-react'
-import { type AccountStatus, api, getActiveProfile, type Invite, type LanStatus, setActiveProfile } from '../api.ts'
+import { LogOut, RefreshCw, X } from 'lucide-react'
+import { type AccountStatus, api, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { chooseProfile, loadProfiles } from '../profiles.ts'
 import { toast } from '../toast.ts'
 import { TopBar } from '../components/TopBar.tsx'
 
 // Optional sign-in, so likes, My List and Continue watching follow you between computers. Signed out:
-// sign in, or join with an invite code. Signed in: a quiet sync line, invites, sign out. The session
+// sign in, or create an account (anyone can). Signed in: a quiet sync line, phones, sign out. The session
 // itself stays in this computer's nexttupp server, never in the browser.
 
 type Load = { state: 'loading' } | { state: 'ok'; status: AccountStatus } | { state: 'error'; message: string }
 
-export function Account ({ code }: { code?: string | null }) {
+export function Account () {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   useDocumentTitle('Account')
 
@@ -31,8 +31,8 @@ export function Account ({ code }: { code?: string | null }) {
           <h1 className="account-title">Account</h1>
           {load.state === 'ok' && !load.status.signedIn && (
             <p className="account-lede">
-              Sign in to keep your profiles, likes, My List and Continue watching the same on every computer you use.
-              nexttupp works just as well without an account.
+              Sign in, or create a free account, to keep your profiles, likes, My List and Continue watching the same on
+              every computer you use, and to watch on your phone. nexttupp works just as well without one.
             </p>
           )}
         </header>
@@ -40,7 +40,7 @@ export function Account ({ code }: { code?: string | null }) {
         {load.state === 'error' && <p className="notice" role="alert">{load.message}</p>}
         {load.state === 'ok' && (load.status.signedIn
           ? <SignedIn status={load.status} onStatus={status => setLoad({ state: 'ok', status })} />
-          : <SignedOut status={load.status} code={code} onStatus={status => setLoad({ state: 'ok', status })} />)}
+          : <SignedOut status={load.status} onStatus={status => setLoad({ state: 'ok', status })} />)}
       </div>
     </main>
   )
@@ -57,14 +57,14 @@ async function adoptProfiles (status: AccountStatus) {
   if (target) chooseProfile(target)
 }
 
-function SignedOut ({ status, code, onStatus }: { status: AccountStatus; code?: string | null; onStatus: (s: AccountStatus) => void }) {
-  const [mode, setMode] = useState<'signin' | 'join'>(code ? 'join' : 'signin')
-  const [form, setForm] = useState({ email: '', password: '', code: code ?? '', displayName: '' })
+function SignedOut ({ status, onStatus }: { status: AccountStatus; onStatus: (s: AccountStatus) => void }) {
+  const [mode, setMode] = useState<'signin' | 'create'>('signin')
+  const [form, setForm] = useState({ email: '', password: '', displayName: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const join = mode === 'join'
+  const create = mode === 'create'
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
-  const ready = form.email.trim() && form.password && (!join || (form.code.trim() && [...form.password].length >= 8))
+  const ready = form.email.trim() && form.password && (!create || [...form.password].length >= 8)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -72,11 +72,11 @@ function SignedOut ({ status, code, onStatus }: { status: AccountStatus; code?: 
     setBusy(true)
     setError(null)
     try {
-      const next = join
-        ? await api.join({ code: form.code.trim(), email: form.email.trim(), password: form.password, displayName: form.displayName.trim() || undefined })
+      const next = create
+        ? await api.signup({ email: form.email.trim(), password: form.password, displayName: form.displayName.trim() || undefined })
         : await api.login(form.email.trim(), form.password)
       await adoptProfiles(next)
-      toast(join ? 'Account created. You’re signed in.' : 'Signed in')
+      toast(create ? 'Account created. You’re signed in.' : 'Signed in')
       onStatus(next)
     } catch (err) {
       setError((err as Error).message)
@@ -87,28 +87,22 @@ function SignedOut ({ status, code, onStatus }: { status: AccountStatus; code?: 
   return (
     <>
       {status.notice && <p className="account-notice" role="status">{status.notice}</p>}
-      <div className="account-tabs" role="group" aria-label="Sign in or join">
-        <button type="button" className="chip" aria-pressed={!join} onClick={() => { setMode('signin'); setError(null) }}>Sign in</button>
-        <button type="button" className="chip" aria-pressed={join} onClick={() => { setMode('join'); setError(null) }}>Join with an invite</button>
+      <div className="account-tabs" role="group" aria-label="Sign in or create an account">
+        <button type="button" className="chip" aria-pressed={!create} onClick={() => { setMode('signin'); setError(null) }}>Sign in</button>
+        <button type="button" className="chip" aria-pressed={create} onClick={() => { setMode('create'); setError(null) }}>Create account</button>
       </div>
-      <form className="account-form" onSubmit={submit} aria-label={join ? 'Join with an invite' : 'Sign in'}>
-        {join && (
-          <label className="field">
-            <span className="field-label">Invite code or link</span>
-            <input value={form.code} onChange={set('code')} autoComplete="off" spellCheck={false} placeholder="nxi_… or https://nexttupp.com/join?code=…" required />
-          </label>
-        )}
+      <form className="account-form" onSubmit={submit} aria-label={create ? 'Create account' : 'Sign in'}>
         <label className="field">
           <span className="field-label">Email</span>
           <input type="email" value={form.email} onChange={set('email')} autoComplete="email" spellCheck={false} required />
         </label>
         <label className="field">
-          <span className="field-label">{join ? 'Choose a password (8 or more characters)' : 'Password'}</span>
-          <input type="password" value={form.password} onChange={set('password')} autoComplete={join ? 'new-password' : 'current-password'} minLength={join ? 8 : undefined} maxLength={256} required />
+          <span className="field-label">{create ? 'Choose a password (8 or more characters)' : 'Password'}</span>
+          <input type="password" value={form.password} onChange={set('password')} autoComplete={create ? 'new-password' : 'current-password'} minLength={create ? 8 : undefined} maxLength={256} required />
         </label>
-        {join && (
+        {create && (
           <label className="field">
-            <span className="field-label">Your name <span className="field-hint">(optional, shown to people you invite)</span></span>
+            <span className="field-label">Your name <span className="field-hint">(optional)</span></span>
             <input value={form.displayName} onChange={set('displayName')} autoComplete="nickname" maxLength={40} />
           </label>
         )}
@@ -116,14 +110,12 @@ function SignedOut ({ status, code, onStatus }: { status: AccountStatus; code?: 
         <div className="actions">
           <button type="submit" className="button primary" disabled={!ready || busy}>
             {busy && <span className="spinner" aria-hidden />}
-            {busy ? (join ? 'Creating your account…' : 'Signing in…') : join ? 'Create account' : 'Sign in'}
+            {busy ? (create ? 'Creating your account…' : 'Signing in…') : create ? 'Create account' : 'Sign in'}
           </button>
         </div>
       </form>
       <p className="fine-print account-fine">
-        {join
-          ? 'Invites come from people who already use nexttupp. Each one works once, for 7 days.'
-          : 'Accounts are invite-only. If someone sent you an invite, choose Join with an invite.'}
+        {create ? 'It’s free, and anyone can make one.' : 'Made your account on nexttupp.com? Sign in with it here. New to nexttupp? Choose Create account. It’s free.'}
         {' '}Only profiles, ratings, My List, watch progress and taste settings sync, by title id. What you search for and stream stays on this computer.
       </p>
     </>
@@ -191,11 +183,10 @@ function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: 
       </section>
       {lan && !lan.local && (
         <section className="account-section" aria-label="This phone">
-          <p className="account-note">You’re watching on <strong>{lan.name}</strong>. Account settings, invites and connected phones are changed on that computer.</p>
+          <p className="account-note">This phone is connected to <strong>{lan.name}</strong>. Account settings are changed on that computer.</p>
         </section>
       )}
-      {lan?.local && <PhonesAndTvs lan={lan} onLan={setLan} />}
-      {lan?.local !== false && <Invites />}
+      {lan?.local && <Phones lan={lan} onLan={setLan} />}
       {lan?.local !== false && <section className="account-section" aria-labelledby="leave-h">
         <h2 id="leave-h" className="sr-only">Sign out</h2>
         <button type="button" className="text-button" onClick={signOut} disabled={leaving}><LogOut aria-hidden />{leaving ? 'Signing out…' : 'Sign out'}</button>
@@ -205,9 +196,9 @@ function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: 
   )
 }
 
-// ---- Phones and TVs at home -----------------------------------------------------------------
+// ---- Watch on your phone ------------------------------------------------------------------
 
-function PhonesAndTvs ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void }) {
+function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void }) {
   const [name, setName] = useState(lan.name)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -224,46 +215,49 @@ function PhonesAndTvs ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) =
     try {
       await api.removeLanClient(id)
       onLan({ ...lan, clients: lan.clients.filter(c => c.id !== id) })
-      toast('Removed. It can connect again through nexttupp.com.')
+      toast('Removed. It can connect again from nexttupp.com/watch.')
     } catch (err) { toast(`Couldn’t remove it. ${(err as Error).message}`) }
   }
 
   const now = Date.now()
   return (
     <section className="account-section" aria-labelledby="lan-h">
-      <h2 id="lan-h" className="section-title">Phones and TVs</h2>
+      <h2 id="lan-h" className="section-title">Watch on your phone</h2>
       <label className="switch-row">
         <span className="switch-text">
-          <span className="switch-label">Watch on phones and TVs at home</span>
-          <span className="account-note">Open nexttupp.com on a phone on the same Wi-Fi and sign in: it plays from this computer. The player can also cast to a TV.</span>
+          <span className="switch-label">Let phones play from this computer</span>
+          <span className="account-note">
+            On a phone on the same Wi-Fi, go to nexttupp.com/watch and sign in with this account. Films play on the phone,
+            streamed from this computer. For a TV, press Cast in the player.
+          </span>
         </span>
         <input type="checkbox" role="switch" className="switch" checked={lan.enabled} disabled={busy} onChange={e => { void save({ enabled: e.target.checked }) }} />
       </label>
       {lan.enabled && (
         <>
           <label className="field lan-name">
-            <span className="field-label">This computer’s name, as phones see it</span>
+            <span className="field-label">This computer’s name, as your phone shows it</span>
             <input value={name} maxLength={40} placeholder={lan.defaultName} onChange={e => setName(e.target.value)} onBlur={saveName}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
           </label>
           <p className="fine-print">
             {lan.urls.length
-              ? <>Connected phones can also bookmark <span className="lan-url">{lan.urls[0]}</span>.</>
+              ? <>A connected phone can also bookmark <span className="lan-url">{lan.urls[0]}</span>.</>
               : 'Not on a home network right now.'}
           </p>
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <h3 className="lan-list-title">Phones and TVs that can watch on this computer</h3>
+      <h3 className="lan-list-title">Connected phones</h3>
       {lan.clients.length === 0
         ? <p className="account-note">None yet.</p>
         : (
-          <ul className="invite-list" aria-label="Connected phones">
+          <ul className="device-list" aria-label="Connected phones">
             {lan.clients.map(c => (
-              <li key={c.id} className="invite-row lan-row">
+              <li key={c.id} className="device-row lan-row">
                 <span className="lan-client">
                   <span>{c.label}</span>
-                  <span className="invite-state">Connected {new Date(c.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · used {ago(c.lastUsedAt, now)}</span>
+                  <span className="device-state">Connected {new Date(c.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · used {ago(c.lastUsedAt, now)}</span>
                 </span>
                 <button type="button" className="text-button" onClick={() => { void remove(c.id) }} aria-label={`Remove ${c.label}`}><X aria-hidden />Remove</button>
               </li>
@@ -272,124 +266,8 @@ function PhonesAndTvs ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) =
           )}
       <p className="fine-print">
         While this is on, this computer’s name and its address on your home network go to nexttupp’s service, so your phone can
-        find it. Nothing plays through the service: the video goes straight from this computer to the phone or TV.
+        find it. Nothing plays through the service: the video goes straight from this computer to your phone.
       </p>
-    </section>
-  )
-}
-
-/** Group links that the app makes let this many people in (the API allows members up to 10). */
-const GROUP_SIZE = 10
-
-const isGroup = (i: Invite) => (i.maxUses ?? 1) > 1
-const who = (p: { email: string; displayName: string | null }) => p.displayName ?? p.email
-
-function inviteState (i: Invite, now: number): string {
-  const days = Math.ceil((i.expiresAt - now) / 86_400_000)
-  const left = days <= 1 ? 'expires within a day' : `expires in ${days} days`
-  if (isGroup(i)) {
-    const joined = `${i.uses ?? 0} of ${i.maxUses} joined`
-    if (i.status === 'used') return `Full · ${joined}`
-    if (i.status === 'revoked') return `Stopped · ${joined}`
-    if (i.status === 'expired' || i.expiresAt <= now) return `Expired · ${joined}`
-    return `${joined} · ${left}`
-  }
-  if (i.status === 'used') return `Joined${i.usedBy ? `: ${who(i.usedBy)}` : ''}`
-  if (i.status === 'revoked') return 'Cancelled'
-  if (i.status === 'expired' || i.expiresAt <= now) return 'Expired'
-  return `Waiting · ${left}`
-}
-
-async function copy (text: string, what: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast(`${what} copied`)
-  } catch {
-    toast(`Couldn’t copy. Select the ${what.toLowerCase()} and copy it.`)
-  }
-}
-
-function Invites () {
-  const [invites, setInvites] = useState<Invite[] | null>(null)
-  const [fresh, setFresh] = useState<{ code: string; url: string; group: boolean } | null>(null)
-  const [busy, setBusy] = useState<'one' | 'group' | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const reload = useCallback(() => api.invites().then(r => setInvites(r.invites)).catch(() => setInvites(list => list ?? [])), [])
-  useEffect(() => { void reload() }, [reload])
-
-  const create = async (group: boolean) => {
-    setBusy(group ? 'group' : 'one')
-    setError(null)
-    try {
-      const r = await api.createInvite(group ? GROUP_SIZE : 1)
-      setFresh({ code: r.code, url: r.url, group })
-      setInvites(list => [r.invite, ...(list ?? [])])
-    } catch (err) { setError((err as Error).message) }
-    setBusy(null)
-  }
-
-  const stop = async (i: Invite) => {
-    setError(null)
-    try {
-      await api.revokeInvite(i.id)
-      toast(isGroup(i) ? 'Group link stopped' : 'Invite cancelled')
-      await reload()
-    } catch (err) { setError((err as Error).message) }
-  }
-
-  const now = Date.now()
-  return (
-    <section className="account-section" aria-labelledby="invite-h">
-      <h2 id="invite-h" className="section-title">Invite friends</h2>
-      <p className="account-note">
-        A link for one person works once. A group link lets up to {GROUP_SIZE} people join, for sharing in a group chat.
-        Links last 7 days and give everyone their own account. On your phone, make them at nexttupp.com/invite.
-      </p>
-      {fresh
-        ? (
-          <div className="invite-box">
-            <label className="field">
-              <span className="field-label">{fresh.group ? `Group link · up to ${GROUP_SIZE} people` : 'Invite link · for one person'}</span>
-              <input readOnly value={fresh.url} onFocus={e => e.currentTarget.select()} spellCheck={false} />
-            </label>
-            <div className="invite-actions">
-              <button type="button" className="button secondary" onClick={() => copy(fresh.url, 'Link')}><Copy aria-hidden />Copy link</button>
-              <button type="button" className="text-button" onClick={() => copy(fresh.code, 'Code')}>Copy code only</button>
-              <button type="button" className="text-button" onClick={() => setFresh(null)}>Make another</button>
-            </div>
-            <p className="fine-print">They can open the link, or paste the code into nexttupp under Account, Join with an invite. This is the only time the link is shown.</p>
-          </div>
-          )
-        : (
-          <div className="actions">
-            <button type="button" className="button primary" onClick={() => create(false)} disabled={busy !== null}>
-              {busy === 'one' && <span className="spinner" aria-hidden />}{busy === 'one' ? 'Creating…' : 'Invite one person'}
-            </button>
-            <button type="button" className="button secondary" onClick={() => create(true)} disabled={busy !== null}>
-              {busy === 'group' && <span className="spinner" aria-hidden />}{busy === 'group' ? 'Creating…' : 'Group link'}
-            </button>
-          </div>
-          )}
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {invites && invites.length > 0 && (
-        <ul className="invite-list" aria-label="Your invites">
-          {invites.slice(0, 8).map(i => {
-            const open = i.status === 'pending' && i.expiresAt > now
-            const date = new Date(i.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-            return (
-              <li key={i.id} className="invite-row">
-                <span>{isGroup(i) ? 'Group link' : 'Invite'} from {date}</span>
-                <span className="invite-state">
-                  {inviteState(i, now)}
-                  {open && <button type="button" className="text-button invite-stop" onClick={() => stop(i)}>{isGroup(i) ? 'Stop' : 'Cancel'}</button>}
-                </span>
-                {isGroup(i) && (i.joined?.length ?? 0) > 0 && <span className="invite-joined">{i.joined!.map(who).join(', ')}</span>}
-              </li>
-            )
-          })}
-        </ul>
-      )}
     </section>
   )
 }

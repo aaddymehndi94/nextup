@@ -1,6 +1,6 @@
 # nexttupp cloud
 
-The only online piece of nexttupp: **accounts, invite-only sign-up, and syncing each user's taste data**
+The only online piece of nexttupp: **accounts, open sign-up, and syncing each user's taste data**
 (profiles, likes/dislikes, My List, watch progress and completion) between their own devices, plus a small
 **device list** so a phone can find the user's computer on the home Wi-Fi (see
 [Devices and phone handoff](#devices-and-phone-handoff-watch-at-home)). One
@@ -24,7 +24,7 @@ npm install
 npm test                   # vitest inside workerd, against a local D1 with the real migrations
 npm run typecheck
 npm run db:migrate:local   # wrangler d1 migrations apply nexttupp --local
-npm run dev                # wrangler dev --local on http://localhost:8799 (invite links point at its own /join)
+npm run dev                # wrangler dev --local on http://localhost:8799
 ```
 
 End to end on one machine, with a local Worker and two nexttupp servers standing in for two laptops
@@ -32,42 +32,27 @@ End to end on one machine, with a local Worker and two nexttupp servers standing
 
 ```bash
 npm run db:migrate:local && npm run dev              # here, in cloud/
-node scripts/bootstrap-invite.ts --local              # run the INSERT it prints; keep the code
 # from the repo root, one shell each:
 PORT=4550 NEXTTUPP_DATA=/tmp/nx-a NEXTTUPP_CLOUD_URL=http://127.0.0.1:8799 npm start
 PORT=4551 NEXTTUPP_DATA=/tmp/nx-b NEXTTUPP_CLOUD_URL=http://127.0.0.1:8799 npm start
-CODE=nxi_… node scripts/sync-e2e.mjs                  # 26 checks: sign-in, merge, both directions, tombstones, invites
+node scripts/sync-e2e.mjs                             # sign-up, sign-in, merge, both directions, tombstones
 ```
 
-## Bootstrap: the first admin
+## The first admin
 
-Sign-up needs an invite, so the first account comes from an admin invite that the Cloudflare account
-holder inserts straight into D1:
+Anyone can sign up, and every account starts as a `member`. No endpoint can make an admin. The Cloudflare
+account holder promotes one straight in D1, after signing up in the app like anyone else:
 
 ```bash
-node scripts/bootstrap-invite.ts           # deployed database (prints a --remote command)
-node scripts/bootstrap-invite.ts --local   # local dev database
+npx wrangler d1 execute nexttupp --remote --command "UPDATE accounts SET role = 'admin' WHERE email = 'you@example.com'"
 ```
 
-The script runs nothing itself. It prints:
-
-1. A `npx wrangler d1 execute nexttupp --remote --command "INSERT INTO invites …"` line to run. It stores
-   only the token's SHA-256 hash, with role `admin`, `created_by` NULL, valid for 24 hours. The INSERT is
-   guarded by `WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE role = 'admin')`, so once an admin exists
-   it does nothing. `--force` drops that guard, for recovery (for example, if the only admin forgot
-   their password).
-2. The invite code `nxi_…` and its link `https://nexttupp.com/join?code=nxi_…` (with `--local`:
-   `http://localhost:8799/join?code=…`, this Worker's fallback page). Paste the code or the link into the
-   app (profile menu → Account → Join with an invite), or open the link. The code is printed once and is
-   never stored. Using a bootstrap invite revokes every other unused bootstrap invite.
-
-Why this is safe: only someone who can already run `wrangler d1 execute` against the database can
-create an admin invite. No secret stays deployed in the Worker, and no endpoint can mint an admin.
-Invites made through the API are always `member`.
+(`--local` for the dev database.) Only someone who can already run `wrangler d1 execute` against the
+database can do this, and no secret stays deployed in the Worker.
 
 ## API
 
-Base URL: `https://api.nexttupp.com` (`PUBLIC_URL`). Requests and responses are JSON
+Base URL: `https://api.nexttupp.com`. Requests and responses are JSON
 (`Content-Type: application/json`). Authenticated calls send `Authorization: Bearer nxs_…`; the API uses
 no cookies. CORS allows any origin, which is safe because nothing is ambient: a caller must hold the token.
 
@@ -77,7 +62,7 @@ Every error looks like `{ "error": "<code>", "message": "<human text>" }`. The c
 `too_many_attempts` (429, with `Retry-After`), plus the flow-specific codes listed below.
 Request bodies reject unknown fields.
 
-`Account` = `{ id, email, displayName: string|null, role: "admin"|"member", createdAt, invitedBy: accountId|null }`.
+`Account` = `{ id, email, displayName: string|null, role: "admin"|"member", createdAt }`.
 All times are integer milliseconds since the Unix epoch.
 
 ### Auth and account
@@ -133,53 +118,34 @@ rounds, the same as server-side stretching. The stored HMAC can't be replayed: l
 the key is the PBKDF2 output.
 
 **Where the clients are.** The nexttupp app's local server (`server/sync/cloud.ts`, Node's
-`crypto.pbkdf2`, about 0.3–0.5 s) and any browser page (WebCrypto `PBKDF2`; this Worker's own `/join` and
-`/reset` pages do it in `/app.js`). `server/sync/cloud.test.ts` checks that both derive the same key.
+`crypto.pbkdf2`, about 0.3–0.5 s) and any browser page (WebCrypto `PBKDF2`; the website's `/watch` page,
+and this Worker's own `/reset` page in `/app.js`). `server/sync/cloud.test.ts` checks that both derive the same key.
 
-### Invites (any member)
+### Sign-up (anyone)
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
-| `POST /v1/invites` | bearer | none, or `{ note?: string (≤80), maxUses?: 1–10 (admin 1–50) }` | `201 { invite: Invite, token: "nxi_…", url: "<PUBLIC_URL>/join?code=nxi_…" }` · `409 too_many_invites` |
-| `GET /v1/invites` | bearer | | `200 { invites: Invite[] }`, your own, newest first |
-| `DELETE /v1/invites/:id` | bearer | | `204` · `404` if it isn't yours · `409 already_used` (used, or a full group link) |
-| `POST /v1/invites/accept` | – | `{ token, email, salt, iterations, key, displayName? }` | `201 { account: Account }`, then log in · `400 invalid_invite` · `409 email_taken` |
+| `POST /v1/auth/signup` | – | `{ email, salt, iterations, key, displayName? }` | `201 { account: Account }`, then log in · `409 email_taken` · `429 too_many_attempts` |
 
-`Invite` = `{ id, note, role, status: "pending"|"used"|"expired"|"revoked", createdAt, expiresAt, usedAt, usedBy: {id, email, displayName}|null, revokedAt, maxUses, uses, joined: [{id, email, displayName}] }`.
-`status: "used"` means no places are left; `usedBy` is the first person who joined, `joined` everyone, in order.
+- No invite is needed, and every new account is a `member`. Two clients call it: the app (through the local
+  server) and the website (nexttupp.com/account and /watch, from the browser, through CORS).
+- **5 sign-ups an hour per IP** (`SIGNUP_THROTTLE` in `src/auth.ts`), counted whether or not the email was
+  free, so the endpoint can't be used to test emails in bulk. Then the IP waits an hour.
+- Emails are unique, case-insensitively. Two sign-ups with one email at once create one account (tested).
+- There's no email verification: nexttupp sends no email. An admin can disable an account.
+- `GET /reset#…` serves a small HTML form (strict CSP; script at `/app.js`) for admin-issued reset links.
 
-- An invite is for one person (`maxUses` 1, the default) or a **group link** that up to `maxUses` people
-  can join with, for sharing in a group chat. Either kind expires **7 days** after creation and can be
-  stopped early with `DELETE`, even after some people have joined. Only its hash is stored, so the code is
-  shown once, in the create response. The `token` is the **invite code**; people share it as is or as the
-  link `https://nexttupp.com/join?code=<code>` (`PUBLIC_URL` is the website). The app's Join form takes
-  either. The website's `/join` page should send `Referrer-Policy: no-referrer` and drop the code from the
-  address bar once read, since a query string can reach the site's logs. A leaked code still lets in no
-  more than its `maxUses`, and expires.
-- A member can have at most 10 unused invites at a time (an admin, 100).
-- An invite is valid only while its creator's account is enabled. Disabling an account revokes its unused invites.
-- Who invited whom is recorded in `accounts.invited_by`, and which invite each person used in `accounts.invite_id`.
-- Signing up is atomic: simultaneous sign-ups with one token never let in more than `maxUses` (tested).
-- The website's `/invite` page makes, shares (the phone's share sheet) and stops invites, signed in the same way as `/watch`.
-- `GET /join?code=…` (or `/join#…`) and `GET /reset#…` serve small HTML forms (strict CSP; script at
-  `/app.js`) for people who open a link in a browser. `/join` here is the fallback for the website's page;
-  `/reset` links point here (the Worker's own origin).
-
-**For the website's `/join` page.** It can sign people up itself: read `code`, ask for email, password
-(8–256 characters) and an optional name, derive the key with WebCrypto as above, and
-`POST https://api.nexttupp.com/v1/invites/accept` (CORS allows any origin). Then tell them to sign in
-in the app. Or it can just show the code and say "paste this in nexttupp → Account → Join".
+Sign-up used to need an invite. The `invites` table and `accounts.invited_by` / `invite_id` are still in
+the database as history; nothing reads or writes them.
 
 ### Admin (role `admin`; anyone else gets 403)
 
 | Method and path | Response |
 |---|---|
-| `GET /v1/admin/accounts` | `200 { accounts: [Account + { invitedBy: {id, email, displayName}\|null, disabledAt, lastSeenAt }] }` |
-| `POST /v1/admin/accounts/:id/disable` | `200 { account }`. Ends all its sessions, revokes its unused invites and reset links. `409` for your own account |
+| `GET /v1/admin/accounts` | `200 { accounts: [Account + { disabledAt, lastSeenAt }] }` |
+| `POST /v1/admin/accounts/:id/disable` | `200 { account }`. Ends all its sessions and revokes its reset links. `409` for your own account |
 | `POST /v1/admin/accounts/:id/enable` | `200 { account }` |
 | `POST /v1/admin/accounts/:id/reset-link` | `201 { token: "nxr_…", url: "https://api.nexttupp.com/reset#nxr_…", expiresAt }` (this Worker's origin). Single-use, 24 h; replaces any earlier unused link |
-| `GET /v1/admin/invites` | `200 { invites: [Invite + { createdBy }] }`, everyone's, newest first |
-| `DELETE /v1/admin/invites/:id` | `204` · `409 already_used` |
 
 There's no email sending. The admin passes a reset link on themselves. Using it signs out every session.
 
@@ -287,7 +253,7 @@ required, and `null` is spelled out.
 | `feature` | `g:`, `gg:`, `gd:`, `dec:`, `d:`, `w:`, `p:` or `c:` plus 1–120 characters, as in `server/reco/taste.ts` |
 | profile `name` | 1–40 characters; `avatar` `null` or 1–64 characters |
 
-All free text (profile name, avatar, feature key, invite note, display name) must be trimmed and must not
+All free text (profile name, avatar, feature key, display name) must be trimmed and must not
 contain control or bidi-override characters. It also must not contain anything shaped like torrent data:
 a run of 32+ letters/digits (a hex or base32 info hash), `magnet:`, `btih`, `://`, `.torrent`, or a video
 or subtitle file extension (`.mkv`, `.mp4`, `.srt`, …).
@@ -373,11 +339,11 @@ design. In short:
 
 | Table | Key | Purpose |
 |---|---|---|
-| `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `invited_by`, `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
+| `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
 | `sessions` | `token_hash` | bearer sessions: `created_at`, `last_used_at`, `expires_at` |
-| `invites` | `id`, `token_hash` unique | `created_by` (NULL = bootstrap), role, note, `expires_at`, `max_uses`, `use_count`, `used_at` (full) / `used_by` (first), `revoked_at`/`revoked_by` |
+| `invites` | `id`, `token_hash` unique | unused since sign-up opened; kept as history |
 | `password_resets` | `token_hash` | admin-issued, single-use, 24 h |
-| `login_attempts` | `key` (SHA-256 of email or IP) | failure count, window, `locked_until` |
+| `login_attempts` | `key` (SHA-256 of email or IP) | failed logins and sign-ups: count, window, `locked_until` |
 | `server_keys` | `name` | random keys generated in D1: `prelogin` (the fake-salt HMAC key, also used for `net_hash`) |
 | `devices` | `(account_id, id)` | name, platform, `lan`, `lan_urls` (private IPv4 URLs), `net_hash` (an HMAC, never an IP), `created_at`, `last_seen_at` |
 | `handoffs` | `code_hash` | one-time phone handoff codes: `account_id`, `device_id`, `expires_at` (60 s) |
@@ -413,7 +379,7 @@ Nothing below has been run. Each step changes the owner's Cloudflare account.
 npx wrangler d1 create nexttupp                      # 1. creates the D1 database; paste its id into wrangler.jsonc
 npx wrangler d1 migrations apply nexttupp --remote   # 2. creates the tables (0001–0003; 0002 also generates the prelogin key)
 npx wrangler deploy                                  # 3. uploads the Worker and attaches api.nexttupp.com
-node scripts/bootstrap-invite.ts                     # 4. prints the --remote INSERT to run, then the invite code and link
+# 4. sign up in the app, then promote that account ("The first admin", above)
 ```
 
 **Updating the deployed service** (already running at `api.nexttupp.com`) for devices and phone handoff:
@@ -429,10 +395,8 @@ What that creates:
 | Resource | Details | Free-plan allowance |
 |---|---|---|
 | D1 database `nexttupp` | 13 tables + indexes, plus wrangler's `d1_migrations` | 10 databases, 500 MB each, 5 GB per account |
-| Worker `nexttupp-cloud` | `src/index.ts`; one plain var `PUBLIC_URL` (`https://nexttupp.com`, where invite links point); no secrets, KV, R2, Durable Objects, queues or cron triggers | 100,000 requests/day |
+| Worker `nexttupp-cloud` | `src/index.ts`; no vars, secrets, KV, R2, Durable Objects, queues or cron triggers | 100,000 requests/day |
 | Custom domain `api.nexttupp.com` | a proxied DNS record and an edge certificate in the `nexttupp.com` zone (the zone must be on this account) | free |
 
 `workers_dev` and preview URLs are off, so the Worker is reachable only at `api.nexttupp.com`. To use
 another hostname, change `routes` in `wrangler.jsonc` before step 3 (and `NEXTTUPP_CLOUD_URL` for the app).
-`PUBLIC_URL` is the website that serves `/join?code=…`; until that page exists, invite codes still work
-pasted into the app, and the Worker's own `/join` page takes the same `?code=`.

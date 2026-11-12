@@ -19,13 +19,7 @@ export class CloudError extends Error {
   }
 }
 
-export interface CloudAccount { id: string; email: string; displayName: string | null; role: 'admin' | 'member'; createdAt: number; invitedBy: string | null }
-export interface CloudInvite {
-  id: string; note: string | null; role: string; status: 'pending' | 'used' | 'expired' | 'revoked'
-  createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { id: string; email: string; displayName: string | null } | null; revokedAt: number | null
-  /** How many people the link lets in (1 = a one-person invite), how many have joined, and who. Older APIs leave these out. */
-  maxUses?: number; uses?: number; joined?: { id: string; email: string; displayName: string | null }[]
-}
+export interface CloudAccount { id: string; email: string; displayName: string | null; role: 'admin' | 'member'; createdAt: number }
 export interface PullPage extends Batch { cursor: string; more: boolean; serverTime: number }
 
 const pbkdf2Async = promisify(pbkdf2)
@@ -37,23 +31,6 @@ export async function deriveKey (password: string, salt: string, iterations: num
 }
 
 export const newSalt = (): string => randomBytes(16).toString('base64url')
-
-const INVITE = /^nxi_[A-Za-z0-9_-]{43}$/
-
-/**
- * An invite code from what someone pasted: the bare code, or a link that carries it
- * (`https://nexttupp.com/join?code=nxi_…`, or the older `…/join#nxi_…`). Null if there's none.
- */
-export function parseInviteCode (input: string): string | null {
-  let candidate = input.trim()
-  if (/^https?:\/\//i.test(candidate)) {
-    try {
-      const url = new URL(candidate)
-      candidate = url.searchParams.get('code') ?? url.hash.slice(1)
-    } catch { return null }
-  }
-  return INVITE.test(candidate) ? candidate : null
-}
 
 export class CloudClient {
   readonly baseUrl: string
@@ -107,28 +84,18 @@ export class CloudClient {
     return this.request<{ token: string; expiresAt: number; account: CloudAccount }>('POST', '/v1/auth/login', { body: { email, key } })
   }
 
-  /** Sign up with an invite. Returns the key it derived, for logging in straight after. */
-  async accept (token: string, email: string, password: string, displayName?: string): Promise<{ account: CloudAccount; key: string }> {
+  /** Create an account. Returns the key it derived, for logging in straight after. */
+  async signup (email: string, password: string, displayName?: string): Promise<{ account: CloudAccount; key: string }> {
     const salt = newSalt()
     const key = await deriveKey(password, salt, KDF_ITERATIONS)
-    const body: Record<string, unknown> = { token, email, salt, iterations: KDF_ITERATIONS, key }
+    const body: Record<string, unknown> = { email, salt, iterations: KDF_ITERATIONS, key }
     if (displayName) body.displayName = displayName
-    const r = await this.request<{ account: CloudAccount }>('POST', '/v1/invites/accept', { body })
+    const r = await this.request<{ account: CloudAccount }>('POST', '/v1/auth/signup', { body })
     return { account: r.account, key }
   }
 
   logout (token: string) { return this.request<void>('POST', '/v1/auth/logout', { token, timeoutMs: 5000 }) }
   account (token: string) { return this.request<{ account: CloudAccount }>('GET', '/v1/account', { token }) }
-  createInvite (token: string, opts: { note?: string; maxUses?: number } = {}) {
-    const body: Record<string, unknown> = {}
-    if (opts.note) body.note = opts.note
-    if (opts.maxUses && opts.maxUses > 1) body.maxUses = opts.maxUses
-    return this.request<{ invite: CloudInvite; token: string; url: string }>('POST', '/v1/invites', { token, body })
-  }
-
-  revokeInvite (token: string, id: string) { return this.request<void>('DELETE', `/v1/invites/${encodeURIComponent(id)}`, { token }) }
-
-  listInvites (token: string) { return this.request<{ invites: CloudInvite[] }>('GET', '/v1/invites', { token }) }
   push (token: string, batch: Batch) {
     return this.request<{ applied: Record<string, number>; serverTime: number }>('POST', '/v1/sync/push', { token, body: batch, timeoutMs: 30_000 })
   }

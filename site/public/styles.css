@@ -115,7 +115,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 }
 .masthead-inner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; height: 4.25rem; }
 .masthead-nav { display: flex; align-items: center; gap: clamp(0.75rem, 2vw, 1.75rem); font-size: 0.9375rem; font-weight: 560; color: var(--text-2); }
-.masthead-nav a:not(.button) { transition: color var(--dur); }
+.masthead-nav a:not(.button) { transition: color var(--dur); white-space: nowrap; }
 .masthead-nav a:not(.button):hover { color: var(--text); }
 
 /* ---------- Actions ---------- */
@@ -284,10 +284,35 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .who-list li:first-child .avatar { outline: 2px solid #fff; outline-offset: 4px; }
 .who-list li:first-child { color: var(--text); }
 
-/* ---------- Invite note ---------- */
-.invite { padding-block: clamp(6rem, 13vw, 11rem) 0; text-align: center; }
-.invite h2 { font-size: clamp(2.25rem, 5vw, 4.25rem); font-stretch: var(--widest); font-weight: 800; letter-spacing: -0.045em; line-height: 1; text-wrap: balance; }
-.invite p { margin: 1.5rem auto 0; max-width: 34rem; font-size: 1.125rem; line-height: 1.6; color: var(--text-2); text-wrap: pretty; }
+/* ---------- Anyone can join: how it works ---------- */
+.how { padding-block: clamp(6rem, 13vw, 11rem) 0; text-align: center; }
+.how h2 { font-size: clamp(2.25rem, 5vw, 4.25rem); font-stretch: var(--widest); font-weight: 800; letter-spacing: -0.045em; line-height: 1; text-wrap: balance; }
+.how-lede { margin: 1.5rem auto 0; max-width: 34rem; font-size: 1.125rem; line-height: 1.6; color: var(--text-2); text-wrap: pretty; }
+.how-steps { counter-reset: how; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2.5vw, 2rem); margin-top: clamp(2.5rem, 5vw, 3.5rem); text-align: left; }
+.how-steps li { padding: 1.75rem 1.5rem 1.875rem; border-radius: 1.125rem; background: var(--bg-1); box-shadow: var(--edge); }
+.how-steps li::before {
+  counter-increment: how; content: counter(how);
+  display: grid; place-items: center; width: 2.5rem; height: 2.5rem; margin-bottom: 1.25rem; border-radius: 50%;
+  background: rgb(255 255 255 / 0.08); box-shadow: inset 0 0 0 1px var(--line-2);
+  font-stretch: var(--widest); font-weight: 800;
+}
+.how-steps h3 { font-size: 1.1875rem; font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.02em; }
+.how-steps p { margin-top: 0.5rem; color: var(--text-2); line-height: 1.6; text-wrap: pretty; }
+.how-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.75rem; margin-top: clamp(2rem, 4vw, 2.75rem); }
+
+/* ---------- Hero search: films live in the app, and this says so ---------- */
+.find { display: flex; align-items: center; gap: 0.5rem; max-width: 32rem; margin: 0 auto 1.25rem; padding: 0.375rem 0.375rem 0.375rem 1.125rem; border-radius: 999px; background: rgb(255 255 255 / 0.07); box-shadow: inset 0 0 0 1px var(--line-2); transition: box-shadow var(--dur); }
+.find:focus-within { box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.7); }
+.find-field { flex: 1; display: flex; align-items: center; gap: 0.625rem; min-width: 0; color: var(--text-3); }
+.find-field svg { width: 1.25rem; height: 1.25rem; flex: none; }
+.find-field input { flex: 1; min-width: 0; height: 2.5rem; border: 0; background: none; color: var(--text); font: inherit; font-size: 1.0625rem; }
+.find-field input::placeholder { color: var(--text-3); }
+.find-field input:focus { outline: none; }
+.find-field input::-webkit-search-cancel-button { display: none; }
+.find-answer { max-width: 32rem; margin: 0 auto; }
+.find-body { margin-bottom: 1.75rem; padding: 1.25rem 1.5rem; border-radius: 1.125rem; background: var(--bg-1); box-shadow: var(--edge); text-align: left; }
+.find-title { font-size: 1.1875rem; font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.02em; }
+.find-body p:not(.find-title) { margin-top: 0.375rem; color: var(--text-2); line-height: 1.55; text-wrap: pretty; }
 
 /* ---------- FAQ ---------- */
 .faq { padding-block: clamp(6rem, 12vw, 10rem) 0; display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: clamp(2rem, 6vw, 6rem); align-items: start; }
@@ -355,21 +380,6 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   text-wrap: balance;
 }
 .join-lede { margin-top: 1.25rem; font-size: 1.125rem; line-height: 1.6; color: var(--text-2); text-wrap: pretty; }
-.code {
-  margin-top: 2.25rem;
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.75rem 0.75rem 0.75rem 1.25rem;
-  border-radius: 1rem;
-  background: rgb(255 255 255 / 0.06);
-  box-shadow: inset 0 0 0 1px var(--line-2);
-}
-.code-value {
-  flex: 1; min-width: 0;
-  font-family: var(--mono); font-size: 0.9375rem; line-height: 1.45; letter-spacing: 0.01em;
-  color: var(--text); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all;
-}
-.code .button { flex: none; }
-.code-help { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--text-3); }
 .steps { margin-top: clamp(2.75rem, 6vw, 4rem); display: grid; counter-reset: step; }
 .step { position: relative; display: grid; grid-template-columns: 2.75rem minmax(0, 1fr); gap: 1.25rem; padding-block: 1.75rem; border-top: 1px solid var(--line); }
 .step::before {
@@ -387,7 +397,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .path svg { width: 0.875rem; height: 0.875rem; color: var(--text-3); }
 .join-foot { margin-top: 1rem; padding-top: 1.75rem; border-top: 1px solid var(--line); font-size: 0.875rem; color: var(--text-3); }
 
-/* ---------- Watch at home ---------- */
+/* ---------- Watch on this phone ---------- */
 .watch-form { margin-top: 2.25rem; display: flex; flex-direction: column; align-items: flex-start; gap: 1.125rem; }
 .watch-field { display: flex; flex-direction: column; gap: 0.4375rem; width: 100%; font-size: 0.875rem; font-weight: 600; color: var(--text-2); }
 .watch-field input {
@@ -409,23 +419,28 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .watch-row-meta { font-size: 0.8125rem; color: var(--text-3); }
 .watch-status { margin-top: 1.25rem; min-height: 1.5em; font-size: 0.9375rem; color: var(--text-2); text-wrap: pretty; }
 .join-foot .link { background: none; border: 0; padding: 0; font: inherit; color: var(--text-2); cursor: pointer; }
+
+/* ---------- Sign in / create account (cloud.js) ---------- */
+.auth-tabs { display: inline-flex; gap: 0.25rem; margin-top: 2.25rem; padding: 0.25rem; border-radius: 999px; background: rgb(255 255 255 / 0.06); box-shadow: var(--edge); }
+.auth-tabs button { height: 2.5rem; padding-inline: 1.25rem; border-radius: 999px; font-size: 0.9375rem; font-weight: 620; color: var(--text-2); transition: background var(--dur), color var(--dur); }
+.auth-tabs button[aria-pressed="true"] { background: #fff; color: var(--on-light); }
+.auth-tabs button:not([aria-pressed="true"]):hover { color: var(--text); }
+.auth-tabs + .watch-form { margin-top: 1.75rem; }
+.watch-field em { font-style: normal; font-weight: 480; color: var(--text-3); }
+.pw { position: relative; display: block; }
+.pw input { padding-right: 4.75rem; }
+.pw-show { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); height: 2.25rem; padding-inline: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 620; color: var(--text-2); }
+.pw-show:hover { color: var(--text); background: rgb(255 255 255 / 0.08); }
+.auth-switch { margin-top: 1.25rem; font-size: 0.9375rem; color: var(--text-3); }
+.auth-switch .link { font-weight: 600; }
+.ready-note { margin-top: 1.25rem; color: var(--text-2); line-height: 1.6; }
+.watch-list + .watch-primary { margin-top: 2rem; }
 .join-foot .sep { margin-inline: 0.25rem; opacity: 0.6; }
 
-/* Signed in on this browser (signed-in.js): members see "Invite friends" where others see "Download". */
-html:not(.signed-in) .signed-in-only, html.signed-in .signed-out-only { display: none; }
+/* Phones and tablets get the phone links, computers the downloads. Touch-first screens, no script needed. */
+@media not all and (hover: none) and (pointer: coarse) { .phone-only { display: none; } }
+@media (hover: none) and (pointer: coarse) { .computer-only { display: none; } }
 
-/* ---------- Invite friends ---------- */
-.invite-choices { margin-top: 2.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
-.invite-choices .button, .invite-made-actions .button { width: 100%; justify-content: center; }
-.invite-choice-note { margin-top: 0.25rem; font-size: 0.875rem; color: var(--text-3); text-wrap: pretty; }
-.invite-made { margin-top: 2.25rem; }
-.invite-made .code { margin-top: 0; }
-.invite-made-label { margin-bottom: 0.75rem; font-size: 0.875rem; font-weight: 600; color: var(--text-2); }
-.invite-made-actions { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
-.invite-again { margin-top: 1rem; }
-.invite-again .link { background: none; border: 0; padding: 0; font: inherit; font-size: 0.9375rem; cursor: pointer; }
-.invite-list-title { margin-top: 2.75rem; font-size: 1.0625rem; font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.01em; }
-.invite-list-title + .watch-list { margin-top: 0.75rem; }
 .watch-list:not(:empty) + .join-foot { border-top: 0; }
 
 /* ---------- 404 ---------- */
@@ -451,6 +466,7 @@ html:not(.signed-in) .signed-in-only, html.signed-in .signed-out-only { display:
   .feature.flip .feature-copy { order: 0; }
   .faq { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
   .platforms { grid-template-columns: minmax(0, 1fr); }
+  .how-steps { grid-template-columns: minmax(0, 1fr); max-width: 32rem; margin-inline: auto; }
 }
 @media (max-width: 640px) {
   .masthead-nav .hide-sm { display: none; }
@@ -459,13 +475,18 @@ html:not(.signed-in) .signed-in-only, html.signed-in .signed-out-only { display:
   .data-grid { grid-template-columns: minmax(0, 1fr); }
   .offline .card-art { aspect-ratio: 4 / 3.4; }
   .button.large { height: 3.25rem; padding: 0 1.625rem 0 1.375rem; font-size: 1rem; }
-  .code { flex-direction: column; align-items: stretch; padding: 1rem; }
-  .code .button { width: 100%; }
   .step { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
   .step h2 { padding-top: 0; }
   .footer-inner { flex-direction: column; }
   .who-list { gap: 0.75rem; }
   .who-list .add-item { display: none; }
+}
+
+/* Small phones: the wordmark, "Sign in" and "Watch on this phone" still share one line. */
+@media (max-width: 400px) {
+  .masthead-inner { gap: 0.5rem; }
+  .masthead-nav { gap: 0.75rem; font-size: 0.875rem; }
+  .masthead-nav .button.small { padding-inline: 0.75rem; font-size: 0.8125rem; }
 }
 
 /* The third pick fades out at the panel's edge, the way a row scrolls on in the app. */

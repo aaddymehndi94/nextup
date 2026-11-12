@@ -159,3 +159,11 @@ node scripts/cast-ui-e2e.mjs …           # the player as a remote, on the comp
 
 Results on 2026-11-11, all on one machine with a local Worker (`wrangler dev --local`): 100 cloud tests,
 185 server tests, handoff E2E 12/12, cast stream E2E 44/44, cast UI E2E 20/20.
+
+## Update, 2026-11-12: wording
+
+"Watch at home" and "Watch on <computer>" read as if the film plays on the computer, and showed up on the
+website for visitors on a computer too. The words now follow the phone: the page is "Watch on this phone",
+its button is "Connect to <computer>", the app's setting is "Let phones play from this computer" under
+"Watch on your phone", and the website shows the phone link only on touch-first screens (computers see
+Download).

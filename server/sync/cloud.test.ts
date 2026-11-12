@@ -4,26 +4,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openDb } from '../db.ts'
 import { SqliteTasteStore } from '../store.ts'
-import { deriveKey, KDF_ITERATIONS, parseInviteCode } from './cloud.ts'
+import { deriveKey, KDF_ITERATIONS } from './cloud.ts'
 import { SyncService } from './service.ts'
 
-const CODE = `nxi_${'Ab3_-'.repeat(8)}xyz`
-
-describe('invite codes', () => {
-  it('takes the bare code or a link that carries it', () => {
-    expect(CODE).toHaveLength(47)
-    expect(parseInviteCode(CODE)).toBe(CODE)
-    expect(parseInviteCode(`  ${CODE}\n`)).toBe(CODE)
-    expect(parseInviteCode(`https://nexttupp.com/join?code=${CODE}`)).toBe(CODE)
-    expect(parseInviteCode(`https://api.nexttupp.com/join#${CODE}`)).toBe(CODE)
-    expect(parseInviteCode('https://nexttupp.com/join')).toBeNull()
-    expect(parseInviteCode(CODE.slice(0, -1))).toBeNull()
-    expect(parseInviteCode(`nxs_${CODE.slice(4)}`)).toBeNull()
-  })
-})
-
 describe('key derivation', () => {
-  it('matches WebCrypto PBKDF2, which the browser join page uses', async () => {
+  it('matches WebCrypto PBKDF2, which the website’s sign-in and reset pages use', async () => {
     const salt = 'c2FsdHNhbHRzYWx0c2FsdA'
     const password = 'correct horse battery é'
     const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password.normalize('NFC')), 'PBKDF2', false, ['deriveBits'])
@@ -45,7 +30,7 @@ describe('offline', () => {
       calls++
       if (String(url).endsWith('/v1/auth/prelogin')) return Response.json({ kdf: 'pbkdf2-sha256', iterations: 100_000, salt: 'c2FsdHNhbHRzYWx0c2FsdA' })
       if (String(url).endsWith('/v1/auth/login')) {
-        return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e9, account: { id: '11111111-1111-4111-8111-111111111111', email: 'me@example.com', displayName: null, role: 'member', createdAt: 0, invitedBy: null } })
+        return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e9, account: { id: '11111111-1111-4111-8111-111111111111', email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
       }
       throw new TypeError('fetch failed')
     }) as typeof fetch

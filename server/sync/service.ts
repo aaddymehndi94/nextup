@@ -1,7 +1,7 @@
 import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
-import { type CloudAccount, CloudClient, CloudError, type CloudInvite, parseInviteCode } from './cloud.ts'
+import { type CloudAccount, CloudClient, CloudError } from './cloud.ts'
 import { ackPush, applyPull, collectPush, dropOutbox, linkProfiles, pendingCount } from './local.ts'
 
 // Optional sign-in and background taste sync. Signed out, nothing here touches the network and the app
@@ -142,12 +142,10 @@ export class SyncService {
     return this.begin(r)
   }
 
-  /** Sign up with an invite code (or a link holding one), then sign in. */
-  async join (code: string, email: string, password: string, displayName?: string): Promise<AccountStatus> {
-    const token = parseInviteCode(code)
-    if (!token) throw new CloudError(400, 'invalid_code', 'That isn’t an invite code or link. Paste the whole thing you were sent.')
+  /** Create an account, then sign in. */
+  async signup (email: string, password: string, displayName?: string): Promise<AccountStatus> {
     const mail = email.trim()
-    const { key } = await this.cloud.accept(token, mail, password, displayName?.trim() || undefined)
+    const { key } = await this.cloud.signup(mail, password, displayName?.trim() || undefined)
     return this.begin(await this.cloud.loginWithKey(mail, key))
   }
 
@@ -208,19 +206,6 @@ export class SyncService {
   private token (): string {
     if (!this.session) throw new CloudError(401, 'signed_out', 'Sign in first')
     return this.session.token
-  }
-
-  async createInvite (opts: { note?: string; maxUses?: number } = {}): Promise<{ code: string; url: string; invite: CloudInvite }> {
-    const r = await this.authed(t => this.cloud.createInvite(t, { note: opts.note?.trim() || undefined, maxUses: opts.maxUses }))
-    return { code: r.token, url: r.url, invite: r.invite }
-  }
-
-  async revokeInvite (id: string): Promise<void> {
-    await this.authed(t => this.cloud.revokeInvite(t, id))
-  }
-
-  async invites (): Promise<CloudInvite[]> {
-    return (await this.authed(t => this.cloud.listInvites(t))).invites
   }
 
   /** A call with the session token; a 401 or a disabled account signs this device out. */

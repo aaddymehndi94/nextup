@@ -1,11 +1,12 @@
-// /watch: sign in on a phone, find the computer running nexttupp on the same Wi-Fi, and open it.
+// /watch: sign in (or create an account) on a phone, find the computer running nexttupp on the same Wi-Fi, and open it.
 //
 // The phone talks only to the nexttupp API. An HTTPS page can't fetch the computer's http:// address (mixed
-// content), so "Watch" asks the API for a one-time code and then navigates the whole tab to
+// content), so "Connect" asks the API for a one-time code and then navigates the whole tab to
 // http://<computer>/handoff?code=…; the computer checks the code with the API and lets this phone in with a
 // cookie. Signing in, and the session, are in cloud.js.
 
-import { api, ApiError, currentSession, forgetSession, signedOutError, signOut, wireSignIn } from './cloud.js'
+import { api, ApiError, currentSession, forgetSession, mountAuth, signedOutError, signOut } from './cloud.js'
+import './site.js'
 
 const LAN_URL = /^http:\/\/(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):\d{1,5}$/
 const POLL_MS = 5000
@@ -15,17 +16,27 @@ const views = { signin: $('[data-view="signin"]'), devices: $('[data-view="devic
 
 // ---- Sign in ----------------------------------------------------------------------------
 
-const setSignInError = wireSignIn($('[data-signin]'), () => showDevices(), '/watch')
+const SIGNIN_LEDE = $('[data-signin-lede]').textContent
+const auth = mountAuth($('[data-auth]'), {
+  path: '/watch',
+  onSignedIn: () => showDevices(),
+  onMode: mode => {
+    $('[data-signin-lede]').textContent = mode === 'create'
+      ? 'Create your free account. Then get nexttupp on your computer and sign in there too, and films play here, streamed from it.'
+      : SIGNIN_LEDE
+  },
+})
 
 function showSignIn (message) {
   clearTimeout(pollTimer)
   views.devices.hidden = true
   views.signin.hidden = false
-  setSignInError(message)
+  auth.setError(message)
 }
 
 $('[data-signout]').addEventListener('click', async () => {
   await signOut()
+  auth.setMode('signin')
   showSignIn()
 })
 
@@ -86,19 +97,23 @@ function render (devices) {
 
   if (here.length === 1) {
     heading.textContent = `${here[0].name} is ready.`
-    lede.textContent = 'It’s on this Wi-Fi. The film plays from it, right here on this phone.'
-    primary.append(button(`Watch on ${here[0].name}`, 'primary large', b => watchOn(here[0], b)))
+    lede.textContent = 'It’s on this Wi-Fi. Connect, and anything you pick plays here on this phone, streamed from it.'
+    primary.append(button(`Connect to ${here[0].name}`, 'primary large', b => watchOn(here[0], b)))
   } else if (here.length > 1) {
-    heading.textContent = 'Watch at home.'
-    lede.textContent = 'These computers are on this Wi-Fi. Pick the one to watch from.'
+    heading.textContent = 'Pick your computer.'
+    lede.textContent = 'These computers are on this Wi-Fi. Connect to one, and films play here, streamed from it.'
   } else if (elsewhere.length) {
-    heading.textContent = 'Watch at home.'
-    lede.textContent = 'We couldn’t confirm a computer on this Wi-Fi. If this phone is on the same Wi-Fi as one of these, tap it.'
-  } else {
+    heading.textContent = 'Pick your computer.'
+    lede.textContent = 'We couldn’t confirm one on this Wi-Fi. If this phone is on the same Wi-Fi as one of these, tap Connect.'
+  } else if (off.length) {
+    heading.textContent = 'Turn on phones on your computer.'
+    lede.textContent = `Phones are turned off on ${off.map(d => d.name).join(' and ')}. In nexttupp there, click your profile picture, choose Account, and turn on “Let phones play from this computer”.`
+  } else if (devices.length) {
     heading.textContent = 'Open nexttupp on your computer.'
-    lede.textContent = off.length
-      ? `Watching on phones is turned off on ${off.map(d => d.name).join(' and ')}. Turn on “Watch on phones and TVs at home” in nexttupp, under Account.`
-      : `No computer signed in as ${currentSession().email} is running nexttupp right now. Open it, signed in to the same account, and it shows up here.`
+    lede.textContent = `nexttupp isn’t open on ${devices.map(d => d.name).join(' or ')} right now. Open it there, and it shows up here in a few seconds.`
+  } else {
+    heading.textContent = 'Set up your computer first.'
+    lede.textContent = `Films play from the nexttupp app on a computer. On your laptop or desktop, go to nexttupp.com, download nexttupp, open it and sign in as ${currentSession().email}. This page updates by itself once it’s ready.`
   }
 
   const rows = here.length === 1 ? elsewhere : [...here, ...elsewhere]
@@ -114,12 +129,12 @@ function render (devices) {
     meta.className = 'watch-row-meta'
     meta.textContent = d.sameNetwork ? 'On this Wi-Fi' : 'Not confirmed on this Wi-Fi'
     text.append(name, meta)
-    li.append(text, button('Watch', 'secondary small', b => watchOn(d, b)))
+    li.append(text, button('Connect', 'secondary small', b => watchOn(d, b)))
     list.append(li)
   }
   list.hidden = rows.length === 0
-  if (here.length || elsewhere.length || off.length || devices.length) return
-  status.textContent = 'Looking every few seconds…'
+  if (here.length || elsewhere.length || off.length) return
+  status.textContent = 'Checking every few seconds…'
 }
 
 async function watchOn (device, b) {
@@ -127,12 +142,12 @@ async function watchOn (device, b) {
   handingOff = true
   clearTimeout(pollTimer)
   b.disabled = true
-  status.textContent = `Opening ${device.name}…`
+  status.textContent = `Connecting to ${device.name}…`
   try {
     const r = await api('POST', `/v1/devices/${encodeURIComponent(device.id)}/handoff`)
     const base = [...(r.lanUrls || []), ...device.lanUrls].find(u => LAN_URL.test(u))
     if (!base || !/^nxh_[A-Za-z0-9_-]{43}$/.test(r.code)) throw new ApiError(0, 'bad_device', 'That computer didn’t give an address on your Wi-Fi.')
-    status.textContent = `Opening ${device.name}… If nothing happens, check that this phone is on the same Wi-Fi as the computer.`
+    status.textContent = `Connecting to ${device.name}… If nothing happens, check that this phone is on the same Wi-Fi as the computer.`
     // A top-level navigation: the only way from an https page to the computer's http address.
     location.assign(`${base}/handoff?code=${encodeURIComponent(r.code)}`)
     // Coming back (Back button, or the page stays because the address didn't answer) re-enables everything.

@@ -34,13 +34,7 @@ export interface AccountStatus {
   /** After sign-in: local profile → the account's profile it was merged into. */
   merged?: Record<string, string>
 }
-export interface Invite {
-  id: string; note: string | null; status: 'pending' | 'used' | 'expired' | 'revoked'
-  createdAt: number; expiresAt: number; usedAt: number | null; usedBy: { email: string; displayName: string | null } | null
-  maxUses?: number; uses?: number; joined?: { email: string; displayName: string | null }[]
-}
-
-// Phones and TVs at home (server/lan). Settings change only on the computer itself (`local`).
+// Phones and TVs on the home Wi-Fi (server/lan). Settings change only on the computer itself (`local`).
 export interface LanClient { id: string; label: string; createdAt: number; lastUsedAt: number; current: boolean }
 export interface LanStatus {
   local: boolean; signedIn: boolean; enabled: boolean; phonesEnabled: boolean; listening: boolean
@@ -206,12 +200,9 @@ export const api = {
   // Account and sync. Every write sends a JSON body (the server requires one).
   account: () => req<AccountStatus>('/api/account'),
   login: (email: string, password: string) => req<AccountStatus>('/api/account/login', json('POST', { email, password })),
-  join: (body: { code: string; email: string; password: string; displayName?: string }) => req<AccountStatus>('/api/account/join', json('POST', body)),
+  signup: (body: { email: string; password: string; displayName?: string }) => req<AccountStatus>('/api/account/signup', json('POST', body)),
   logout: () => req<AccountStatus>('/api/account/logout', json('POST', {})),
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
-  invites: () => req<{ invites: Invite[] }>('/api/account/invites'),
-  createInvite: (maxUses = 1) => req<{ code: string; url: string; invite: Invite }>('/api/account/invites', json('POST', { maxUses })),
-  revokeInvite: (id: string) => req<void>(`/api/account/invites/${encodeURIComponent(id)}`, json('DELETE', {})),
   castDevices: (refresh = false) => req<{ devices: CastDevice[] }>(`/api/cast/devices${refresh ? '?refresh=1' : ''}`),
   cast: () => req<CastStatus>('/api/cast'),
   castStart: (body: CastStartRequest) => req<CastStatus>('/api/cast', json('POST', body)),

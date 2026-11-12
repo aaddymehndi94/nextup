@@ -101,11 +101,11 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
   app.get<{ Querystring: { code?: string } }>('/handoff', async (req, reply) => {
     if (isLoopback(req.socket.remoteAddress)) return reply.code(303).header('location', '/').send()
     if (!lan.phonesEnabled()) {
-      return sendPage(reply, 403, 'Watching on phones is off', 'Turn on “Watch on phones and TVs at home” in nexttupp on the computer, under Account, then try again.', null)
+      return sendPage(reply, 403, 'Phones are turned off on this computer', 'Turn on “Let phones play from this computer” in nexttupp on the computer, under Account, then try again.', null)
     }
     const code = req.query.code ?? ''
-    if (!HANDOFF_CODE.test(code)) return sendPage(reply, 400, 'That link isn’t complete', 'Go back to nexttupp.com and tap Watch again.')
-    if (!allow()) return sendPage(reply, 429, 'Too many tries', 'Wait a minute, then tap Watch on nexttupp.com again.')
+    if (!HANDOFF_CODE.test(code)) return sendPage(reply, 400, 'That link isn’t complete', 'Go back to nexttupp.com/watch and tap Connect again.')
+    if (!allow()) return sendPage(reply, 429, 'Too many tries', 'Wait a minute, then tap Connect on nexttupp.com/watch again.')
     try {
       await account.redeemHandoff(code, lan.store.deviceId)
     } catch (err) {
@@ -113,7 +113,7 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
       req.log.info({ handoff: err instanceof CloudError ? err.code : (err as Error).message }, 'phone handoff refused')
       return offline
         ? sendPage(reply, 503, 'This computer can’t reach nexttupp', 'It needs the internet for a moment to check your sign-in. Check its connection, then try again.')
-        : sendPage(reply, 401, 'That link has expired', 'Links from nexttupp.com work once, for a minute. Go back and tap Watch again.')
+        : sendPage(reply, 401, 'That link has expired', 'Links from nexttupp.com work once, for a minute. Go back and tap Connect again.')
     }
     if (!lan.store.verify(req.headers.cookie)) {
       const { token, client } = lan.store.add(clientLabel(req.headers['user-agent']))

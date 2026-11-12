@@ -7,6 +7,15 @@
         "rule": "overused-font",
         "value": "mona sans",
         "createdAt": "2026-11-10T19:21:25.552Z"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "site/public/account.html"
+        ],
+        "createdAt": "2026-11-12T14:11:16.439Z",
+        "reason": "Claude: false positive. The flagged .step rows have padding-block 1.75rem (28px) below their border-top in site/public/styles.css; the static scan doesn't apply the stylesheet, and the rendered page shows the gap"
       }
     ]
   }

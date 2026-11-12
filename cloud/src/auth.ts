@@ -1,9 +1,9 @@
 import { checkKey, DUMMY_VERIFIER, fakeSalt, KDF, KDF_ITERATIONS, kdfParams, makeVerifier, randomToken, sha256Hex, TOKEN } from './crypto.ts'
 import { type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
-import { authKey, credential, displayName, str } from './validate.ts'
+import { authKey, credential, displayName, email, str } from './validate.ts'
 
-// Accounts, sessions, login throttling, password change and admin-issued password resets. Passwords are
-// stretched by the client; the server only ever sees the derived key (see crypto.ts).
+// Accounts: open sign-up, sessions, login throttling, password change and admin-issued password resets.
+// Passwords are stretched by the client; the server only ever sees the derived key (see crypto.ts).
 
 const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
@@ -22,6 +22,13 @@ export const THROTTLE = {
   ipFailures: 30,
 }
 
+/** Sign-up throttling: new accounts per IP inside a window, then a lock. Anyone can sign up, so this keeps it to people. */
+export const SIGNUP_THROTTLE = {
+  windowMs: 60 * MINUTE,
+  lockMs: 60 * MINUTE,
+  ipSignups: 5,
+}
+
 const SMALL_BODY = 4096
 
 export interface AccountRow {
@@ -31,7 +38,6 @@ export interface AccountRow {
   role: 'admin' | 'member'
   /** The verifier for the client-derived key: nxk1$<iterations>$<client salt>$<server salt>$<hmac> */
   password_hash: string
-  invited_by: string | null
   created_at: number
   password_changed_at: number
   disabled_at: number | null
@@ -45,7 +51,6 @@ export interface AccountJson {
   displayName: string | null
   role: 'admin' | 'member'
   createdAt: number
-  invitedBy: string | null
 }
 
 export const accountJson = (a: AccountRow): AccountJson => ({
@@ -54,7 +59,6 @@ export const accountJson = (a: AccountRow): AccountJson => ({
   displayName: a.display_name,
   role: a.role,
   createdAt: a.created_at,
-  invitedBy: a.invited_by,
 })
 
 export interface Session { account: AccountRow; tokenHash: string }
@@ -119,12 +123,12 @@ async function lockedFor (env: Env, keys: string[], now: number): Promise<number
   return Math.max(0, (r?.until ?? 0) - now)
 }
 
-function tooManyAttempts (waitMs: number): HttpError {
+function tooManyAttempts (waitMs: number, what = 'failed attempts'): HttpError {
   const s = Math.ceil(waitMs / 1000)
-  return new HttpError(429, 'too_many_attempts', `Too many failed attempts. Try again in ${Math.ceil(s / 60)} min.`, { 'retry-after': String(s) })
+  return new HttpError(429, 'too_many_attempts', `Too many ${what}. Try again in ${Math.ceil(s / 60)} min.`, { 'retry-after': String(s) })
 }
 
-function failure (env: Env, key: string, limit: number, now: number): D1PreparedStatement {
+function failure (env: Env, key: string, limit: number, now: number, windowMs = THROTTLE.windowMs, lockMs = THROTTLE.lockMs): D1PreparedStatement {
   // SET expressions all see the row as it was, so the "new failures" expression is repeated for the lock.
   return env.DB.prepare(`INSERT INTO login_attempts (key, failures, window_start, locked_until, updated_at)
                          VALUES (?1, 1, ?2, CASE WHEN ?4 <= 1 THEN ?2 + ?5 ELSE 0 END, ?2)
@@ -133,7 +137,7 @@ function failure (env: Env, key: string, limit: number, now: number): D1Prepared
                            window_start = CASE WHEN ?2 - window_start >= ?3 THEN ?2 ELSE window_start END,
                            locked_until = CASE WHEN (CASE WHEN ?2 - window_start >= ?3 THEN 1 ELSE failures + 1 END) >= ?4 THEN ?2 + ?5 ELSE locked_until END,
                            updated_at = ?2`)
-    .bind(key, now, THROTTLE.windowMs, limit, THROTTLE.lockMs)
+    .bind(key, now, windowMs, limit, lockMs)
 }
 
 // ---- Handlers ---------------------------------------------------------------------
@@ -166,6 +170,38 @@ export async function prelogin (ctx: Ctx): Promise<Response> {
   const fake = await fakeSalt(key, mail)
   const real = row ? kdfParams(row.password_hash) : null
   return json({ kdf: KDF, iterations: real?.iterations ?? KDF_ITERATIONS, salt: real?.salt ?? fake })
+}
+
+/** Anyone can create an account. Returns it; the client then logs in. */
+export async function signup (ctx: Ctx): Promise<Response> {
+  const body = await readJson(ctx.req, SMALL_BODY)
+  onlyKeys(body, ['email', 'salt', 'iterations', 'key', 'displayName'])
+  const mail = email(body.email)
+  const cred = credential(body)
+  const name = displayName(body.displayName)
+  const { env, now } = ctx
+  const ipKey = await sha256Hex(`s:${clientIp(ctx.req)}`)
+  const wait = await lockedFor(env, [ipKey], now)
+  if (wait > 0) throw tooManyAttempts(wait, 'new accounts from this network')
+  // Every attempt counts, taken email or not, so the endpoint can't be used to test emails in bulk.
+  await failure(env, ipKey, SIGNUP_THROTTLE.ipSignups, now, SIGNUP_THROTTLE.windowMs, SIGNUP_THROTTLE.lockMs).run()
+
+  const taken = () => new HttpError(409, 'email_taken', 'An account with that email already exists. Sign in instead.')
+  if (await env.DB.prepare('SELECT 1 AS one FROM accounts WHERE email = ?').bind(mail).first()) throw taken()
+  const hash = await makeVerifier(cred.key, cred.salt, cred.iterations)
+  const account: AccountRow = {
+    id: crypto.randomUUID(), email: mail, display_name: name, role: 'member', password_hash: hash,
+    created_at: now, password_changed_at: now, disabled_at: null, last_seen_at: null, sync_seq: 0,
+  }
+  try {
+    await env.DB.prepare(`INSERT INTO accounts (id, email, display_name, role, password_hash, created_at, password_changed_at)
+                          VALUES (?1, ?2, ?3, 'member', ?4, ?5, ?5)`).bind(account.id, mail, name, hash, now).run()
+  } catch (err) {
+    // Two sign-ups with one email at once: the second hits the unique index.
+    if (/UNIQUE/i.test(String((err as Error).message))) throw taken()
+    throw err
+  }
+  return json({ account: accountJson(account) }, 201)
 }
 
 export async function login (ctx: Ctx): Promise<Response> {

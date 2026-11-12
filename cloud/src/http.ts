@@ -6,8 +6,6 @@ export { bad, HttpError }
 
 export interface Env {
   DB: D1Database
-  /** The website that invite links open: `<PUBLIC_URL>/join?code=nxi_…`, e.g. https://nexttupp.com */
-  PUBLIC_URL: string
 }
 
 
