@@ -5,13 +5,13 @@ assets (`nexttupp-site`). No build step, no framework, and no external requests 
 all served from `public/`), apart from the nexttupp API on the account pages.
 
 Films never play on the website: they play in the app on a computer (or on a phone, from that computer). The site
-says so wherever someone might look for them: the hero's search box answers any title with “… plays in the
-nexttupp app” beside the download, the first question is “Can I watch on this website?”, and the account pages
-lead to the app.
+says so plainly instead: the hero calls nexttupp a free app for your computer, the first “Anyone can join” step says
+films play in the app and not on this website, the first question is “Can I watch on this website?”, and the
+account pages lead to the app. (There is deliberately no search box: one that can't search would mislead.)
 
 | Path | File | |
 |---|---|---|
-| `/` | `public/index.html` | hero with the search box and the OS-aware download, four feature sections, “Anyone can join” (three steps), FAQ, all downloads |
+| `/` | `public/index.html` | hero with the OS-aware download, four feature sections, “Anyone can join” (three steps), FAQ, all downloads |
 | `/account` | `public/account.html` + `account.js` | sign in or create an account; then what to do next (below). `/signin`, `/login` redirect here, and `/signup`, `/register` to `/account#create` |
 | `/join` | `public/join.html` | how it works: download, make a free account (here or in the app), watch on a phone. Old invite links (`/join?code=…`) land here too, and `/invite` redirects here |
 | `/watch` | `public/watch.html` + `watch.js` | Watch on this phone: sign in on a phone, find the computer running nexttupp on the same Wi-Fi, and open it (below) |

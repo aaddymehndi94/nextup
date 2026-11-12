@@ -1,5 +1,5 @@
 // nexttupp.com: picks the right download for this computer, says "Account" instead of "Sign in" once signed in,
-// answers the hero search (films are in the app, not here), plus two small touches (masthead veil, reveal).
+// plus two small touches (masthead veil, reveal).
 // No requests leave the page; everything below works on the document and the saved session alone.
 
 import { currentSession } from './cloud.js'
@@ -105,25 +105,7 @@ function setUpAccountLinks () {
   for (const a of document.querySelectorAll('[data-create-link]')) { a.textContent = 'Your account'; a.href = '/account' }
 }
 
-/**
- * The hero's search box. This website has no films to search: they are found and played in the app. Someone
- * who types a title here gets that answer straight away, with their title in it, next to the download.
- */
-function setUpFind () {
-  const form = document.querySelector('[data-find]')
-  const body = document.querySelector('[data-find-body]')
-  if (!form || !body) return
-  form.addEventListener('submit', e => {
-    e.preventDefault()
-    const q = form.q.value.trim().replace(/\s+/g, ' ').slice(0, 80)
-    body.querySelector('[data-find-title]').textContent = q ? `“${q}” plays in the nexttupp app.` : 'Films play in the nexttupp app.'
-    for (const el of body.querySelectorAll('[data-find-q]')) el.textContent = q ? `“${q}”` : 'it'
-    body.hidden = false
-  })
-}
-
 setUpDownloads(detectOS())
 setUpAccountLinks()
-setUpFind()
 setUpMasthead()
 setUpReveal()
