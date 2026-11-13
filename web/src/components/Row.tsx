@@ -12,7 +12,7 @@ export function Row ({ title, caption, aside, children, variant = 'poster', id, 
   caption?: ReactNode
   aside?: ReactNode
   children: ReactNode
-  variant?: 'poster' | 'landscape'
+  variant?: 'poster' | 'landscape' | 'square' | 'circle'
   id?: string
   className?: string
   /** Called when the shelf is scrolled to within a screen of its end (to load more titles into it). */
@@ -57,7 +57,7 @@ export function Row ({ title, caption, aside, children, variant = 'poster', id, 
         </div>
         {aside && <div className="row-aside">{aside}</div>}
       </header>
-      <div className="row-frame">
+      <div className="row-frame" data-at-start={edges.start || undefined} data-at-end={edges.end || undefined}>
         <div ref={scroller} className="row-scroller">{children}</div>
         <button type="button" className="paddle start" tabIndex={-1} aria-label={`Scroll ${title} back`} hidden={edges.start} onClick={() => page(-1)}>
           <ChevronLeft aria-hidden />

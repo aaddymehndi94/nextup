@@ -85,3 +85,49 @@ hour per IP. The website derives the key in the browser exactly as the app does 
 600,000 rounds), so an account works in both whichever made it. Every new account is a member; the first admin
 is promoted by hand in D1 (see `cloud/README.md`). The owner wanted joining, downloading and signing in to be
 easy for anyone, and the invite steps were the main friction. The `invites` table stays in D1 as history.
+
+## Update, 2026-11-13: music
+
+Music taste now syncs like film taste ([0010](0010-music.md)). The owner asked for it to follow the account;
+downloads and AI settings stay on each computer.
+
+**What syncs.** Song and artist likes (last write wins on `updatedAt`, a cleared like kept as 0), listens
+(append-only by UUIDv7, so recommendations on one computer count what was played on another), and the mixes
+someone asked for: AI and mood mixes (last write wins on `at`, the newest 12 per profile kept in the cloud).
+The engine's daily, artist, Discover and On repeat mixes don't sync; each computer remakes them from the
+synced likes and listens. Song and artist ids are made by the app from names, so another computer can't
+look them up: each push also carries the songs and artists its rows name (title, credit, album, cover,
+duration, rank, and the artist's Deezer and Apple numbers, without `seen_at`), stored per account. Never
+synced: `music_files`, YouTube ids, AI settings, crossfade and the queue.
+
+**Separate endpoints, and the film pull says when to use them.** Music goes to `/v1/sync/music/push` and
+`/pull`, with its own cursor, not as new sections of the film batch. The Worker refuses unknown sections, so
+a new app sending music in the film push to a Worker that predates it would fail the whole push, films
+included. And an app from before music, pulling from a Worker that mixed music into the film pull, would
+skip past those rows and never get them after an update. Instead the film pull gains one field,
+`musicHead` (where the account's music last changed). Older apps ignore it. A new app talking to an older
+Worker doesn't see it, makes no music calls, logs one line, and keeps the rows in its outbox until the
+Worker is updated. When it is there, the app pulls music only when `musicHead` is past its music cursor, so
+an idle computer makes no extra request each minute. A capability check on `/v1/health` was rejected: it
+would be one more request per sync, and the film pull is made anyway.
+
+**A second outbox.** `sync_music_outbox` (migration 5) is filled by triggers the same way, so the film push
+never scans past thousands of listens and an older cloud's waiting music doesn't count as "changes waiting".
+The migration fills it with every music row already on the computer, so music from before the update
+uploads on the first sync after it. Music syncs after the films in each round. Rows of a profile the cloud
+doesn't have yet wait for the film push, and a music failure is logged once and never marks the sync as
+failed.
+
+**Profiles at sign-in.** Merging a local profile into the account's one of the same name also moves its
+music: the newer like wins per song or artist, every listen and asked-for mix moves, and both profiles'
+engine mixes are dropped so the next visit to Music makes them from the merged taste. A starter "Me" with
+music of its own is no longer "untouched", so it joins the account as its own profile, as one with film
+likes does.
+
+**Private mode** already recorded no listens or likes. It also saved mood mixes, and those now sync, so
+a mood mix asked for in private mode plays without being saved.
+
+
+Tests: `server/sync/music.test.ts` (outbox, backfill, merge, the service against an old and a new cloud),
+`cloud/test/music.test.ts`, and `scripts/sync-e2e.mjs`, which now also checks music between the two laptops
+(give it the servers' data dirs as `A_DATA` and `B_DATA`).

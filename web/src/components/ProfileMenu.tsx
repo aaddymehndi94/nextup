@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, CircleUserRound, Pencil, SlidersHorizontal, Sparkles, VenetianMask } from 'lucide-react'
+import { Check, CircleArrowUp, CircleUserRound, Pencil, RefreshCw, SlidersHorizontal, Sparkles, VenetianMask } from 'lucide-react'
+import { desktop, useDesktopUpdate } from '../desktop.ts'
 import { setPrivate, usePrivate } from '../private.ts'
 import { chooseProfile, useProfiles } from '../profiles.ts'
 import { navigate } from '../router.ts'
@@ -18,6 +19,7 @@ export function ProfileMenu () {
   const root = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
   const menuId = useId()
+  const update = useDesktopUpdate()
 
   useEffect(() => {
     if (!open) return
@@ -44,6 +46,13 @@ export function ProfileMenu () {
   if (profiles.status !== 'ready' || !profiles.active) return null
   const { active } = profiles
   const go = (to: string) => { setOpen(false); navigate(to) }
+  const checkForUpdate = () => {
+    setOpen(false)
+    toast('Checking for a newer nexttupp…')
+    desktop?.checkForUpdate()
+      .then(u => toast(u ? `nexttupp ${u.version} is out.${u.state === 'downloading' ? ' It’s downloading.' : ''}` : 'You have the latest nexttupp.'))
+      .catch(() => toast('Couldn’t check for updates. Try again later.'))
+  }
   const togglePrivate = () => {
     setOpen(false)
     setPrivate(!priv)
@@ -68,6 +77,7 @@ export function ProfileMenu () {
         onClick={() => setOpen(o => !o)}
       >
         <Avatar profile={active} />
+        {update && <span className="avatar-dot" aria-hidden />}
       </button>
       {open && (
         <div className="menu" role="menu" id={menuId} aria-label="Profiles">
@@ -110,6 +120,19 @@ export function ProfileMenu () {
             <CircleUserRound className="menu-icon" aria-hidden />
             <span className="menu-label">Account</span>
           </a>
+          {desktop && (update && update.state !== 'failed'
+            ? (
+              <button type="button" role="menuitem" className="menu-item" disabled={update.state === 'installing'} onClick={() => { setOpen(false); desktop!.installUpdate() }}>
+                <CircleArrowUp className="menu-icon" aria-hidden />
+                <span className="menu-label">{update.state === 'ready' ? `Restart to update to ${update.version}` : update.state === 'available' ? `Get nexttupp ${update.version}` : `Update to ${update.version}`}</span>
+              </button>
+              )
+            : (
+              <button type="button" role="menuitem" className="menu-item" onClick={checkForUpdate}>
+                <RefreshCw className="menu-icon" aria-hidden />
+                <span className="menu-label">Check for updates</span>
+              </button>
+              ))}
         </div>
       )}
     </div>

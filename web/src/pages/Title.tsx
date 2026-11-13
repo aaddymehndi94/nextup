@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, Download, Play } from 'lucide-react'
+import { Check, Clapperboard, Download, Play } from 'lucide-react'
 import type { Episode, HealthResponse, MediaType, RecItem, Source, SourcesResponse, TitleDetail, TitleState, WatchProgress } from '../../../shared/types.ts'
 import { api } from '../api.ts'
+import { useAmbient } from '../ambient.ts'
 import { RES_LABEL } from '../format.ts'
 import { useDocumentTitle, useLoaded } from '../hooks.ts'
-import { navigate } from '../router.ts'
+import { navigate, replaceUrl } from '../router.ts'
 import { noteSource, writeSessionKey } from '../storage.ts'
 import { useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
@@ -15,6 +16,8 @@ import { SourceList } from '../components/SourceList.tsx'
 import { DismissLine, TasteButtons } from '../components/TitleActions.tsx'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { TopBar } from '../components/TopBar.tsx'
+import { showPreview } from '../components/Preview.tsx'
+import { TrailerButton, TrailerVideo, useTrailer } from '../components/Trailer.tsx'
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; message: string }
 
@@ -124,7 +127,7 @@ function EpisodePicker ({ episodes, seasonParam, selected, onSelect }: {
           {seasons.map(s => (
             <button key={s} role="tab" aria-selected={s === season} className={s === season ? 'tab active' : 'tab'} onClick={() => {
               setSeason(s)
-              history.replaceState(null, '', `${location.pathname}?season=${s}`)
+              replaceUrl(`${location.pathname}?season=${s}`)
             }}>
               {s === 0 ? 'Specials' : `Season ${s}`}
             </button>
@@ -166,6 +169,7 @@ function EpisodeThumb ({ src }: { src?: string }) {
 
 function Backdrop ({ src }: { src?: string }) {
   const [loaded, onLoad] = useLoaded(src)
+  useAmbient(src)
   if (!src) return null
   return <img className="hero-backdrop" src={src} alt="" decoding="async" fetchPriority="high" data-loaded={loaded || undefined} onLoad={onLoad} />
 }
@@ -203,6 +207,7 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
   const streamId = type === 'movie' ? id : episode?.id ?? null
   const { load, health } = useSources(type, streamId)
   useDocumentTitle(detail.state === 'ok' ? detail.data.name : undefined)
+  const trailer = useTrailer(type, id, { enabled: detail.state === 'ok' && Boolean(detail.data.background && detail.data.trailers?.length) })
 
   // From Continue watching (?play=…): start the best source as soon as it is known, the way Play would.
   // The player replaces this entry, so Back returns to where the viewer came from.
@@ -215,7 +220,7 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
       const name = episode ? `${t.name} · S${episode.season}E${episode.episode} ${episode.name}` : t.name
       watchSource(best, { type, imdbId: id, streamId, name }, { replace: true })
     } else {
-      history.replaceState(null, '', location.pathname)
+      replaceUrl(location.pathname)
       if (!best) toast('No sources found to resume this. Try again later or pick another episode.')
     }
   }, [play, detail, streamId, load, episode, type, id])
@@ -260,6 +265,7 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
       <section className={`hero${t.background ? '' : ' no-art'}`}>
         <div className="hero-art">
           <Backdrop src={t.background} />
+          <TrailerVideo trailer={trailer} />
         </div>
         <div className="hero-shade" />
         <TopBar />
@@ -278,7 +284,12 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
             <button type="button" className="round-button" disabled={!best} aria-pressed={bestSaved} aria-label={bestSaved ? 'Downloading' : 'Download to watch later'} data-tip={bestSaved ? 'Downloading' : 'Download'} onClick={() => best && download(best)}>
               {bestSaved ? <Check aria-hidden /> : <Download aria-hidden />}
             </button>
+            <button type="button" className="round-button" aria-label={`Watch the trailer for ${t.name}`} data-tip="Trailer"
+              onClick={() => showPreview(t, { trailerOnly: true })}>
+              <Clapperboard aria-hidden />
+            </button>
             <TasteButtons actions={taste} name={t.name} />
+            <TrailerButton trailer={trailer} />
           </div>
           {resume && (
             <p className="hero-progress">

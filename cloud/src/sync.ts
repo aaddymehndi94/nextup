@@ -12,8 +12,8 @@ export { LIMITS }
 // ---- Push ---------------------------------------------------------------------------------
 
 /** seq for row j of a section: the account's counter was raised by `n` first, rows take the slots after `off`. */
-const SEQ = '(SELECT sync_seq FROM accounts WHERE id = ?1) - ?3 + j.key + 1'
-const f = (k: string) => `json_extract(j.value, '$.${k}')`
+export const SEQ = '(SELECT sync_seq FROM accounts WHERE id = ?1) - ?3 + j.key + 1'
+export const f = (k: string) => `json_extract(j.value, '$.${k}')`
 
 // Every statement binds ?1 = account id, ?2 = the section's rows as JSON, ?3 = n - off.
 const UPSERT: Record<Section, string> = {
@@ -196,24 +196,33 @@ const OUT: { [S in Section]: (r: Row) => Batch[S][number] } = {
   prefs: r => ({ profileId: r.profile_id as string, feature: r.feature as string, value: r.value as -1 | 0 | 1, updatedAt: r.updated_at as number }),
 }
 
-export async function pull (ctx: Ctx): Promise<Response> {
-  const { account } = await authenticate(ctx)
-  const q = ctx.url.searchParams
+/** A pull's `since` and `limit` (no other query parameters). */
+export function pageParams (url: URL): { since: number; limit: number } {
+  const q = url.searchParams
   for (const k of q.keys()) if (k !== 'since' && k !== 'limit') throw bad(`query: unknown parameter "${k}"`)
   const sinceS = q.get('since') ?? '0'
   if (!/^\d{1,15}$/.test(sinceS)) throw bad('since: must be a cursor returned by a previous pull, or 0')
-  const since = Number(sinceS)
   const limit = q.has('limit') ? int(Number(q.get('limit')), 'limit', 1, LIMITS.pullMax) : LIMITS.pullDefault
+  return { since: Number(sinceS), limit }
+}
+
+export const cursorAhead = () => new HttpError(409, 'cursor_ahead', 'This cursor is from a newer state than the server has; pull again from since=0')
+
+export async function pull (ctx: Ctx): Promise<Response> {
+  const { account } = await authenticate(ctx)
+  const { since, limit } = pageParams(ctx.url)
   const { env } = ctx
 
   // One batch is one consistent snapshot. Each table gives its first limit+1 rows after the cursor; the
-  // smallest `limit` seqs across all of them are the page.
-  const results = await env.DB.batch<Row | { sync_seq: number }>([
-    env.DB.prepare('SELECT sync_seq FROM accounts WHERE id = ?').bind(account.id),
+  // smallest `limit` seqs across all of them are the page. `SELECT *` rather than naming music_seq, so this
+  // still works on a database without the music migration (it then reports no musicHead).
+  const results = await env.DB.batch<Row | { sync_seq: number; music_seq?: number }>([
+    env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(account.id),
     ...SECTIONS.map(s => env.DB.prepare(`SELECT * FROM ${TABLE[s]} WHERE account_id = ? AND seq > ? ORDER BY seq LIMIT ?`).bind(account.id, since, limit + 1)),
   ])
-  const head = (results[0].results[0] as { sync_seq: number }).sync_seq
-  if (since > head) throw new HttpError(409, 'cursor_ahead', 'This cursor is from a newer state than the server has; pull again from since=0')
+  const acct = results[0].results[0] as { sync_seq: number; music_seq?: number }
+  const head = acct.sync_seq
+  if (since > head) throw cursorAhead()
   const all: Array<{ s: Section; r: Row }> = []
   SECTIONS.forEach((s, i) => { for (const r of results[i + 1].results as Row[]) all.push({ s, r }) })
   all.sort((a, b) => a.r.seq - b.r.seq)
@@ -223,5 +232,8 @@ export async function pull (ctx: Ctx): Promise<Response> {
   for (const { s, r } of page) out[s].push(OUT[s](r))
   // The cursor only moves when rows come back (a push that changed nothing leaves gaps in seq, not rows).
   const cursor = page.length ? page[page.length - 1].r.seq : since
-  return json({ cursor: String(cursor), more, serverTime: ctx.now, ...out })
+  // musicHead: where the account's music last changed (see music.ts). Its presence also tells a client
+  // that this Worker syncs music; older Workers leave it out, and older clients ignore it.
+  const music = typeof acct.music_seq === 'number' ? { musicHead: String(acct.music_seq) } : {}
+  return json({ cursor: String(cursor), more, serverTime: ctx.now, ...music, ...out })
 }

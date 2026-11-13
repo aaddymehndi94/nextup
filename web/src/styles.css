@@ -10,8 +10,11 @@
   font-display: swap;
 }
 
+/* Registered so a title page's tint (ambient.ts) fades in and out instead of snapping. */
+@property --bg { syntax: '<color>'; inherits: true; initial-value: #0a0a0b; }
 :root {
   --bg: #0a0a0b;
+  transition: --bg 900ms ease;
   --bg-1: #131315;
   --bg-2: #1b1b1e;
   --line: rgb(255 255 255 / 0.08);
@@ -311,8 +314,8 @@ h1, h2, h3, p { margin: 0; }
 .billboard-shade {
   position: absolute; inset: 0; z-index: -1;
   background:
-    linear-gradient(90deg, rgb(10 10 11 / 0.84) 0%, rgb(10 10 11 / 0.52) 30%, rgb(10 10 11 / 0) 62%),
-    linear-gradient(0deg, var(--bg) 0%, rgb(10 10 11 / 0.72) 14%, rgb(10 10 11 / 0) 44%);
+    linear-gradient(90deg, color-mix(in srgb, var(--bg) 84%, transparent) 0%, color-mix(in srgb, var(--bg) 52%, transparent) 30%, color-mix(in srgb, var(--bg) 0%, transparent) 62%),
+    linear-gradient(0deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 72%, transparent) 14%, color-mix(in srgb, var(--bg) 0%, transparent) 44%);
 }
 .billboard-content {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1rem;
@@ -395,6 +398,16 @@ h1, h2, h3, p { margin: 0; }
 .row-scroller > * { scroll-snap-align: start; }
 .row-poster .row-scroller { grid-auto-columns: clamp(8.25rem, 12.4vw, 12rem); }
 .row-landscape .row-scroller { grid-auto-columns: clamp(16rem, 25vw, 23rem); }
+
+/* The shelf fades out at an edge where more titles continue, so it's clear there's more to scroll to. */
+.row-frame { --fade-start: 0px; --fade-end: 3.5rem; }
+.row-frame[data-at-start] { --fade-start: 0px; }
+.row-frame:not([data-at-start]) { --fade-start: 3.5rem; }
+.row-frame[data-at-end] { --fade-end: 0px; }
+.row-scroller {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+}
 
 .paddle { display: none; }
 @media (hover: hover) and (pointer: fine) {
@@ -534,9 +547,9 @@ h1, h2, h3, p { margin: 0; }
 .hero-shade {
   position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background:
-    linear-gradient(180deg, rgb(10 10 11 / 0.7) 0%, rgb(10 10 11 / 0) 22%),
-    linear-gradient(90deg, rgb(10 10 11 / 0.88) 0%, rgb(10 10 11 / 0.6) 32%, rgb(10 10 11 / 0) 66%),
-    linear-gradient(0deg, var(--bg) 0%, rgb(10 10 11 / 0.75) 16%, rgb(10 10 11 / 0) 46%);
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, transparent) 0%, color-mix(in srgb, var(--bg) 0%, transparent) 22%),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg) 88%, transparent) 0%, color-mix(in srgb, var(--bg) 60%, transparent) 32%, color-mix(in srgb, var(--bg) 0%, transparent) 66%),
+    linear-gradient(0deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 75%, transparent) 16%, color-mix(in srgb, var(--bg) 0%, transparent) 46%);
 }
 .hero-content {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1rem;
@@ -968,28 +981,56 @@ h1, h2, h3, p { margin: 0; }
 .menu-check { width: 1.125rem; height: 1.125rem; flex: none; }
 .menu-rule { height: 1px; margin: 0.375rem 0.625rem; background: var(--line); }
 
-/* ---------- Recommendation cards ---------- */
-/* The remove button sits under the art, beside the name: a spacer the art's height stacks it in place. */
-.card { --meta-gap: 0.625rem; display: grid; min-width: 0; }
-.card > * { grid-area: 1 / 1; min-width: 0; }
-.card-tools { display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }
-.card-tools::before { content: ''; display: block; width: 100%; aspect-ratio: 2 / 3; flex: none; }
-.card .poster-name { padding-right: 1.625rem; }
-.card-remove {
-  pointer-events: auto; display: grid; place-items: center; flex: none;
-  width: 1.75rem; height: 1.75rem; margin: calc(var(--meta-gap) - 0.28rem) -0.25rem 0 0; border-radius: 50%;
-  color: var(--text-3); transition: background 160ms, color 160ms, opacity 160ms;
+/* ---------- Title cards ---------- */
+/* My List, Like and Dislike are always under the poster, quiet until used; "not interested" sits at the far end. */
+.card { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.card-actions { display: flex; align-items: center; gap: 0.125rem; margin-inline: -0.375rem; }
+.card-action {
+  display: grid; place-items: center; flex: none; width: 2rem; height: 2rem; border-radius: 50%;
+  color: var(--text-3); transition: background 160ms var(--ease), color 160ms, transform 160ms var(--ease);
 }
-.card-remove svg { width: 1rem; height: 1rem; stroke-width: 2.25; }
-.card-remove:hover { color: var(--text); background: rgb(255 255 255 / 0.12); }
-/* Its tip opens upwards, over the art, so the row's scroller doesn't clip it. */
-.card-remove[data-tip]::after { top: auto; bottom: calc(100% + 0.375rem); left: auto; right: 0; transform: translateY(0.25rem); }
-@media (hover: hover) and (pointer: fine) {
-  .card-remove { opacity: 0; }
-  .card:hover .card-remove, .card:focus-within .card-remove { opacity: 1; }
-  .card-remove[data-tip]:hover::after { transform: none; }
-}
+.card-action svg { width: 1rem; height: 1rem; stroke-width: 2.1; }
+.card-action:hover { color: var(--text); background: rgb(255 255 255 / 0.1); }
+.card-action:active { transform: scale(0.9); }
+.card-action[aria-pressed='true'] { color: var(--on-light); background: #fff; }
+.card-action[aria-pressed='true'] svg { stroke-width: 2.4; }
+.card-action[aria-pressed='true']:hover { background: rgb(255 255 255 / 0.86); }
+.card-remove { margin-left: auto; }
+/* Tips open upwards, over the name, so the row's scroller doesn't clip them. */
+.card-action[data-tip]::after { top: auto; bottom: calc(100% + 0.25rem); }
+.card-remove[data-tip]::after { left: auto; right: 0; transform: translateY(0.25rem); }
+@media (hover: hover) and (pointer: fine) { .card-remove[data-tip]:hover::after { transform: none; } }
 .card-remove[data-tip]:focus-visible::after { transform: none; }
+.card.is-disliked .poster-art img[data-loaded] { opacity: 0.45; filter: grayscale(0.6); }
+/* Skeletons keep the same height, so nothing jumps when the cards arrive. */
+.poster-skeleton::after { content: ''; display: block; height: 2rem; margin-top: -0.375rem; }
+
+/* ---------- Update (desktop app) ---------- */
+.update-banner {
+  position: fixed; left: 1.25rem; bottom: calc(env(safe-area-inset-bottom, 0px) + 1.25rem); z-index: 45;
+  display: flex; align-items: flex-start; gap: 0.875rem; width: min(23rem, calc(100vw - 2.5rem));
+  padding: 1rem 0.625rem 1rem 1rem; border-radius: 1.25rem;
+  background: rgb(28 28 31 / 0.94); -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 1.25rem 3rem -1.25rem rgb(0 0 0 / 0.9);
+  animation: snack-in 320ms var(--ease) both;
+}
+html.has-mini .update-banner { bottom: calc(env(safe-area-inset-bottom, 0px) + 6rem); }
+.update-icon { flex: none; width: 1.5rem; height: 1.5rem; margin-top: 0.0625rem; color: var(--text); }
+.update-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.update-title { font-weight: 650; font-size: 0.9875rem; line-height: 1.35; }
+.update-body { font-size: 0.875rem; line-height: 1.45; color: var(--text-2); text-wrap: pretty; }
+.update-bar { display: block; height: 0.25rem; margin-top: 0.5rem; border-radius: 999px; background: rgb(255 255 255 / 0.14); overflow: hidden; }
+.update-bar > span { display: block; height: 100%; border-radius: inherit; background: #fff; transition: width 400ms var(--ease); }
+.update-actions { display: flex; align-items: center; gap: 1rem; margin-top: 0.625rem; }
+.update-actions .button { height: 2.25rem; padding: 0 1rem; font-size: 0.875rem; }
+.update-close { flex: none; margin: -0.375rem 0 0; }
+.update-close[data-tip]::after { top: auto; bottom: calc(100% + 0.25rem); }
+.avatar-button { position: relative; }
+.avatar-dot {
+  position: absolute; top: 0.0625rem; right: 0.0625rem; width: 0.6875rem; height: 0.6875rem; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 2px var(--bg);
+}
+@media (prefers-reduced-motion: reduce) { .update-banner { animation: none; } }
 
 /* Onboarding: rate right on the card. */
 .rate-card { display: flex; flex-direction: column; gap: 0.625rem; min-width: 0; }
@@ -1218,7 +1259,7 @@ h1, h2, h3, p { margin: 0; }
   .hero-art { position: relative; inset: auto; aspect-ratio: 4 / 3.3; }
   .hero-art::after {
     content: ''; position: absolute; inset: 0;
-    background: linear-gradient(0deg, var(--bg) 0%, rgb(10 10 11 / 0) 42%), linear-gradient(180deg, rgb(10 10 11 / 0.72), rgb(10 10 11 / 0) 32%);
+    background: linear-gradient(0deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 0%, transparent) 42%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 72%, transparent), color-mix(in srgb, var(--bg) 0%, transparent) 32%);
   }
   .hero-shade { display: none; }
   .hero.no-art .hero-art { display: none; }
@@ -1286,10 +1327,17 @@ h1, h2, h3, p { margin: 0; }
   .poster, .poster-skeleton { gap: 1.125rem; }
   .episode { gap: 1.125rem; }
   .download { row-gap: 1.125rem; }
-  .card { --meta-gap: 1.125rem; }
+  .card { gap: 0.625rem; }
+  .card-action { width: 2.5rem; height: 2.5rem; }
+  .card-action svg { width: 1.25rem; height: 1.25rem; }
+  .poster-skeleton::after { height: 2.5rem; }
   .rate-card { gap: 1.125rem; }
   .profile-art { outline-width: 4px; outline-offset: 5px; }
 }
+
+/* Page changes cross-fade (router.ts). The music bar stays put rather than fading with the page. */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 220ms; animation-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+.mini { view-transition-name: music-bar; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 1ms !important; scroll-behavior: auto !important; }

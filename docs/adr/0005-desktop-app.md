@@ -137,6 +137,36 @@ them over:
 `NEXTTUPP_ENCODER` forces one (it's used even if its test fails), and `NEXTTUPP_VAAPI_DEVICE` picks the
 render node. `/api/health` reports the choice.
 
+## Updates and the page's bridge (added in 0.5)
+
+- **The page's bridge.** A sandboxed preload (`desktop/src/preload.ts`) gives the page `window.nexttuppDesktop`
+  (types in `shared/desktop.ts`). It carries messages only. The main process answers only frames loaded from
+  our own server.
+- **"Now playing" notification with Like** (`desktop/src/now-playing.ts`). The system media controls come from
+  the page's Media Session, which has no Like button, so a notification sits beside them.
+  - It's an Electron `Notification` with one button, Like or Unlike. Electron 44 sends buttons to the
+    freedesktop notification server on Linux too.
+  - It's low urgency and never expires. GNOME files it in the notification list without a banner.
+  - It's replaced as songs change and closed on quit.
+  - The `Notification` object is kept referenced; once it's garbage-collected, its button stops reporting.
+  - Off Linux, a new song only shows it while the window isn't in front.
+- **Updates** (`desktop/src/updates.ts`, `update-check.ts`).
+  - Checks GitHub's latest release 20 s after launch and every 6 hours.
+  - Downloads this computer's installer in the background, using the fixed asset names in
+    `electron-builder.yml`.
+  - Verifies it against the release's `SHA256SUMS.txt`.
+  - "Restart now" installs and relaunches:
+    - .deb: `pkexec dpkg -i`, so the system asks for the password;
+    - AppImage: replaces the file at `$APPIMAGE`;
+    - Windows: the NSIS installer with `/S --force-run`;
+    - macOS: opens the release page (an ad-hoc-signed app can't replace itself).
+  - The page shows a card on every launch until updated, and a dot and menu item on the avatar. There's also
+    one system notification per version.
+  - `NEXTTUPP_UPDATE_FEED`, `NEXTTUPP_UPDATE_KIND` and `NEXTTUPP_UPDATE_FIRST_MS` exist for testing it
+    against a fake release.
+  - electron-updater wasn't used. It needs `latest-*.yml` files the release doesn't publish, and these few
+    lines cover the three self-installing formats.
+
 ## Measurements (this laptop: i7-11800H, RTX 3060 Laptop on driver 595.99, Intel UHD on iHD 24.1, Ubuntu 24.04)
 
 Encoders, `desktop/scripts/encoder-check.mjs`: a synthetic 4K HEVC 10-bit PQ clip, 10 s transcoded from
@@ -191,7 +221,7 @@ app code 4.3.
 - Chromium's sandbox can't run in an AppImage where unprivileged user namespaces are restricted (Ubuntu
   24.04+). electron-builder's AppRun then adds `--no-sandbox`. The window only ever loads our local app,
   and navigation elsewhere opens the system browser.
-- Not done this round: macOS, an actual Windows build, CI, auto-update (electron-updater) and code signing.
+- Not done this round: code signing. (Auto-update came later: see "Updates" above.)
 
 ## Building
 

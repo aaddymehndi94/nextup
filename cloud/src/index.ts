@@ -3,6 +3,7 @@ import { changePassword, getAccount, login, logout, patchAccount, prelogin, rese
 import { createHandoff, deleteDevice, listDevices, putDevice, redeemHandoff } from './devices.ts'
 import { type Env, json, Router } from './http.ts'
 import { appScript, resetPage } from './pages.ts'
+import { musicPull, musicPush } from './music.ts'
 import { pull, push } from './sync.ts'
 
 // nexttupp cloud: accounts and taste sync for the desktop app. No titles, sources, torrent
@@ -36,6 +37,8 @@ const router = new Router()
 
   .on('POST', '/v1/sync/push', push)
   .on('GET', '/v1/sync/pull', pull)
+  .on('POST', '/v1/sync/music/push', musicPush)
+  .on('GET', '/v1/sync/music/pull', musicPull)
 
   .on('GET', '/reset', async () => resetPage())
   .on('GET', '/app.js', async () => appScript())

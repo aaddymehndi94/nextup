@@ -1,9 +1,12 @@
 // nexttupp desktop: runs the nexttupp server in an Electron utility process on a localhost port and shows it
 // in a window. Decisions and measurements: docs/adr/0005-desktop-app.md.
-import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage, shell, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type UtilityProcess } from 'electron'
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type WriteStream } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
+import type { DesktopNowPlaying } from '../../shared/desktop.ts'
+import { NowPlayingNotice } from './now-playing.ts'
+import { Updater } from './updates.ts'
 
 const ICON = join(__dirname, 'icon.png')
 const SERVER_ENTRY = join(__dirname, 'server', 'server.mjs')
@@ -25,6 +28,20 @@ let baseUrl = ''
 let quitting = false
 let downloadTimer: NodeJS.Timeout | null = null
 
+const nowPlaying = new NowPlayingNotice({
+  icon: ICON,
+  onAction: (action, id) => win?.webContents.send('music-action', { action, id }),
+  onOpen: () => showWindow(),
+  quiet: () => process.platform !== 'linux' && !!win?.isVisible() && win.isFocused(),
+})
+const updater = new Updater({
+  icon: ICON,
+  dir: join(userData, 'updates'),
+  publish: update => win?.webContents.send('update', update),
+  onOpen: () => showWindow(),
+  log: line => serverLog?.write(`[desktop] ${line}\n`),
+})
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -40,7 +57,9 @@ async function start (): Promise<void> {
   const port = await pickPort()
   await startServer(port)
   console.log(`[desktop] server ready on ${baseUrl} in ${Date.now() - t0} ms`)
+  listenToPage()
   createWindow()
+  updater.start()
 }
 
 // ---- Server ------------------------------------------------------------------------------------------------
@@ -165,7 +184,7 @@ function createWindow (): void {
     backgroundColor: '#0b0b0f',
     show: false,
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, autoplayPolicy: 'no-user-gesture-required' },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, autoplayPolicy: 'no-user-gesture-required', preload: join(__dirname, 'preload.cjs') },
   })
   win.once('ready-to-show', () => win?.show())
   // Anything that isn't our own app opens in the system browser.
@@ -197,6 +216,32 @@ function showWindow (): void {
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
+}
+
+// ---- What the page asks for (desktop/src/preload.ts) ---------------------------------------------------------
+
+function listenToPage (): void {
+  // Only our own page, never a site it might have navigated to.
+  const ours = (e: IpcMainEvent | IpcMainInvokeEvent) => !!e.senderFrame?.url.startsWith(`${baseUrl}/`)
+  ipcMain.on('now-playing', (e, info: unknown) => { if (ours(e)) nowPlaying.update(songOf(info)) })
+  ipcMain.handle('update-status', e => (ours(e) ? updater.current() : null))
+  ipcMain.handle('update-check', e => (ours(e) ? updater.check() : null))
+  ipcMain.on('update-install', e => { if (ours(e)) void updater.install() })
+}
+
+function songOf (v: unknown): DesktopNowPlaying | null {
+  const o = v as Partial<Record<keyof DesktopNowPlaying, unknown>> | null
+  if (!o || typeof o.id !== 'string' || typeof o.title !== 'string' || typeof o.artist !== 'string') return null
+  const text = (x: unknown) => (typeof x === 'string' && x ? x.slice(0, 200) : undefined)
+  return {
+    id: o.id.slice(0, 100),
+    title: o.title.slice(0, 200),
+    artist: o.artist.slice(0, 200),
+    album: text(o.album),
+    cover: text(o.cover),
+    liked: o.liked === true,
+    playing: o.playing === true,
+  }
 }
 
 // ---- Downloads and tray ------------------------------------------------------------------------------------
@@ -246,6 +291,7 @@ app.on('before-quit', e => {
   if (quitting) return
   quitting = true
   if (downloadTimer) clearInterval(downloadTimer)
+  nowPlaying.close()
   void stopServer().finally(() => {
     serverLog?.end()
     tray?.destroy()

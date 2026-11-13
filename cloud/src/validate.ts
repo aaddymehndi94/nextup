@@ -51,6 +51,43 @@ export function plainText (v: unknown, path: string, max: number): string {
   return s
 }
 
+// Music (wire.ts, "Music"): the ids the app makes from normalised names (server/music/catalog.ts), album ids
+// as the catalogs give them, and saved-mix ids.
+export const TRACK_ID = /^t[0-9a-f]{16}$/
+export const ARTIST_ID = /^a[0-9a-f]{12}$/
+export const ALBUM_ID = /^(it|dz)\d{1,15}$/
+export const MIX_ID = /^m[0-9a-f]{15}$/
+/** An artist's number in Apple's or Deezer's catalog. */
+export const CATALOG_ID = /^\d{1,15}$/
+
+// Song titles and artist names can have long words ("Supercalifragilisticexpialidocious"), so catalog text
+// only refuses runs shaped like a hash: 32+ hex digits in one case, or 32+ upper-case base32 characters.
+const HASH_RUN = /[0-9a-f]{32,}|[0-9A-F]{32,}|[A-Z2-7]{32,}/
+
+/** A song title, artist or album name, or a mix's title: like plainText, but long words are fine. */
+export function catalogText (v: unknown, path: string, max: number): string {
+  const s = str(v, path)
+  const chars = [...s].length
+  if (s !== s.trim() || chars < 1 || chars > max) throw bad(`${path}: must be 1–${max} characters without leading or trailing spaces`)
+  if (CONTROL.test(s)) throw bad(`${path}: contains control characters`)
+  if (HASH_RUN.test(s) || TORRENTISH.test(s)) throw bad(`${path}: looks like a hash, link or file name, which can't be stored`)
+  return s
+}
+
+/** The image hosts music pictures come from (the same ones the app's image relay allows). */
+const IMAGE_HOSTS = [/(^|\.)dzcdn\.net$/, /(^|\.)mzstatic\.com$/]
+
+/** An artist picture or album cover: an https link to Deezer's or Apple's image servers, nothing else. */
+export function imageUrl (v: unknown, path: string): string {
+  const s = str(v, path)
+  let u: URL | null = null
+  if (s.length <= 512 && !CONTROL.test(s) && !/\s/.test(s)) { try { u = new URL(s) } catch { u = null } }
+  if (!u || u.protocol !== 'https:' || u.username || u.password || u.port || !IMAGE_HOSTS.some(h => h.test(u.hostname))) {
+    throw bad(`${path}: must be an https picture link from Deezer or Apple`)
+  }
+  return s
+}
+
 /** Millisecond timestamps: not before 2020, not more than an hour ahead of the server clock. */
 export const MIN_TIME = Date.UTC(2020, 0, 1)
 export const MAX_SKEW_MS = 3600_000

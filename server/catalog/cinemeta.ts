@@ -22,6 +22,8 @@ interface CinemetaMeta {
   imdbRating?: string
   cast?: string[]
   director?: string[] | null
+  trailers?: Array<{ source?: string; type?: string }>
+  trailerStreams?: Array<{ ytId?: string }>
   videos?: Array<{ id: string; season: number; episode?: number; number?: number; name?: string; title?: string; released?: string; firstAired?: string; thumbnail?: string; overview?: string; description?: string }>
 }
 
@@ -106,5 +108,13 @@ export async function detail (type: MediaType, id: string): Promise<TitleDetail>
     cast: (m.cast ?? []).map(c => decodeEntities(c)),
     director: (m.director ?? []).map(d => decodeEntities(d)),
     episodes,
+    trailers: trailerIds(m),
   }
+}
+
+/** YouTube ids of the trailers, "Trailer" before teasers and clips, without repeats. */
+export function trailerIds (m: Pick<CinemetaMeta, 'trailers' | 'trailerStreams'>): string[] {
+  const listed = [...(m.trailers ?? [])].sort((a, b) => Number(b.type === 'Trailer') - Number(a.type === 'Trailer')).map(t => t.source)
+  const ids = [...listed, ...(m.trailerStreams ?? []).map(t => t.ytId)].filter((id): id is string => typeof id === 'string' && /^[\w-]{11}$/.test(id))
+  return [...new Set(ids)]
 }

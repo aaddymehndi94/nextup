@@ -2,6 +2,7 @@
 //   web/            the web app (vite, from ../web; never touches the root dist/)
 //   server/server.mjs  the nexttupp server and its dependencies, one ES module (esbuild)
 //   main.cjs        the Electron main process
+//   preload.cjs     the page's bridge to it (Now playing notification, updates)
 //   icon.png        window and tray icon
 // Installers come from electron-builder afterwards (scripts/dist.mjs). Needs `npm install` at the repo root.
 //
@@ -50,6 +51,18 @@ await build({
 await build({
   entryPoints: [join(DESKTOP, 'src', 'main.ts')],
   outfile: join(OUT, 'main.cjs'),
+  bundle: true,
+  platform: 'node',
+  target: 'node24',
+  format: 'cjs',
+  external: ['electron'],
+  logLevel: 'warning',
+})
+
+// The page's preload (sandboxed: one file, only `electron` from outside).
+await build({
+  entryPoints: [join(DESKTOP, 'src', 'preload.ts')],
+  outfile: join(OUT, 'preload.cjs'),
   bundle: true,
   platform: 'node',
   target: 'node24',

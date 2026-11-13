@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/main.ts", "src/shutdown-bridge.ts", "src/webrtc-stub.ts"]
+  "include": ["src/main.ts", "src/preload.ts", "src/shutdown-bridge.ts", "src/webrtc-stub.ts"]
 }

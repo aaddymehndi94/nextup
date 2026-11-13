@@ -1,10 +1,18 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+
+/**
+ * False while this page is kept alive behind another (main.tsx): it stays mounted, hidden, so Back finds it
+ * as it was. Things that act on the whole window (the tab title, keyboard shortcuts) wait until it's shown.
+ */
+export const PageActive = createContext(true)
+export const usePageActive = () => useContext(PageActive)
 
 /** Sets the tab title: "Title · nexttupp", or just the brand. */
 export function useDocumentTitle (title?: string) {
+  const active = usePageActive()
   useEffect(() => {
-    document.title = title ? `${title} · nexttupp` : 'nexttupp'
-  }, [title])
+    if (active) document.title = title ? `${title} · nexttupp` : 'nexttupp'
+  }, [title, active])
 }
 
 /** True once the page has scrolled past `threshold` px; drives the masthead's solid state. */

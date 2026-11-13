@@ -1,7 +1,7 @@
 import { pbkdf2, randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { KDF, KDF_ITERATIONS } from '../../cloud/src/crypto.ts'
-import type { Batch } from '../../cloud/src/wire.ts'
+import type { Batch, MusicBatch } from '../../cloud/src/wire.ts'
 
 // The nexttupp cloud API (cloud/README.md), as the local server calls it. Passwords are stretched here
 // with PBKDF2-SHA256 and never sent; the cloud only sees the derived key.
@@ -20,7 +20,14 @@ export class CloudError extends Error {
 }
 
 export interface CloudAccount { id: string; email: string; displayName: string | null; role: 'admin' | 'member'; createdAt: number }
-export interface PullPage extends Batch { cursor: string; more: boolean; serverTime: number }
+export interface PullPage extends Batch {
+  cursor: string
+  more: boolean
+  serverTime: number
+  /** Where the account's music last changed. Missing from a Worker that doesn't sync music (before 0005). */
+  musicHead?: string
+}
+export interface MusicPullPage extends MusicBatch { cursor: string; more: boolean; serverTime: number }
 
 const pbkdf2Async = promisify(pbkdf2)
 
@@ -113,5 +120,14 @@ export class CloudClient {
 
   pull (token: string, since: string, limit = 500) {
     return this.request<PullPage>('GET', `/v1/sync/pull?since=${encodeURIComponent(since)}&limit=${limit}`, { token, timeoutMs: 30_000 })
+  }
+
+  // Music (cloud/README.md, "Music"): only called when the film pull reported a musicHead.
+  musicPush (token: string, batch: MusicBatch) {
+    return this.request<{ applied: Record<string, number>; musicHead: string; serverTime: number }>('POST', '/v1/sync/music/push', { token, body: batch, timeoutMs: 30_000 })
+  }
+
+  musicPull (token: string, since: string, limit = 500) {
+    return this.request<MusicPullPage>('GET', `/v1/sync/music/pull?since=${encodeURIComponent(since)}&limit=${limit}`, { token, timeoutMs: 30_000 })
   }
 }

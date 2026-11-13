@@ -9,6 +9,10 @@ import { CastError, type MediaReceiver, type MediaStatus, MediaReceiver as Recei
 // the TV's own IP address and only while this cast runs (a reload for a seek makes a new one and keeps the
 // old one alive for 30 s). Any page of the app (on the computer or a connected phone) can start, follow and
 // control it through /api/cast.
+//
+// Subtitles: the TV is loaded with every subtitle the viewer can pick as its own text track, each at
+// /cast/<its own token>/subs.vtt, so turning subtitles on, off or to another language only switches tracks
+// on the TV (EDIT_TRACKS_INFO). Reloading would restart the stream and make the TV buffer it all again.
 
 export type CastState = 'connecting' | 'loading' | 'buffering' | 'playing' | 'paused' | 'ended' | 'stopped' | 'error'
 
@@ -31,13 +35,19 @@ export interface CastStatus {
 
 export interface CastSubtitle { url: string; label?: string; lang?: string; offset?: number }
 
+/** As many subtitles as the player lists; each is a track on the TV. */
+export const MAX_TEXT_TRACKS = 40
+
 export interface StartCast {
   deviceId: string
   sessionId: string
   /** Film time to start at. */
   t: number
   audio?: number
+  /** The subtitle showing from the start. */
   subtitle?: CastSubtitle | null
+  /** Every subtitle the viewer can switch to while casting (the player's list). */
+  subtitles?: CastSubtitle[]
   title?: string
   streamId?: string
   image?: string
@@ -80,8 +90,15 @@ interface Cast {
   origin: number
   /** 0 when the TV reports film time, `origin` when its clock restarts at 0 for each stream; null until known. */
   clockBase: number | null
+  /** Settles once `origin` is known (the keyframe lookup), so a subtitle shown later is shifted right. */
+  originReady: Promise<void>
   startedAt: number
+  /** The stream's token; `tokens` also holds one per subtitle track. */
   token: string
+  tokens: string[]
+  /** The subtitle tracks the TV was loaded with, and the one showing (an index), if any. */
+  tracks: CastSubtitle[]
+  activeTrack: number | null
   last: { currentTime: number; playerState: string; at: number } | null
   state: CastState
   volume: number | null
@@ -93,6 +110,28 @@ interface Cast {
 
 const TOKEN_TTL_MS = 12 * 3600_000
 const TOKEN_GRACE_MS = 30_000
+/** How long a load (or a subtitle switch) waits for where a copied stream really starts. */
+const ORIGIN_WAIT_MS = 10_000
+
+const later = <T>(ms: number, value: T) => new Promise<T>(resolve => setTimeout(resolve, ms, value).unref())
+
+/**
+ * The tracks for the TV: the viewer's choices (one per URL, at most MAX_TEXT_TRACKS) with `showing` among
+ * them, carrying its timing offset. Returns them and the index of `showing`.
+ */
+export function subtitleTracks (showing: CastSubtitle | null, choices: CastSubtitle[]): { tracks: CastSubtitle[]; activeTrack: number | null } {
+  const tracks: CastSubtitle[] = []
+  const seen = new Set<string>()
+  for (const s of choices) {
+    if (seen.has(s.url)) continue
+    seen.add(s.url)
+    tracks.push(showing && s.url === showing.url ? showing : s)
+  }
+  if (showing && !seen.has(showing.url)) tracks.unshift(showing)
+  const kept = tracks.slice(0, MAX_TEXT_TRACKS)
+  if (showing && !kept.includes(showing)) kept[kept.length - 1] = showing
+  return { tracks: kept, activeTrack: showing ? kept.indexOf(showing) : null }
+}
 
 export interface CastOptions {
   discovery: CastDiscovery
@@ -101,6 +140,8 @@ export interface CastOptions {
   connect?: (device: CastDevice) => Promise<MediaReceiver>
   log?: (msg: string) => void
   pollMs?: number
+  /** Called before a cast starts: music casting stops, one cast at a time. */
+  beforeStart?: () => Promise<unknown>
 }
 
 export class CastService {
@@ -109,6 +150,9 @@ export class CastService {
   private current: Cast | null = null
   private readonly tokens = new Map<string, CastToken>()
   private busy: Promise<unknown> = Promise.resolve()
+  /** The newest seek; queued older ones are skipped (each would reload a converted stream for nothing). */
+  private seekGen = 0
+  private lastSeek: Promise<CastStatus> | null = null
 
   constructor (opts: CastOptions) {
     this.opts = opts
@@ -157,6 +201,7 @@ export class CastService {
   start (req: StartCast): Promise<CastStatus> {
     return this.serial(async () => {
       await this.end('stopped', true)
+      await this.opts.beforeStart?.().catch(() => {})
       const device = this.opts.discovery.get(req.deviceId)
       if (!device) throw new CastError('unknown_device', 'That TV isn’t on the network any more. Look for TVs again.')
       const release = this.opts.lan.holdForCast()
@@ -170,7 +215,9 @@ export class CastService {
         await receiver.launch()
         const cast: Cast = {
           device, receiver, req, plan, duration: durationSec, contentType, lanAddress,
-          origin: 0, clockBase: null, startedAt: 0, token: '', last: null, state: 'loading', volume: null, muted: false, release,
+          origin: 0, clockBase: null, originReady: Promise.resolve(), startedAt: 0, token: '', tokens: [],
+          ...subtitleTracks(req.subtitle ?? null, req.subtitles ?? []),
+          last: null, state: 'loading', volume: null, muted: false, release,
         }
         this.current = cast
         receiver.on('media', (s: MediaStatus) => { if (this.current === cast) this.onMedia(cast, s) })
@@ -204,15 +251,51 @@ export class CastService {
   play (): Promise<CastStatus> { return this.command(c => c.receiver.play()) }
   pause (): Promise<CastStatus> { return this.command(c => c.receiver.pause()) }
 
-  /** Film time `t`. Direct play seeks on the TV; a converted stream is reloaded from `t`. */
+  /**
+   * Film time `t`. Direct play seeks on the TV; a converted stream is reloaded from `t`. Seeks that queue
+   * up behind one in progress (taps on "forward 10 s") collapse into the newest, which they all answer with.
+   */
   seek (t: number): Promise<CastStatus> {
-    return this.command(async c => {
+    const gen = ++this.seekGen
+    const run = this.command(async c => {
+      if (gen !== this.seekGen) return null
       const to = Math.max(0, Math.min(t, Math.max(0, c.duration - 1)))
       if (c.plan.mode === 'direct') {
         c.last = { currentTime: to, playerState: 'BUFFERING', at: Date.now() }
         return c.receiver.seek(to)
       }
       await this.load(c, to)
+      return null
+    })
+    this.lastSeek = run
+    return run.then(s => (gen === this.seekGen ? s : this.lastSeek!.catch(() => this.status())))
+  }
+
+  /**
+   * Shows `sub` on the TV, or no subtitles. One of the tracks the TV was loaded with switches in place and
+   * playback carries on; any other subtitle (or a TV that refuses the switch) reloads from where it is, with
+   * `choices` (the player's list) as the new tracks.
+   */
+  setSubtitle (sub: CastSubtitle | null, choices?: CastSubtitle[]): Promise<CastStatus> {
+    return this.command(async c => {
+      if (!sub && c.tracks.length === 0) return null
+      const index = sub ? c.tracks.findIndex(s => s.url === sub.url) : -1
+      if (!sub || index >= 0) {
+        // The keyframe lookup is usually done long before; the TV fetches the track as soon as it shows.
+        if (sub) await Promise.race([c.originReady, later(ORIGIN_WAIT_MS, undefined)])
+        try {
+          const status = await c.receiver.showTextTrack(sub ? index : null)
+          c.activeTrack = sub ? index : null
+          return status
+        } catch (err) {
+          if (!(err instanceof CastError) || !['invalid', 'no_media'].includes(err.code)) throw err
+          this.log(`cast: ${c.device.name} refused a subtitle switch (${err.message}); reloading`)
+          c.activeTrack = sub ? index : null
+        }
+      } else {
+        Object.assign(c, subtitleTracks(sub, choices?.length ? choices : c.tracks))
+      }
+      await this.load(c, Math.max(0, Math.min(this.position(c), Math.max(0, c.duration - 1))))
       return null
     })
   }
@@ -224,6 +307,11 @@ export class CastService {
       if (typeof v.muted === 'boolean') c.muted = v.muted
       return null
     })
+  }
+
+  /** Whether a film is casting now. */
+  get casting (): boolean {
+    return Boolean(this.current && !['ended', 'stopped', 'error'].includes(this.current.state))
   }
 
   /** Quits the player on the TV. Returns where it was, so the page can carry on from there. */
@@ -254,37 +342,55 @@ export class CastService {
     })
   }
 
-  /** Points the TV at the stream from film time `t`. */
+  /** Points the TV at the stream from film time `t`, with the subtitle tracks. */
   private async load (c: Cast, t: number): Promise<void> {
-    const token = randomBytes(32).toString('base64url')
     const direct = c.plan.mode === 'direct'
-    const grant: CastToken = { sessionId: c.req.sessionId, plan: c.plan, origin: direct ? 0 : t, subtitle: c.req.subtitle ?? null, peer: c.device.host, expires: Date.now() + TOKEN_TTL_MS }
+    const expires = Date.now() + TOKEN_TTL_MS
+    // One token for the stream and one per subtitle track: the TV is handed a URL for each.
+    const grant = (subtitle: CastSubtitle | null): [string, CastToken] =>
+      [randomBytes(32).toString('base64url'), { sessionId: c.req.sessionId, plan: c.plan, origin: direct ? 0 : t, subtitle, peer: c.device.host, expires }]
+    const stream = grant(null)
+    const tracks = c.tracks.map(grant)
+    const grants = [stream, ...tracks]
+    const token = stream[0]
+    const setOrigin = (origin: number) => {
+      for (const [, g] of grants) g.origin = origin
+      if (c.token === token) c.origin = origin
+    }
     // Copied video starts at the keyframe before t. Subtitles must be shifted by the real start, so find it
-    // first when there are subtitles; otherwise it arrives while the TV buffers.
+    // first when one shows from the start; otherwise it arrives while the TV buffers.
     const start = !direct && c.plan.copyVideo && t > 0 ? this.opts.media.streamStart(c.req.sessionId, t).catch(() => t) : null
-    if (start && grant.subtitle) grant.origin = await Promise.race([start, new Promise<number>(resolve => setTimeout(resolve, 10_000, t))])
-    else if (start) void start.then(s => { grant.origin = s; if (c.token === token) c.origin = s })
-    this.tokens.set(token, grant)
-    const previous = this.tokens.get(c.token)
-    if (previous) previous.expires = Math.min(previous.expires, Date.now() + TOKEN_GRACE_MS)
+    let originReady = Promise.resolve()
+    if (start && c.activeTrack !== null) setOrigin(await Promise.race([start, later(ORIGIN_WAIT_MS, t)]))
+    else if (start) originReady = start.then(setOrigin)
+    const now = Date.now()
+    for (const [k, g] of this.tokens) if (g.expires < now) this.tokens.delete(k)
+    for (const k of c.tokens) {
+      const previous = this.tokens.get(k)
+      if (previous) previous.expires = Math.min(previous.expires, now + TOKEN_GRACE_MS)
+    }
+    for (const [k, g] of grants) this.tokens.set(k, g)
 
-    const base = `http://${c.lanAddress}:${this.opts.lan.port}/cast/${token}`
+    const url = (k: string) => `http://${c.lanAddress}:${this.opts.lan.port}/cast/${k}`
     c.token = token
-    c.origin = grant.origin
+    c.tokens = grants.map(([k]) => k)
+    c.origin = stream[1].origin
+    c.originReady = originReady
     c.clockBase = direct ? 0 : null
     c.startedAt = t
     c.last = { currentTime: direct ? t : 0, playerState: 'BUFFERING', at: Date.now() }
     c.state = 'loading'
     const [title, ...rest] = (c.req.title ?? '').split(' · ')
     const status = await c.receiver.load({
-      contentId: direct ? `${base}/raw` : `${base}/play.mp4?t=${t.toFixed(2)}`,
+      contentId: direct ? `${url(token)}/raw` : `${url(token)}/play.mp4?t=${t.toFixed(2)}`,
       contentType: direct ? c.contentType : 'video/mp4',
       currentTime: direct ? t : 0,
-      duration: Math.max(1, c.duration - (direct ? 0 : grant.origin)),
+      duration: Math.max(1, c.duration - (direct ? 0 : c.origin)),
       title: title || undefined,
       subtitle: rest.join(' · ') || undefined,
       image: c.req.image,
-      textTrack: grant.subtitle ? { url: `${base}/subs.vtt`, language: grant.subtitle.lang, name: grant.subtitle.label } : undefined,
+      textTracks: tracks.map(([k, g]) => ({ url: `${url(k)}/subs.vtt`, language: g.subtitle!.lang, name: g.subtitle!.label })),
+      activeTextTrack: c.activeTrack,
     })
     this.onMedia(c, status)
   }
@@ -326,6 +432,7 @@ export class CastService {
     const c = this.current
     if (!c) return
     const wasLive = !['ended', 'stopped', 'error'].includes(c.state)
+    if (wasLive) this.log(`cast: ended on ${c.device.name} (${state}${error ? `: ${error}` : ''}${quitTv ? ', asked to stop' : ''})`)
     if (wasLive) {
       c.last = c.last && { ...c.last, currentTime: this.position(c) - (c.clockBase ?? c.origin), at: Date.now(), playerState: 'IDLE' }
       c.state = state

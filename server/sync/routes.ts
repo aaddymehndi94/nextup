@@ -76,10 +76,11 @@ export function registerAccountRoutes (app: FastifyInstance, sync: SyncService):
   })
 
   // A taste or profile change (not the player's progress pings, which the minute timer carries) syncs
-  // a couple of seconds later.
+  // a couple of seconds later. For music: a like or an AI mix; listens and mood mixes ride the minute timer.
   app.addHook('onResponse', async (req, reply) => {
     if (req.method === 'GET' || reply.statusCode >= 400) return
     const path = req.url.split('?')[0]
     if (path.startsWith('/api/profiles') || (path.startsWith('/api/me/') && !(req.method === 'POST' && path === '/api/me/progress'))) sync.nudge()
+    else if (req.method === 'POST' && (path === '/api/music/rate' || path === '/api/music/ai')) sync.nudge()
   })
 }

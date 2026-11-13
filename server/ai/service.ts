@@ -30,7 +30,8 @@ const EMPTY_MODELS_TTL_MS = 60_000
 const SEARCH_TTL_MS = 14 * 24 * 3600_000
 const DEFAULT_DAILY_LIMIT = 50
 /** Typical tokens per request, for estimates until this computer has its own averages. */
-const TYPICAL: Record<'picks' | 'search', { input: number; output: number }> = { picks: { input: 2500, output: 5000 }, search: { input: 1200, output: 2500 } }
+type AskKind = 'picks' | 'search' | 'music'
+const TYPICAL: Record<AskKind, { input: number; output: number }> = { picks: { input: 2500, output: 5000 }, search: { input: 1200, output: 2500 }, music: { input: 1500, output: 3000 } }
 /** When both are connected, Automatic prefers a ChatGPT plan (already paid for) over per-request billing. */
 const PREFERENCE: AiProvider[] = ['chatgpt', 'anthropic', 'openai']
 const LABELS: Record<AiProvider, string> = { chatgpt: 'ChatGPT', anthropic: 'Claude', openai: 'OpenAI' }
@@ -241,7 +242,7 @@ export class AiService {
   }
 
   /** One model request, within the daily limit, logged for the usage line. */
-  private async ask (kind: 'picks' | 'search', q: Ask): Promise<{ text: string; model: AiModel }> {
+  private async ask (kind: AskKind, q: Ask): Promise<{ text: string; model: AiModel }> {
     const active = this.active()
     if (!active) {
       if (this.connected().length) {
@@ -277,7 +278,7 @@ export class AiService {
     return { requests: Number(r.n), inputTokens: Number(r.i), outputTokens: Number(r.o), costUsd: r.c === null ? null : Math.round(Number(r.c) * 10000) / 10000 }
   }
 
-  private estimate (m: AiModel, kind: 'picks' | 'search'): string {
+  private estimate (m: AiModel, kind: AskKind): string {
     if (m.provider === 'chatgpt') return 'uses your ChatGPT plan'
     const avg = this.d.db.prepare('SELECT AVG(input_tokens) AS i, AVG(output_tokens) AS o, COUNT(*) AS n FROM (SELECT input_tokens, output_tokens FROM ai_usage WHERE model = ? AND kind = ? ORDER BY at DESC LIMIT 20)')
       .get(m.id, kind) as { i: number | null; o: number | null; n: number }
@@ -340,6 +341,17 @@ export class AiService {
   }
 
   // ---- AI picks ----
+
+  /** For AI mixes (server/music): whether a model can be asked, and which one at what cost. */
+  musicAvailability (): { available: boolean; hint?: string } {
+    const active = this.active()
+    return active ? { available: true, hint: `${active.model.name} · ${this.estimate(active.model, 'music')}` } : { available: this.connected().length > 0 }
+  }
+
+  /** One request for an AI mix, within the same daily limit as picks and search. */
+  askMusic (q: Ask): Promise<{ text: string; model: AiModel }> {
+    return this.ask('music', q)
+  }
 
   modelName (id: string): string {
     return this.models().find(m => m.id === id)?.name ?? id

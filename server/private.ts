@@ -14,8 +14,8 @@ export function refuseInPrivate (req: { headers: Record<string, string | string[
   if (hasPrivateHeader(req)) throw new HttpError(409, `Private mode is on, so nothing is saved. Turn it off to ${what}.`)
 }
 
-/** Image hosts the private image relay fetches from (the posters, backgrounds and logos Cinemeta links to). */
-const IMAGE_HOSTS = [/(^|\.)metahub\.space$/, /^m\.media-amazon\.com$/, /^image\.tmdb\.org$/]
+/** Image hosts the image relay fetches from: the posters, backgrounds and logos Cinemeta links to, and music covers. */
+const IMAGE_HOSTS = [/(^|\.)metahub\.space$/, /^m\.media-amazon\.com$/, /^image\.tmdb\.org$/, /(^|\.)dzcdn\.net$/, /(^|\.)mzstatic\.com$/]
 
 export function relayableImage (raw: unknown): URL | null {
   if (typeof raw !== 'string' || raw.length > 2048) return null

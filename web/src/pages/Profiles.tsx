@@ -3,7 +3,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import type { Profile } from '../../../shared/types.ts'
 import { chooseProfile, createProfile, deleteProfile, renameProfile, useProfiles } from '../profiles.ts'
 import { useDocumentTitle } from '../hooks.ts'
-import { navigate } from '../router.ts'
+import { goBack } from '../router.ts'
 import { Avatar } from '../components/Avatar.tsx'
 import { Wordmark } from '../components/Wordmark.tsx'
 
@@ -44,7 +44,7 @@ export function Profiles ({ mode: startMode }: { mode: 'pick' | 'manage' }) {
   const { profiles } = state
   const finish = () => {
     if (startMode === 'manage') {
-      if (history.length > 1 && document.referrer.startsWith(location.origin)) history.back(); else navigate('/')
+      goBack('/')
     } else {
       setMode('pick')
     }

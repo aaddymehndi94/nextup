@@ -20,6 +20,8 @@ class FakeReceiver {
   volume = { level: 0.5, muted: false }
   /** Answer LOAD with this type instead of MEDIA_STATUS. */
   failLoad: string | null = null
+  /** Media commands answered with INVALID_REQUEST. */
+  refuse = new Set<string>()
   /** Report the stream's own timestamps (film time) instead of a clock from 0. */
   absoluteClock = 0
   silent = false
@@ -80,6 +82,7 @@ class FakeReceiver {
         return reply(NS.media, this.mediaStatus(id))
       }
       if (!this.media) return reply(NS.media, { type: 'INVALID_PLAYER_STATE', requestId: id })
+      if (this.refuse.has(String(d.type))) return reply(NS.media, { type: 'INVALID_REQUEST', requestId: id, reason: 'INVALID_COMMAND' })
       if (d.type === 'PLAY') this.media.playerState = 'PLAYING'
       if (d.type === 'PAUSE') this.media.playerState = 'PAUSED'
       if (d.type === 'SEEK') this.media.currentTime = Number(d.currentTime)
@@ -141,12 +144,22 @@ describe('the Default Media Receiver client', () => {
     await wait(20)
     expect(f.got.some(m => m.destination === 'web-5' && m.data?.type === 'CONNECT')).toBe(true)
 
-    const status = await r.load({ contentId: 'http://192.168.1.20:4552/cast/tok/raw', contentType: 'video/mp4', currentTime: 42, title: 'Charade', image: 'https://example.com/p.jpg', textTrack: { url: 'http://192.168.1.20:4552/cast/tok/subs.vtt', language: 'en' } })
+    const textTracks = [{ url: 'http://192.168.1.20:4552/cast/tok1/subs.vtt', language: 'en' }, { url: 'http://192.168.1.20:4552/cast/tok2/subs.vtt', language: 'fr' }]
+    const status = await r.load({ contentId: 'http://192.168.1.20:4552/cast/tok/raw', contentType: 'video/mp4', currentTime: 42, title: 'Charade', image: 'https://example.com/p.jpg', textTracks, activeTextTrack: 1 })
     expect(status).toMatchObject({ playerState: 'PLAYING', currentTime: 42, mediaSessionId: 1 })
     const load = sent(f, 'LOAD')[0]
     expect(load.destination).toBe('web-5')
-    expect(load.data).toMatchObject({ autoplay: true, currentTime: 42, activeTrackIds: [1], media: { contentId: 'http://192.168.1.20:4552/cast/tok/raw', contentType: 'video/mp4', streamType: 'BUFFERED' } })
-    expect((load.data!.media as { tracks: unknown[] }).tracks[0]).toMatchObject({ trackId: 1, type: 'TEXT', trackContentType: 'text/vtt' })
+    expect(load.data).toMatchObject({ autoplay: true, currentTime: 42, activeTrackIds: [2], media: { contentId: 'http://192.168.1.20:4552/cast/tok/raw', contentType: 'video/mp4', streamType: 'BUFFERED' } })
+    expect((load.data!.media as { tracks: unknown[] }).tracks).toMatchObject([
+      { trackId: 1, type: 'TEXT', trackContentType: 'text/vtt', trackContentId: textTracks[0].url, language: 'en' },
+      { trackId: 2, type: 'TEXT', trackContentType: 'text/vtt', trackContentId: textTracks[1].url, language: 'fr' },
+    ])
+
+    // Subtitles switch in place, by track id; off is an empty list.
+    await r.showTextTrack(0)
+    await r.showTextTrack(null)
+    expect(sent(f, 'EDIT_TRACKS_INFO').map(m => m.data)).toMatchObject([{ mediaSessionId: 1, activeTrackIds: [1] }, { mediaSessionId: 1, activeTrackIds: [] }])
+    expect(sent(f, 'LOAD')).toHaveLength(1)
 
     expect((await r.pause())?.playerState).toBe('PAUSED')
     expect((await r.play())?.playerState).toBe('PLAYING')
@@ -274,7 +287,83 @@ describe('casting', () => {
     const tracks = (load.media as { tracks: Array<{ trackContentId: string }> }).tracks
     expect(tracks[0].trackContentId).toMatch(/\/cast\/[A-Za-z0-9_-]{43}\/subs\.vtt$/)
     expect(load.activeTrackIds).toEqual([1])
-    expect(cast.verify(tokenOf(tracks[0].trackContentId), '127.0.0.1')).toMatchObject({ origin: 597 })
+    expect(cast.verify(tokenOf(tracks[0].trackContentId), '127.0.0.1')).toMatchObject({ origin: 597, subtitle: { url: 'https://subs5.strem.io/en/x.srt', offset: 0.5 } })
+  })
+
+  const SUBS = ['en/a', 'fr/b', 'es/c'].map(p => ({ url: `https://subs5.strem.io/${p}.srt`, lang: p.slice(0, 2), label: p }))
+  const tracksOf = (f: FakeReceiver, i = -1) => (sent(f, 'LOAD').at(i)!.data!.media as { tracks?: Array<{ trackId: number; trackContentId: string }> }).tracks ?? []
+
+  it('loads every subtitle the viewer can pick as a track, each URL with its own token', async () => {
+    const { f, cast } = await service('remux', { keyframe: 1195 })
+    await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 1200, subtitle: { ...SUBS[1], offset: -1 }, subtitles: [...SUBS, SUBS[0]] })
+    const tracks = tracksOf(f)
+    expect(tracks.map(t => t.trackId)).toEqual([1, 2, 3])
+    expect(sent(f, 'LOAD')[0].data!.activeTrackIds).toEqual([2])
+    const grants = tracks.map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1'))
+    expect(grants.map(g => g?.subtitle?.url)).toEqual(SUBS.map(s => s.url))
+    expect(grants.map(g => g?.subtitle?.offset ?? 0)).toEqual([0, -1, 0])
+    expect(new Set(tracks.map(t => tokenOf(t.trackContentId))).size).toBe(3)
+    expect(grants.every(g => g?.origin === 1195)).toBe(true)
+  })
+
+  it('turning subtitles off, on or to another language switches tracks on the TV, without a reload', async () => {
+    const { f, cast } = await service('remux', { keyframe: 1195 })
+    await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 1200, subtitle: null, subtitles: SUBS })
+    expect(sent(f, 'LOAD')[0].data!.activeTrackIds).toEqual([])
+    await wait(10)
+    // Nothing showed at the start, so the keyframe lookup ran in the background; the tracks get its result.
+    expect(cast.verify(tokenOf(tracksOf(f)[2].trackContentId), '127.0.0.1')).toMatchObject({ origin: 1195 })
+
+    f.media!.currentTime = 30
+    const on = await cast.setSubtitle(SUBS[2])
+    const changed = await cast.setSubtitle(SUBS[0])
+    const off = await cast.setSubtitle(null)
+    expect(sent(f, 'EDIT_TRACKS_INFO').map(m => m.data!.activeTrackIds)).toEqual([[3], [1], []])
+    expect(sent(f, 'LOAD')).toHaveLength(1)
+    for (const s of [on, changed, off]) expect(s).toMatchObject({ active: true, state: 'playing' })
+    expect(off.position).toBeGreaterThanOrEqual(1225)
+
+    // A seek reloads a converted stream: the subtitle that's showing stays on.
+    await cast.setSubtitle(SUBS[1])
+    await cast.seek(3000)
+    expect(sent(f, 'LOAD')).toHaveLength(2)
+    expect(sent(f, 'LOAD')[1].data!.activeTrackIds).toEqual([2])
+    expect(tracksOf(f).map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)).toEqual(SUBS.map(s => s.url))
+  })
+
+  it('a subtitle the TV wasn’t loaded with, or a TV that refuses the switch, reloads from where it is', async () => {
+    const { f, cast } = await service('direct')
+    await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 500, subtitle: SUBS[0] })
+    expect(tracksOf(f)).toHaveLength(1)
+    f.media!.currentTime = 640
+    await wait(80) // the service's status poll hears where the TV is
+    const extra = { url: 'https://subs5.strem.io/de/d.srt', lang: 'de', label: 'German' }
+    await cast.setSubtitle(extra, SUBS)
+    expect(sent(f, 'EDIT_TRACKS_INFO')).toHaveLength(0)
+    expect(sent(f, 'LOAD')).toHaveLength(2)
+    const reload = sent(f, 'LOAD')[1].data!
+    expect(reload.currentTime).toBeGreaterThanOrEqual(640)
+    expect(tracksOf(f).map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)).toEqual([extra.url, ...SUBS.map(s => s.url)])
+    expect(reload.activeTrackIds).toEqual([1])
+
+    // From now on the player's whole list switches in place.
+    await cast.setSubtitle(SUBS[2])
+    expect(sent(f, 'EDIT_TRACKS_INFO').map(m => m.data!.activeTrackIds)).toEqual([[4]])
+    expect(sent(f, 'LOAD')).toHaveLength(2)
+
+    f.refuse.add('EDIT_TRACKS_INFO')
+    await cast.setSubtitle(null)
+    expect(sent(f, 'LOAD')).toHaveLength(3)
+    expect(sent(f, 'LOAD')[2].data!.activeTrackIds).toEqual([])
+  })
+
+  it('seeks that queue up behind one in progress collapse into the newest', async () => {
+    const { f, cast } = await service('remux')
+    await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 100 })
+    const results = await Promise.all([cast.seek(110), cast.seek(120), cast.seek(130)])
+    expect(sent(f, 'LOAD')).toHaveLength(2)
+    expect(loadUrl(f)).toMatch(/play\.mp4\?t=130\.00$/)
+    for (const r of results) expect(r.position).toBeGreaterThanOrEqual(130)
   })
 
   it('stop quits the TV’s player, revokes the URLs, frees the LAN listener and says where it was', async () => {

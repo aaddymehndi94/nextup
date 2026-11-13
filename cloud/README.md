@@ -191,8 +191,12 @@ A computer running nexttupp registers itself while signed in, so a phone signed 
 
 ```
 POST /v1/sync/push     body: Batch                  → 200 { applied: {profiles, events, ratings, list, progress, dismissals, prefs}, serverTime }
-GET  /v1/sync/pull?since=<cursor>&limit=<1..1000>   → 200 { cursor, more, serverTime, ...Batch }
+GET  /v1/sync/pull?since=<cursor>&limit=<1..1000>   → 200 { cursor, more, serverTime, musicHead, ...Batch }
+POST /v1/sync/music/push    body: MusicBatch        → 200 { applied: {artists, tracks, ratings, listens, mixes}, musicHead, serverTime }
+GET  /v1/sync/music/pull?since=<cursor>&limit=<1..1000>  → 200 { cursor, more, serverTime, ...MusicBatch }
 ```
+
+Music has its own endpoints; see [Music](#music) below. `musicHead` on the film pull is new with them.
 
 Every row belongs to the authenticated account. Another account's data can't be read, written or even
 collided with: `account_id` is part of every key.
@@ -333,13 +337,79 @@ design. In short:
   profile can sync.
 - `impressions`, `items` and `catalog_pages` are LOCAL. The cursor lives in `sync_state`.
 
+### Music
+
+Music likes, listens and the mixes someone asked for sync on their own endpoints, with their own cursor
+(the same per-account counter). They were added after the first release, and that is why they're separate:
+
+- An app from before music never calls them. Its film pull gains one field, `musicHead`, which it ignores,
+  and never carries music rows. The film push still refuses unknown sections, as it always did.
+- A new app tells whether the Worker syncs music from the film pull: `musicHead` is there, or it isn't
+  (an older Worker, or this one before `0005_music.sql` is applied). Without it the app makes no music
+  calls; the rows wait in its music outbox and it logs one line.
+
+```jsonc
+{
+  // The songs and artists the rows below name, so another computer can show them. Ids are made by the
+  // app from normalised names (server/music/catalog.ts), so they can't be looked up anywhere else.
+  "artists": [{ "id": "a0123456789ab", "name": "Arijit Singh", "picture": "https://cdn-images.dzcdn.net/…" /* or null */,
+                "itunesId": "587366" /* or null */, "deezerId": "4495513" /* or null */ }],
+  "tracks":  [{ "id": "t0123456789abcdef", "title": "Kesariya", "credit": "Pritam, Arijit Singh & …" /* or null */,
+                "artistId": "a0123456789ab", "artist": "Arijit Singh", "picture": null, "albumId": "it1630340270" /* or null */,
+                "album": "Brahmastra" /* or null */, "cover": "https://is1-ssl.mzstatic.com/…" /* or null */,
+                "duration": 268, "explicit": 0, "rank": 0.8 }],
+  "ratings": [{ "profileId": "<uuid>", "kind": "track", "itemId": "t…", "value": 1, "name": "Kesariya", "picture": null, "updatedAt": 0 }],
+  "listens": [{ "id": "<uuid>", "profileId": "<uuid>", "trackId": "t…", "artistId": "a…", "played": 268, "outcome": "complete", "at": 0 }],
+  "mixes":   [{ "id": "m0123456789abcde", "profileId": "<uuid>", "kind": "ai", "title": "Monsoon evenings", "subtitle": "…",
+                "tracks": [{ "id": "t…", "why": "You play him most" /* or null */ }], "model": "gpt-5.1" /* or null */, "at": 0 }]
+}
+```
+
+| Field | Rule |
+|---|---|
+| song `id`, `trackId` | `^t[0-9a-f]{16}$`; artist `id`, `artistId` `^a[0-9a-f]{12}$`; mix `id` `^m[0-9a-f]{15}$` |
+| `albumId` | `^(it\|dz)\d{1,15}$`; `itunesId`, `deezerId` `^\d{1,15}$` |
+| `picture`, `cover` | `null` or an `https://` link on `*.dzcdn.net` or `*.mzstatic.com` (no user, password or port), at most 512 characters |
+| titles and names | trimmed, no control characters, no torrent-shaped text; long words are fine, only hash-shaped runs are refused (32+ hex digits in one case, or 32+ upper-case base32). Up to 200 characters (`credit` 300, mix `title` 80, `subtitle` and `why` 200, `model` 64) |
+| `duration` | integer 0..86400 seconds; `played` 0..86400; `rank` 0..1; `explicit` `0` or `1` |
+| rating `kind` | `"track"` (then `itemId` is a song id) or `"artist"` (an artist id); `value` -1, 0, 1 |
+| `outcome` | `"complete"`, `"partial"` or `"skip"` |
+| mix `kind` | `"ai"` or `"mood"` only: daily, artist, Discover and On repeat mixes are remade on each computer from the synced likes and listens, and never sync. 1–60 songs |
+
+Same limits as films: 500 rows and 256 KiB per push, one bad field rejects the push with a message naming
+it (`listens[3].outcome: …`). Every `profileId` must already be on the account (`422 unknown_profile`; the
+film push carries profiles, and the app runs it first), and another account's profile gets `409`.
+
+Merge rules:
+
+- **Songs and artists** are facts, stored per account. A push only fills gaps (a missing credit, picture,
+  album, cover, duration, rank, or catalog number), never overwrites, and a song re-sent with nothing new
+  writes nothing and takes no new `seq`.
+- **Likes:** last write wins on `updatedAt` (strictly greater; ties keep the server copy). A cleared like
+  (`value: 0`) is kept, like the film tombstones. A newer row with `name` or `picture` `null` keeps the stored one.
+- **Listens:** insert once by `(account, id)`.
+- **Mixes:** last write wins on `at`. The newest **12** per profile are kept; older ones are dropped
+  (each computer shows its newest 6).
+
+**Cursor:** as for films, except that a page that reaches the end (`more: false`) returns the account's
+counter at that moment, not the last row's `seq`. So a client whose music cursor is at or past the film
+pull's `musicHead` (the counter after the last music push) knows there is nothing new and skips the call.
+A music push also returns the new `musicHead`.
+
+On the local side (`server/sync/music.ts`), a separate `sync_music_outbox` is filled by triggers on
+`music_ratings`, `music_listens` and `music_mixes` (AI and mood mixes only). A push carries the songs and
+artists its rows name, once per batch, and leaves out details the cloud wouldn't take (a picture from another
+host, say) rather than the row. Rows of a profile the cloud doesn't have yet wait for the next film push.
+Music syncs after the films in each round. A failure there is logged once and never marks the sync as failed.
+`music_files` (the download cache), YouTube ids, AI settings, crossfade and the queue never leave the computer.
+
 ## D1 schema
 
-[`migrations/0001_init.sql`](migrations/0001_init.sql), [`0002_client_kdf.sql`](migrations/0002_client_kdf.sql) and [`0003_devices.sql`](migrations/0003_devices.sql). All tables are `STRICT`.
+[`migrations/0001_init.sql`](migrations/0001_init.sql), [`0002_client_kdf.sql`](migrations/0002_client_kdf.sql), [`0003_devices.sql`](migrations/0003_devices.sql), [`0004_group_invites.sql`](migrations/0004_group_invites.sql) and [`0005_music.sql`](migrations/0005_music.sql). All tables are `STRICT`.
 
 | Table | Key | Purpose |
 |---|---|---|
-| `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter) |
+| `accounts` | `id` (UUID), `email` unique | role, `password_hash` (the `nxk1$…` verifier), `disabled_at`, `last_seen_at`, `sync_seq` (the cursor counter), `music_seq` (the counter after the last music push: `musicHead`) |
 | `sessions` | `token_hash` | bearer sessions: `created_at`, `last_used_at`, `expires_at` |
 | `invites` | `id`, `token_hash` unique | unused since sign-up opened; kept as history |
 | `password_resets` | `token_hash` | admin-issued, single-use, 24 h |
@@ -352,6 +422,10 @@ design. In short:
 | `ratings`, `my_list`, `dismissals` | `(account_id, profile_id, item_id)` | the local columns + `seq` |
 | `progress` | `(account_id, profile_id, stream_id)` | the local columns + `seq` |
 | `feature_prefs` | `(account_id, profile_id, feature)` | the local columns + `seq` |
+| `music_artists`, `music_tracks` | `(account_id, id)` | the songs and artists the account's music rows name (not `seen_at`) + `seq` |
+| `music_ratings` | `(account_id, profile_id, kind, item_id)` | value, name, picture, `updated_at`, `seq` |
+| `music_listens` | `(account_id, id)` | profile, song, artist, `played`, `outcome`, `at`, `seq` |
+| `music_mixes` | `(account_id, id)` | AI and mood mixes: profile, kind, title, subtitle, `tracks` (validated JSON), model, `at`, `seq` |
 
 Every synced table has an index on `(account_id, seq)`, so a pull reads only the rows it returns.
 
@@ -367,7 +441,12 @@ still limit online guessing.
 
 **Other limits:** a push is one D1 batch (one transaction) plus one ownership read. A pull is one batch.
 D1 counts a batch as one query against the 50-queries-per-request free limit, and no request here makes
-more than 4. Request bodies are capped (4 KiB for auth, 256 KiB for push). Parsing, validating and
+more than 4.
+
+**Music** adds no request when nothing changed: the app pulls music only when the film pull's `musicHead`
+is past its music cursor, and pushes only when its music outbox has rows. Listens are the busiest table, one
+row per song heard (about 100 bytes), sent in batches of up to 500 with the minute's sync, not one request
+per song. A song or artist sent again with nothing new costs a read and no write. Request bodies are capped (4 KiB for auth, 256 KiB for push). Parsing, validating and
 re-serializing a full 500-row push took about 1.2 ms (Node 24, same V8 engine, warm), so a sync request
 fits the 10 ms budget with room to spare.
 
@@ -382,19 +461,23 @@ npx wrangler deploy                                  # 3. uploads the Worker and
 # 4. sign up in the app, then promote that account ("The first admin", above)
 ```
 
-**Updating the deployed service** (already running at `api.nexttupp.com`) for devices and phone handoff:
-apply the new migration first, then the Worker, since the new code reads the new tables.
+**Updating the deployed service** (already running at `api.nexttupp.com`): apply the new migrations first,
+then the Worker, since the new code reads the new tables. From `cloud/`:
 
 ```bash
-npx wrangler d1 migrations apply nexttupp --remote   # applies 0003_devices.sql (two tables, no data changes)
+npx wrangler d1 migrations apply nexttupp --remote   # applies whatever is new, e.g. 0005_music.sql (five tables and accounts.music_seq; no data changes)
 npx wrangler deploy
 ```
+
+For music, either order is safe for films: the Worker reads `music_seq` only if the column exists, and
+without it reports no `musicHead`, so apps just keep waiting to sync music. Apps that already run pick
+music up within a minute of both steps; music made before then uploads on their first sync after it.
 
 What that creates:
 
 | Resource | Details | Free-plan allowance |
 |---|---|---|
-| D1 database `nexttupp` | 13 tables + indexes, plus wrangler's `d1_migrations` | 10 databases, 500 MB each, 5 GB per account |
+| D1 database `nexttupp` | 20 tables + indexes, plus wrangler's `d1_migrations` | 10 databases, 500 MB each, 5 GB per account |
 | Worker `nexttupp-cloud` | `src/index.ts`; no vars, secrets, KV, R2, Durable Objects, queues or cron triggers | 100,000 requests/day |
 | Custom domain `api.nexttupp.com` | a proxied DNS record and an edge certificate in the `nexttupp.com` zone (the zone must be on this account) | free |
 

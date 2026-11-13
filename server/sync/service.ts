@@ -2,13 +2,16 @@ import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { type CloudAccount, CloudClient, CloudError } from './cloud.ts'
+import type { MusicSection } from '../../cloud/src/wire.ts'
 import { ackPush, applyPull, collectPush, dropOutbox, linkProfiles, pendingCount } from './local.ts'
+import { ackMusicPush, applyMusicPull, collectMusicPush, dropMusicOutbox, musicPendingCount, requeueProfiles } from './music.ts'
 
 // Optional sign-in and background taste sync. Signed out, nothing here touches the network and the app
 // works as before. Signed in, it pushes this device's changes and pulls the account's: on start-up, about
 // a minute apart, and a couple of seconds after a like, list change or profile edit. Offline is normal:
 // changes wait in the outbox and the next attempt backs off up to 5 minutes. Nothing here blocks a request
-// except sign-in itself.
+// except sign-in itself. Music likes, listens and asked-for mixes sync after the films, on their own
+// endpoints, and only once the cloud says it syncs music (an older cloud leaves them waiting quietly).
 //
 // The session token lives in <data>/account.json (mode 0600), never in the browser.
 
@@ -52,6 +55,7 @@ export interface SyncOptions {
 }
 
 const CURSOR_KEY = 'cloud_cursor'
+const MUSIC_CURSOR_KEY = 'cloud_music_cursor'
 const MAX_BACKOFF_MS = 5 * 60_000
 
 export class SyncService {
@@ -76,6 +80,12 @@ export class SyncService {
   private readonly device?: SyncOptions['device']
   private readonly onSignInChange: () => void
   private deviceError: string | null = null
+  /** The account's musicHead from the last film pull; null while the cloud doesn't sync music. */
+  private musicHead: string | null = null
+  private musicNoted = false
+  private musicError: string | null = null
+  /** Songs and artists the cloud refused in this run, left out of later pushes. */
+  private readonly musicSkip = new Set<string>()
   /** Local profile → account profile, from the last sign-in's merge. */
   lastMerge: Record<string, string> = {}
 
@@ -131,8 +141,13 @@ export class SyncService {
       signedIn: true,
       cloudUrl: this.cloud.baseUrl,
       account: { email: s.account.email, displayName: s.account.displayName, role: s.account.role },
-      sync: { state: this.state, lastSyncAt: this.lastSyncAt, error: this.error, pending: pendingCount(this.db), retryAt: this.retryAt },
+      sync: { state: this.state, lastSyncAt: this.lastSyncAt, error: this.error, pending: this.pending(), retryAt: this.retryAt },
     }
+  }
+
+  /** Changes waiting to upload; music counts once the cloud syncs it. */
+  private pending (): number {
+    return pendingCount(this.db) + (this.musicHead !== null ? musicPendingCount(this.db) : 0)
   }
 
   // ---- Account -----------------------------------------------------------------------
@@ -155,7 +170,10 @@ export class SyncService {
     const { id, email, displayName, role } = r.account
     this.session = { v: 1, cloudUrl: this.cloud.baseUrl, token: r.token, expiresAt: r.expiresAt, account: { id, email, displayName, role }, linked: false }
     this.writeSession()
-    this.setCursor('0')
+    this.setCursor(CURSOR_KEY, '0')
+    this.setCursor(MUSIC_CURSOR_KEY, '0')
+    this.musicHead = null
+    this.musicSkip.clear()
     this.notice = null
     this.lastMerge = {}
     this.failures = 0
@@ -192,7 +210,7 @@ export class SyncService {
     clearTimeout(this.timers.retry)
     clearTimeout(this.timers.debounce)
     rmSync(this.file, { force: true })
-    this.db.prepare('DELETE FROM sync_state WHERE key = ?').run(CURSOR_KEY)
+    this.db.prepare('DELETE FROM sync_state WHERE key IN (?, ?)').run(CURSOR_KEY, MUSIC_CURSOR_KEY)
     this.onSignInChange()
   }
 
@@ -250,6 +268,8 @@ export class SyncService {
       }
       await this.pushAll(s)
       await this.pullAll(s)
+      if (this.session !== s) return
+      await this.music(s)
       if (this.session !== s) return
       await this.heartbeat(s)
       if (this.session !== s) return
@@ -309,37 +329,128 @@ export class SyncService {
   }
 
   private async pullAll (s: Session): Promise<void> {
-    let cursor = this.getCursor()
+    let cursor = this.getCursor(CURSOR_KEY)
     for (let guard = 0; guard < 1000; guard++) {
       let page
       try {
         page = await this.cloud.pull(s.token, cursor)
       } catch (err) {
-        if (err instanceof CloudError && err.code === 'cursor_ahead' && cursor !== '0') { cursor = '0'; continue }
+        if (err instanceof CloudError && err.code === 'cursor_ahead' && cursor !== '0') {
+          // The cloud's counter went back: both cursors start over.
+          cursor = '0'
+          this.setCursor(MUSIC_CURSOR_KEY, '0')
+          continue
+        }
         throw err
       }
       if (this.session !== s) return
       const changed = applyPull(this.db, s.account.id, page)
       cursor = page.cursor
-      this.setCursor(cursor)
+      this.setCursor(CURSOR_KEY, cursor)
       for (const pid of changed) this.store.markChanged(pid)
+      this.musicHead = typeof page.musicHead === 'string' && /^\d{1,15}$/.test(page.musicHead) ? page.musicHead : null
+      if (!page.more) return
+    }
+  }
+
+  // ---- Music -------------------------------------------------------------------------
+
+  /**
+   * Music's push and pull, after the films and only on a cloud that syncs music (the film pull carries a
+   * musicHead). An older cloud gets no music calls at all, and one log line per run. A music failure never
+   * fails the sync: it's logged once per distinct message, and the rows wait in the music outbox.
+   */
+  private async music (s: Session): Promise<void> {
+    if (this.musicHead === null) {
+      if (!this.musicNoted) this.log('sync: the sync service doesn’t sync music yet; music likes and listens wait on this computer')
+      this.musicNoted = true
+      return
+    }
+    try {
+      await this.pushMusic(s)
+      await this.pullMusic(s)
+      if (this.musicError) this.log('sync: music is syncing again')
+      this.musicError = null
+    } catch (err) {
+      if (this.session !== s) return
+      this.onAuthError(err)
+      if (!this.session) return
+      if (err instanceof CloudError && err.status === 404) {
+        // Says it syncs music but has no music endpoints: treat it as an older cloud.
+        if (!this.musicNoted) this.log('sync: the sync service doesn’t sync music yet; music likes and listens wait on this computer')
+        this.musicNoted = true
+        this.musicHead = null
+        return
+      }
+      const message = (err as Error).message
+      if (message !== this.musicError) this.log(`sync: music didn’t sync: ${message}`)
+      this.musicError = message
+    }
+  }
+
+  private async pushMusic (s: Session): Promise<void> {
+    let refused = 0
+    for (let guard = 0; guard < 200; guard++) {
+      const out = collectMusicPush(this.db, s.account.id, this.now(), { log: this.log, skip: this.musicSkip })
+      if (!out) return
+      try {
+        const r = await this.cloud.musicPush(s.token, out.batch)
+        ackMusicPush(this.db, out.ids)
+        if (typeof r?.musicHead === 'string' && /^\d{1,15}$/.test(r.musicHead)) this.musicHead = r.musicHead
+      } catch (err) {
+        if (err instanceof CloudError && err.code === 'unknown_profile') {
+          // A profile isn't on the cloud yet: the next film push sends it, and these rows go after it.
+          requeueProfiles(this.db, [...out.batch.ratings, ...out.batch.listens, ...out.batch.mixes].map(r => r.profileId))
+          return
+        }
+        // As for films: set aside the one row the cloud names ("listens[3].played: …") and carry on. A song
+        // or artist it refuses is left out of later pushes; the rows naming it still sync.
+        const m = err instanceof CloudError && err.status === 400 ? /^(\w+)\[(\d+)\]/.exec(err.message) : null
+        const section = m?.[1] as MusicSection | undefined
+        const id = section ? out.origin[section]?.[Number(m![2])] : undefined
+        const ref = section ? out.ref[section]?.[Number(m![2])] : undefined
+        if ((id === undefined || id === null) && !ref) throw err
+        if (++refused > 20) throw err
+        this.log(`sync: the cloud refused a music row, not syncing it: ${(err as Error).message}`)
+        if (id !== undefined && id !== null) dropMusicOutbox(this.db, id)
+        else this.musicSkip.add(ref!)
+      }
+    }
+  }
+
+  private async pullMusic (s: Session): Promise<void> {
+    let cursor = this.getCursor(MUSIC_CURSOR_KEY)
+    // Nothing new since this computer's last music pull (its cursor is at or past the head).
+    if (this.musicHead !== null && Number(cursor) >= Number(this.musicHead)) return
+    for (let guard = 0; guard < 1000; guard++) {
+      let page
+      try {
+        page = await this.cloud.musicPull(s.token, cursor)
+      } catch (err) {
+        if (err instanceof CloudError && err.code === 'cursor_ahead' && cursor !== '0') { cursor = '0'; continue }
+        throw err
+      }
+      if (this.session !== s) return
+      applyMusicPull(this.db, page, this.now())
+      cursor = page.cursor
+      this.setCursor(MUSIC_CURSOR_KEY, cursor)
       if (!page.more) return
     }
   }
 
   // ---- Persistence -------------------------------------------------------------------
 
-  private getCursor (): string {
-    const r = this.db.prepare('SELECT value FROM sync_state WHERE key = ?').get(CURSOR_KEY) as { value: string } | undefined
+  private getCursor (key: string): string {
+    const r = this.db.prepare('SELECT value FROM sync_state WHERE key = ?').get(key) as { value: string } | undefined
     try {
       const c = r ? JSON.parse(r.value) as { accountId: string; cloudUrl: string; cursor: string } : null
       return c && c.accountId === this.session?.account.id && c.cloudUrl === this.cloud.baseUrl ? c.cursor : '0'
     } catch { return '0' }
   }
 
-  private setCursor (cursor: string): void {
+  private setCursor (key: string, cursor: string): void {
     const value = JSON.stringify({ accountId: this.session?.account.id, cloudUrl: this.cloud.baseUrl, cursor })
-    this.db.prepare('INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(CURSOR_KEY, value)
+    this.db.prepare('INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value)
   }
 
   private readSession (): Session | null {

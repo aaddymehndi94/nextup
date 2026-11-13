@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { TasteFeature, TasteFeatureKind, TasteSignal, TasteSummary } from '../../../shared/types.ts'
 import { api } from '../api.ts'
+import { marksChanged } from '../marks.ts'
 import { useDocumentTitle, useLoaded } from '../hooks.ts'
 import { onLinkClick } from '../router.ts'
 import { toast } from '../toast.ts'
@@ -185,7 +186,7 @@ function SignalRow ({ s, onChanged }: { s: TasteSignal; onChanged: () => void })
 
   const run = (p: Promise<unknown>, done: boolean) => {
     setBusy(true)
-    p.then(() => { setUndone(done); onChanged() })
+    p.then(() => { marksChanged(); setUndone(done); onChanged() })
       .catch(err => toast(`Couldn’t change that. ${(err as Error).message}`))
       .finally(() => { setBusy(false); setConfirming(false) })
   }

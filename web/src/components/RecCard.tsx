@@ -4,33 +4,23 @@ import { Play, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { Rating, RecItem } from '../../../shared/types.ts'
 import { useLoaded } from '../hooks.ts'
 import { onLinkClick } from '../router.ts'
+import { showPreview } from './Preview.tsx'
 import { PosterCard } from './PosterCard.tsx'
+import { TitleCard } from './TitleCard.tsx'
 
 /** The reason line often ends with the year ("Drama · Romance · 1995"); then the year isn't repeated above it. */
 const withoutRepeatedYear = (item: RecItem) => (item.year && item.reason.text.includes(item.year) ? { ...item, year: undefined } : item)
 
 /**
- * A recommended title: poster, name, year and the reason it is here. The small button beside the name
- * takes it off the screen ("Not interested", or "Remove from My List" in that row). It sits below the art
- * rather than over it, so a remote's Down key reaches it and Left/Right still move from poster to poster.
+ * A recommended title: poster, name, year, the reason it is here, and My List / Like / Dislike under it.
+ * `onRemove` adds a button that takes it off the screen ("Not interested", or "Remove from My List" in that row).
  */
 export function RecCard ({ item, onRemove, removeLabel = 'Not interested' }: {
   item: RecItem
   onRemove?: (item: RecItem) => void
   removeLabel?: string
 }) {
-  return (
-    <div className="card">
-      <PosterCard title={withoutRepeatedYear(item)} note={item.reason.text} />
-      {onRemove && (
-        <div className="card-tools">
-          <button type="button" className="card-remove" data-tip={removeLabel} aria-label={`${removeLabel}: ${item.name}`} onClick={() => onRemove(item)}>
-            <X aria-hidden />
-          </button>
-        </div>
-      )}
-    </div>
-  )
+  return <TitleCard title={withoutRepeatedYear(item)} note={item.reason.text} onRemove={onRemove && (() => onRemove(item))} removeLabel={removeLabel} />
 }
 
 /** Where a Continue watching card leads: the title page, which picks the best source and starts playing. */
@@ -67,14 +57,14 @@ function LandscapeArt ({ item }: { item: RecItem }) {
   return <img src={src} alt="" loading="lazy" decoding="async" data-loaded={loaded || undefined} onLoad={onLoad} onError={() => setFailed(true)} />
 }
 
-/** Onboarding: a well-known title to like or dislike in one tap, without opening it. */
+/** Onboarding: a well-known title to like or dislike in one tap; a click shows its trailer (the quick view). */
 export function RateCard ({ item, rating, onRate }: { item: RecItem; rating: Rating; onRate: (item: RecItem, value: Rating) => void }) {
   const badge = rating === 0 ? null : (
     <span className="poster-badge" aria-hidden>{rating === 1 ? <ThumbsUp /> : <ThumbsDown />}</span>
   )
   return (
     <div className={`rate-card${rating ? ' is-rated' : ''}`}>
-      <PosterCard title={withoutRepeatedYear(item)} note={item.reason.text} badge={badge} />
+      <PosterCard title={withoutRepeatedYear(item)} note={item.reason.text} badge={badge} onOpen={() => showPreview(item)} />
       <div className="rate-buttons" role="group" aria-label={`Rate ${item.name}`}>
         <button type="button" className="rate-button" aria-pressed={rating === 1} aria-label={`Like ${item.name}`} onClick={() => onRate(item, rating === 1 ? 0 : 1)}>
           <ThumbsUp aria-hidden />

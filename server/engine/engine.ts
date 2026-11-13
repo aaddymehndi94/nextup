@@ -125,6 +125,11 @@ export class TorrentEngine {
     return session
   }
 
+  /** Caps what kept downloads upload to other peers (bytes per second; null: no cap). */
+  limitUpload (bytesPerSec: number | null): void {
+    this.client.throttleUpload(bytesPerSec ?? -1)
+  }
+
   get (id: string): Session | undefined {
     const s = this.sessions.get(id)
     if (s && s.torrent.destroyed) { this.sessions.delete(id); return undefined }

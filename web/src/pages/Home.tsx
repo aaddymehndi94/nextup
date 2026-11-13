@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Info, RefreshCw, Search, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react'
+import { Check, Clapperboard, Info, RefreshCw, Search, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { AiPicksResponse, AiSearchResponse, HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
 import { api } from '../api.ts'
-import { useDocumentTitle, useLoaded, useScrolled } from '../hooks.ts'
-import { navigate, onLinkClick } from '../router.ts'
+import { useDocumentTitle, useLoaded, usePageActive, useScrolled } from '../hooks.ts'
+import { navigate, onLinkClick, replaceUrl } from '../router.ts'
 import { usePrivate } from '../private.ts'
 import { noteSource } from '../storage.ts'
 import { EMPTY_STATE, useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
-import { PosterCard, PosterSkeleton } from '../components/PosterCard.tsx'
+import { PosterSkeleton } from '../components/PosterCard.tsx'
+import { TitleCard } from '../components/TitleCard.tsx'
+import { noteMark, setTitleInList } from '../marks.ts'
 import { ContinueCard, RateCard, RecCard } from '../components/RecCard.tsx'
 import { Row } from '../components/Row.tsx'
 import { TasteButtons } from '../components/TitleActions.tsx'
 import { TitleArt } from '../components/TitleArt.tsx'
+import { TrailerButton, TrailerVideo, useTrailer } from '../components/Trailer.tsx'
+import { showPreview } from '../components/Preview.tsx'
 import { Wordmark } from '../components/Wordmark.tsx'
+import { BrowseTabs, TABS } from '../components/BrowseTabs.tsx'
 import { Downloads } from '../components/Downloads.tsx'
 import { ProfileMenu } from '../components/ProfileMenu.tsx'
 
@@ -57,6 +62,19 @@ function useHomeFeed (tab?: MediaType) {
 
   useEffect(() => { void refresh() }, [refresh])
 
+  // Back on this page after a title or a film (it was kept alive): Continue watching and My List may have
+  // changed. Only those rows are swapped, so the picks stay where the viewer left them.
+  const active = usePageActive()
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) {
+      api.home(tab)
+        .then(fresh => setLoad(prev => (prev.state === 'ok' ? { state: 'ok', data: withPersonalRows(prev.data, fresh) } : prev)))
+        .catch(() => {})
+    }
+    wasActive.current = active
+  }, [active, tab])
+
   const warming = load.state === 'ok' && load.data.warming
   useEffect(() => {
     if (!warming || retries.current >= WARM_RETRIES || document.hidden) return
@@ -66,6 +84,18 @@ function useHomeFeed (tab?: MediaType) {
 
   const restart = useCallback(() => { retries.current = 0; return refresh() }, [refresh])
   return { load, refresh: restart }
+}
+
+const isPersonalRow = (row: HomeRow) => row.kind === 'continue' || row.kind === 'list'
+
+/** `now` with its Continue watching and My List rows as they are in `fresh`; every other row stays. */
+function withPersonalRows (now: HomeResponse, fresh: HomeResponse): HomeResponse {
+  const latest = new Map(fresh.rows.filter(isPersonalRow).map(r => [r.kind, r]))
+  const rows = now.rows.flatMap(r => (!isPersonalRow(r) ? [r] : latest.has(r.kind) ? [latest.get(r.kind)!] : []))
+  fresh.rows.forEach((r, i) => {
+    if (isPersonalRow(r) && !rows.some(x => x.kind === r.kind)) rows.splice(Math.min(i, rows.length), 0, r)
+  })
+  return { ...now, rows }
 }
 
 const isRecRow = (row: HomeRow) => !['continue', 'list', 'onboarding'].includes(row.kind)
@@ -126,15 +156,16 @@ function useFeedPaging (tab: MediaType | undefined, data: HomeResponse | null) {
 /** Calls `onVisible` while the element is within ~1.5 screens of the viewport (again after each load, if still near). */
 function useNearBottom (onVisible: () => void, active: boolean, deps: unknown) {
   const ref = useRef<HTMLDivElement>(null)
+  const shown = usePageActive()
   useEffect(() => {
     const el = ref.current
-    if (!el || !active) return
+    if (!el || !active || !shown) return
     const near = () => el.getBoundingClientRect().top < window.innerHeight * 2.5
     if (near()) onVisible()
     const io = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) onVisible() }, { rootMargin: '0px 0px 150% 0px' })
     io.observe(el)
     return () => io.disconnect()
-  }, [onVisible, active, deps])
+  }, [onVisible, active, deps, shown])
   return ref
 }
 
@@ -173,10 +204,13 @@ function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null;
   const removeFromList = useCallback((it: RecItem) => {
     hide(`list:${it.id}`, true)
     api.removeFromList(it.type, it.id)
-      .then(() => toast(`Removed ${it.name} from My List.`, {
-        label: 'Undo',
-        run: () => { hide(`list:${it.id}`, false); api.addToList(it.type, it.id).catch(() => {}) },
-      }))
+      .then(s => {
+        noteMark(it.id, s)
+        toast(`Removed ${it.name} from My List.`, {
+          label: 'Undo',
+          run: () => { hide(`list:${it.id}`, false); setTitleInList(it.type, it.id, true) },
+        })
+      })
       .catch(err => { hide(`list:${it.id}`, false); toast(`Couldn’t remove that. ${(err as Error).message}`) })
   }, [hide])
 
@@ -410,6 +444,8 @@ function AiSearch ({ q, hint }: { q: string; hint?: string }) {
 function PickBillboard ({ item: t, label }: { item: RecItem; label: string }) {
   const [loaded, onLoad] = useLoaded(t.background)
   const taste = useTitleState(t.type, t.id, { initial: EMPTY_STATE, source: 'billboard' })
+  // Not on phones, where the billboard shows the poster.
+  const trailer = useTrailer(t.type, t.id, { media: '(min-width: 641px)' })
   const href = `/title/${t.type}/${t.id}`
   const meta = [t.year, t.runtime, t.genres.slice(0, 2).join(', ')].filter(Boolean)
   return (
@@ -418,6 +454,7 @@ function PickBillboard ({ item: t, label }: { item: RecItem; label: string }) {
         {t.poster && <source media="(max-width: 640px)" srcSet={t.poster} />}
         <img src={t.background} alt="" decoding="async" fetchPriority="high" data-loaded={loaded || undefined} onLoad={onLoad} />
       </picture>
+      <TrailerVideo trailer={trailer} />
       <div className="billboard-shade" />
       <div className="billboard-content">
         <TitleArt as="h2" className="billboard-logo" name={t.name} logo={t.logo} />
@@ -431,7 +468,11 @@ function PickBillboard ({ item: t, label }: { item: RecItem; label: string }) {
             <Info aria-hidden />
             More info
           </a>
+          <button type="button" className="round-button" aria-label={`Watch the trailer for ${t.name}`} data-tip="Trailer" onClick={() => showPreview(t)}>
+            <Clapperboard aria-hidden />
+          </button>
           <TasteButtons actions={taste} name={t.name} listOnly />
+          <TrailerButton trailer={trailer} />
         </div>
       </div>
     </section>
@@ -473,7 +514,8 @@ function Onboarding ({ row, onReady }: { row: HomeRow; onReady: () => Promise<un
     const delta = (value === 1 ? 1 : 0) - (before === 1 ? 1 : 0)
     setRatings(m => new Map(m).set(it.id, value))
     setPositives(p => (p ?? 0) + delta)
-    api.rate(it.type, it.id, value, 'onboarding').then(() => {
+    api.rate(it.type, it.id, value, 'onboarding').then(s => {
+      noteMark(it.id, s)
       if (delta > 0 && latest.current.positives >= target && !latest.current.building) {
         latest.current.building = true
         setBuilding(true)
@@ -536,7 +578,7 @@ function PopularRow ({ title, load }: { title: string; load: Load<TitleSummary[]
     <Row title={title}>
       {load.state === 'error' && <p className="row-notice">Couldn’t load: {load.message}</p>}
       {load.state === 'loading' && Array.from({ length: 10 }, (_, i) => <PosterSkeleton key={i} />)}
-      {load.state === 'ok' && load.data.slice(0, 20).map(t => <PosterCard key={t.id} title={t} />)}
+      {load.state === 'ok' && load.data.slice(0, 20).map(t => <TitleCard key={t.id} title={t} />)}
     </Row>
   )
 }
@@ -585,11 +627,6 @@ function PopularBillboard ({ load }: { load: Load<TitleSummary[]> }) {
 // TV it would trap the remote's arrow keys inside the input.
 const FINE_POINTER = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches
 
-const TABS: Array<{ href: string; label: string; tab?: MediaType }> = [
-  { href: '/', label: 'Home' },
-  { href: '/films', label: 'Films', tab: 'movie' },
-  { href: '/series', label: 'Series', tab: 'series' },
-]
 
 /** Home (films and series together), or the Films or Series tab: the same page, one kind of title. */
 export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: MediaType }) {
@@ -606,18 +643,20 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
   useEffect(() => {
     const t = setTimeout(() => {
       const url = query.trim() ? `${base}?q=${encodeURIComponent(query.trim())}` : base
-      if (url !== location.pathname + location.search) history.replaceState(null, '', url)
+      if (url !== location.pathname + location.search) replaceUrl(url)
     }, 300)
     return () => clearTimeout(t)
   }, [query, base])
 
+  const active = usePageActive()
   useEffect(() => {
+    if (!active) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === '/' && document.activeElement !== input.current) { e.preventDefault(); input.current?.focus() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [active])
 
   return (
     <main className={`home${results ? ' is-searching' : ''}`}>
@@ -625,11 +664,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
       <header className={`masthead${scrolled || results ? ' is-solid' : ''}`}>
         <div className="masthead-start">
           <Wordmark />
-          <nav className="tabs" aria-label="Browse">
-            {TABS.map(t => (
-              <a key={t.href} href={t.href} onClick={e => { setQuery(''); onLinkClick(e) }} aria-current={t.tab === tab ? 'page' : undefined}>{t.label}</a>
-            ))}
-          </nav>
+          <BrowseTabs current={base} onNavigate={() => setQuery('')} />
         </div>
         <div className="masthead-end">
           <form className="search" role="search" onSubmit={e => {
@@ -675,7 +710,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
             </div>
           )}
           {results.state === 'ok' && results.data.length > 0 && (
-            <div className="grid">{results.data.map(t => <PosterCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
+            <div className="grid">{results.data.map(t => <TitleCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
           )}
         </section>
       ) : <Feed key={tab ?? 'all'} tab={tab} ai={ai} onAi={setAi} />}

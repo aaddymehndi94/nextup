@@ -36,7 +36,11 @@ The old `NEXTUP_*` names still work as fallbacks.
 `desktop/` packages the server, web app and ffmpeg as an Electron app for people who shouldn't need a
 terminal. `cd desktop && npm install && npm run dist:linux` builds the AppImage and .deb (after `npm install`
 at the root). The server's `NEXTTUPP_WEB_DIR`, `NEXTTUPP_FFMPEG`/`NEXTTUPP_FFPROBE`, `NEXTTUPP_ENCODER` and
-`NEXTTUPP_VAAPI_DEVICE` overrides come from there. Details: [`docs/adr/0005`](docs/adr/0005-desktop-app.md).
+`NEXTTUPP_VAAPI_DEVICE` overrides come from there.
+
+The app keeps itself up to date from GitHub Releases. It downloads a new version in the background and checks
+it against the release's checksums. A card then offers **Restart now** (a .deb asks for the computer's
+password). Details: [`docs/adr/0005`](docs/adr/0005-desktop-app.md).
 
 ## Accounts and sync (optional)
 
@@ -96,6 +100,40 @@ one (Claude Haiku, or the newest GPT "luna"); a set of picks costs well under a 
 cap (50 by default), and the page shows use and cost. Keys stay in a file on this computer only you can read;
 they're never synced. Private mode never uses AI. Details: [ADR 0009](docs/adr/0009-ai-picks-and-search.md).
 
+## Music
+
+The **Music** tab plays songs from the computer, like films: it finds each song on YouTube with
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), keeps a copy (3 GB cache) and serves it to the browser or a phone
+at home. Press **Set up music** once: it downloads yt-dlp into `data/bin` and checks its checksum (or set
+`NEXTTUPP_YTDLP` to your own copy).
+
+- **Mixes made for you** from what you finish, skip and heart: a daily mix, mixes of your top artists, Discover
+  and On repeat, plus radio from any song or artist. A new profile starts by picking a few artists.
+- **Ask for a mood** ("rainy evening", "workout"). With AI connected, the model builds the mix from your
+  taste; without it, you get a mood mix from playlists.
+- **Now Playing** with synced lyrics (from LRCLIB), the queue, and lock-screen controls on phones. In the
+  desktop app, a quiet "Now playing" notification has a **Like** button.
+- **Play on a TV** in three ways: the song with its cover, **lyrics** in time over moving artwork, or the
+  **music video**. The computer keeps the queue going, so the phone can sleep.
+
+Settings: `NEXTTUPP_MUSIC_CACHE_MB` (cache size, default 3000), `NEXTTUPP_MUSIC_COUNTRY` (store country,
+e.g. `in`; guessed from the time zone otherwise), `NEXTTUPP_YTDLP` (path to yt-dlp). For tests,
+`NEXTTUPP_MUSIC_SOURCE=fake` plays generated chords instead. Details: [ADR 0010](docs/adr/0010-music.md).
+
+## Trailers
+
+Clicking a poster opens a quick view: the trailer, streamed from YouTube, with the plot, Watch, My List and
+Like/Dislike. Close it (Back, Escape, or a click outside) and you're where you were. When Cinemeta's trailer
+won't play, nexttupp searches YouTube for one (with music set up). Back from a title also returns Home exactly
+as you left it ([ADR 0012](docs/adr/0012-back-keeps-your-place.md)).
+
+With music set up, a title page and the home billboard also play the title's trailer behind the backdrop. It's
+muted and loops, and a round button turns the sound on. The computer downloads the trailer from YouTube once
+with the same helper (at most 720p and 5 minutes; 1 GB cache, `NEXTTUPP_TRAILER_CACHE_MB`). On a slow line,
+the first visit may show only the picture, and the next one plays the trailer. Private mode starts no
+downloads. `NEXTTUPP_TRAILER_SOURCE=fake` plays a test pattern instead. Details:
+[ADR 0011](docs/adr/0011-trailers.md).
+
 ## How it works
 
 ```
@@ -109,6 +147,8 @@ web (React)  ──►  server (Node 24, Fastify)
                    ├─ taste       profiles, likes, My List, progress → SQLite (nexttupp.db), sync-ready
                    ├─ reco        content + CF ranking → personalised home rows, each with a reason
                    ├─ ai          optional: ChatGPT / Claude / OpenAI on the viewer's account → AI picks, Ask AI
+                   ├─ music       iTunes + Deezer catalog, yt-dlp audio cache, LRCLIB lyrics, mixes, music casting
+                   ├─ trailers    Cinemeta's YouTube trailer ids → yt-dlp, one at a time → 1 GB cache, Range
                    ├─ lan         phones at home: a cookie-gated listener on the home-network address
                    ├─ cast        Chromecast discovery (mDNS) and control (Cast v2), tokenised TV streams
                    └─ sync        optional sign-in; outbox push + pull ──►  cloud (Worker + D1, accounts and taste only)

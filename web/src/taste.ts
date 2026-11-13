@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DismissReason, MediaType, Rating, TitleState } from '../../shared/types.ts'
 import { api } from './api.ts'
+import { noteMark } from './marks.ts'
 import { toast } from './toast.ts'
 
 // What this profile has done with one title (rating, My List, dismissal, progress), with optimistic
@@ -34,6 +35,9 @@ export function useTitleState (type: MediaType, id: string, opts: { initial?: Ti
       .finally(() => { if (live) setReady(true) })
     return () => { live = false }
   }, [type, id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The posters elsewhere show the same Like and My List state.
+  useEffect(() => { if (state) noteMark(id, state) }, [id, state])
 
   const change = useCallback((patch: (s: TitleState) => TitleState, call: () => Promise<TitleState>, failure: string) => {
     const before = latest.current

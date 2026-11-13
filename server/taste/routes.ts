@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type {
-  CreateProfileRequest, DismissRequest, FeaturePrefRequest, MediaType, Profile, ProgressRequest, RatingRequest, UpdateProfileRequest,
+  CreateProfileRequest, DismissRequest, FeaturePrefRequest, MediaType, Profile, ProgressRequest, RatingRequest, TitleMarks, UpdateProfileRequest,
 } from '../../shared/types.ts'
 import { plainText } from '../../cloud/src/validate.ts'
 import { UUID } from '../db.ts'
@@ -97,6 +97,11 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
   // ---- Taste state -----------------------------------------------------------------
 
   app.get<TitleParams>('/api/me/state/:type/:id', async req => store.titleState(profileOf(req).id, title(req.params)))
+
+  app.get('/api/me/marks', async (req): Promise<TitleMarks> => {
+    const s = store.snapshot(profileOf(req).id)
+    return { ratings: Object.fromEntries(s.ratings.map(r => [r.id, r.value])), list: s.list.map(l => l.id) }
+  })
 
   app.put<TitleParams & { Body: RatingRequest }>('/api/me/rating/:type/:id', async req => {
     const p = profileOf(req)

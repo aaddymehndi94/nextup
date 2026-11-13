@@ -34,7 +34,12 @@ export interface TitleDetail extends TitleSummary {
   director: string[]
   /** Only for series, sorted by season then episode. Season 0 = specials. */
   episodes: Episode[]
+  /** YouTube video ids of the title's trailers, best first (from Cinemeta). */
+  trailers?: string[]
 }
+
+/** GET /api/trailer/:type/:id. The first ask starts the download; ask again every few seconds while preparing. */
+export type TrailerStatus = { state: 'ready'; url: string } | { state: 'preparing' } | { state: 'none' }
 
 export type Resolution = '2160p' | '1080p' | '720p' | '480p' | 'unknown'
 
@@ -219,6 +224,12 @@ export interface TitleState {
   /** Series only: every episode this profile has started, in episode order (for watched marks). */
   episodes?: WatchProgress[]
   dismissed: DismissReason | null
+}
+
+/** Every title this profile has rated or put in My List, for the buttons under each poster (ids are IMDb ids). */
+export interface TitleMarks {
+  ratings: Record<string, 1 | -1>
+  list: string[]
 }
 
 export interface RatingRequest { value: Rating; /** Where the rating was given, e.g. 'title', 'player', 'onboarding'. */ source?: string }

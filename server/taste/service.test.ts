@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
+import Fastify from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { HomeResponse } from '../../shared/types.ts'
 import { openDb } from '../db.ts'
@@ -9,6 +10,7 @@ import { type CfModel, parseCf } from '../reco/cf.ts'
 import { SqliteTasteStore } from '../store.ts'
 import { ItemCache } from './items.ts'
 import { RecoService } from './service.ts'
+import { registerTasteRoutes } from './routes.ts'
 
 // The adapter end to end: SQLite store + item cache (fed by a fake Cinemeta) + the real CfModel parsed
 // from the CF agent's fixture, or no model at all.
@@ -126,5 +128,22 @@ describe('RecoService', () => {
     expect(o.rated).toBe(3)
     expect(o.positives).toBe(1)
     expect(o.target).toBe(3)
+  })
+})
+
+describe('GET /api/me/marks (the buttons under each poster)', () => {
+  it('lists every rating and My List entry, without cleared ones', async () => {
+    const { store, reco, me } = await setup(null)
+    const app = Fastify()
+    registerTasteRoutes(app, store, reco)
+    store.setRating(me.id, { id: DIE_HARD, type: 'movie' }, 0)
+    store.setRating(me.id, { id: BEFORE_SUNRISE, type: 'movie' }, -1)
+    store.setInList(me.id, { id: GODFATHER2, type: 'movie' }, true)
+    store.setInList(me.id, { id: SHAWSHANK, type: 'movie' }, true)
+    store.setInList(me.id, { id: SHAWSHANK, type: 'movie' }, false)
+    const res = await app.inject({ method: 'GET', url: '/api/me/marks' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ratings: { [SHAWSHANK]: 1, [GODFATHER]: 1, [BEFORE_SUNRISE]: -1 }, list: [GODFATHER2] })
+    await app.close()
   })
 })

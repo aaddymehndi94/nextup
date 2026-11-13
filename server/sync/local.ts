@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import {
-  type Batch, CONTEXT_KEYS, type DismissalW, type EventW, type Kind, type ListW, LIMITS, type MediaType, type PrefW, type ProfileW,
+  type Batch, CONTEXT_KEYS, type DismissalW, type EventW, type Kind, type ListW, LIMITS, type MediaType, MIX_KINDS, type PrefW, type ProfileW,
   type ProgressW, RATING_SOURCE, type RatingW, SECTIONS, type Section, VALIDATORS,
 } from '../../cloud/src/wire.ts'
 import { transaction } from '../db.ts'
@@ -309,7 +309,27 @@ function mergeProfileRows (db: DatabaseSync, from: string, to: string): void {
   db.prepare('DELETE FROM impressions WHERE profile_id = ?1 AND item_id IN (SELECT item_id FROM impressions WHERE profile_id = ?2)').run(from, to)
   db.prepare('UPDATE impressions SET profile_id = ?2 WHERE profile_id = ?1').run(from, to)
   db.prepare('UPDATE events SET profile_id = ?2 WHERE profile_id = ?1').run(from, to)
+  mergeMusicRows(db, from, to)
 }
+
+/**
+ * Music follows the same way: song and artist likes, newer row winning; every listen; the mixes they asked
+ * for. The engine's mixes of both are dropped, so the next visit to Music makes them from the merged taste.
+ * The outbox triggers queue what moved, under the account's profile.
+ */
+function mergeMusicRows (db: DatabaseSync, from: string, to: string): void {
+  db.prepare(`UPDATE music_ratings AS dst SET rating = src.rating, name = COALESCE(src.name, dst.name), picture = COALESCE(src.picture, dst.picture), updated_at = src.updated_at
+              FROM music_ratings AS src WHERE src.profile_id = ?1 AND dst.profile_id = ?2 AND dst.kind = src.kind AND dst.item_id = src.item_id
+                AND src.updated_at > dst.updated_at`).run(from, to)
+  db.prepare('DELETE FROM music_ratings WHERE profile_id = ?1 AND (kind, item_id) IN (SELECT kind, item_id FROM music_ratings WHERE profile_id = ?2)').run(from, to)
+  db.prepare('UPDATE music_ratings SET profile_id = ?2 WHERE profile_id = ?1').run(from, to)
+  db.prepare('UPDATE music_listens SET profile_id = ?2 WHERE profile_id = ?1').run(from, to)
+  db.prepare(`DELETE FROM music_mixes WHERE profile_id IN (?1, ?2) AND kind NOT IN (${ASKED_MIXES})`).run(from, to)
+  db.prepare('UPDATE music_mixes SET profile_id = ?2 WHERE profile_id = ?1').run(from, to)
+}
+
+/** Mix kinds that sync: the ones someone asked for (wire.ts MIX_KINDS). */
+const ASKED_MIXES = MIX_KINDS.map(k => `'${k}'`).join(', ')
 
 /** Queues every synced row of a profile (rows written before the outbox existed aren't in it). */
 function enqueueProfile (db: DatabaseSync, pid: string): void {
@@ -318,15 +338,19 @@ function enqueueProfile (db: DatabaseSync, pid: string): void {
   for (const [t, k] of Object.entries(KEY2)) {
     db.prepare(`INSERT OR IGNORE INTO sync_outbox (tbl, k1, k2) SELECT '${t}', profile_id, ${k} FROM ${t} WHERE profile_id = ?`).run(pid)
   }
+  db.prepare("INSERT OR IGNORE INTO sync_music_outbox (tbl, k1, k2) SELECT 'music_ratings', profile_id, kind || ':' || item_id FROM music_ratings WHERE profile_id = ?").run(pid)
+  db.prepare(`INSERT OR IGNORE INTO sync_music_outbox (tbl, k1) SELECT 'music_mixes', id FROM music_mixes WHERE profile_id = ? AND kind IN (${ASKED_MIXES})`).run(pid)
+  db.prepare("INSERT OR IGNORE INTO sync_music_outbox (tbl, k1) SELECT 'music_listens', id FROM music_listens WHERE profile_id = ? ORDER BY at").run(pid)
 }
 
 /** The name of the profile a new install makes for itself (SqliteTasteStore.defaultProfile). */
 const STARTER_NAME = 'Me'
 
-/** True when a profile has nothing that syncs: no likes, list, progress, dismissals, preferences or events. */
+/** True when a profile has nothing that syncs: no likes, list, progress, dismissals, preferences, events, or music. */
 function isEmptyProfile (db: DatabaseSync, pid: string): boolean {
-  const tables = [...Object.keys(KEY2), 'events']
-  return tables.every(t => db.prepare(`SELECT 1 FROM ${t} WHERE profile_id = ? LIMIT 1`).get(pid) === undefined)
+  const tables = [...Object.keys(KEY2), 'events', 'music_ratings', 'music_listens']
+  return tables.every(t => db.prepare(`SELECT 1 FROM ${t} WHERE profile_id = ? LIMIT 1`).get(pid) === undefined) &&
+    db.prepare(`SELECT 1 FROM music_mixes WHERE profile_id = ? AND kind IN (${ASKED_MIXES}) LIMIT 1`).get(pid) === undefined
 }
 
 /**

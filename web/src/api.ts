@@ -3,7 +3,7 @@ import type {
   AiPicksResponse, AiProvider, AiSearchResponse, AiSettingsRequest, AiSignInResponse, AiStatus,
   ClientCaps, CreateProfileRequest, DismissReason, FeaturePrefRequest, HealthResponse, HomeMoreResponse, HomeResponse, MediaType, OnboardingResponse,
   OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, RowMoreResponse, SessionStats, SimilarResponse,
-  SourcesResponse, TasteSummary, TitleDetail, TitleState, TitleSummary, UpdateProfileRequest,
+  SourcesResponse, TasteSummary, TitleDetail, TitleMarks, TitleState, TitleSummary, UpdateProfileRequest,
 } from '../../shared/types.ts'
 
 export interface Stats extends SessionStats { ranges: Array<[number, number]> }
@@ -58,11 +58,20 @@ export interface CastStatus {
   mode?: 'direct' | 'remux' | 'transcode'
   error?: string
 }
+export interface CastSubtitle { url: string; lang?: string; label?: string; offset?: number }
 export interface CastStartRequest {
   deviceId: string; sessionId: string; t: number; audio?: number
-  subtitle?: { url: string; lang?: string; label?: string; offset?: number } | null
+  /** The subtitle showing from the start, and every one the viewer can switch to (tracks on the TV). */
+  subtitle?: CastSubtitle | null
+  subtitles?: CastSubtitle[]
   title?: string; streamId?: string; image?: string
 }
+/** "subtitle" switches the TV's subtitle in place (null: off); `subtitles` is the player's list again. */
+export type CastControl =
+  | { action: 'play' | 'pause' }
+  | { action: 'seek'; t: number }
+  | { action: 'volume'; level?: number; muted?: boolean }
+  | { action: 'subtitle'; subtitle: CastSubtitle | null; subtitles?: CastSubtitle[] }
 
 export class ApiError extends Error {
   readonly status: number
@@ -152,12 +161,28 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body ? JSON.stringify(body) : undefined,
 })
 
+const titles = new Map<string, { at: number; job: Promise<TitleDetail> }>()
+const TITLE_TTL = 30 * 60_000
+
 export const capsParam = (caps: ClientCaps) => Object.entries(caps).filter(([, v]) => v).map(([k]) => k).join(',')
 
 export const api = {
   search: (q: string, signal?: AbortSignal) => req<TitleSummary[]>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
   popular: (type: MediaType) => req<TitleSummary[]>(`/api/popular/${type}`),
-  title: (type: MediaType, id: string) => req<TitleDetail>(`/api/title/${type}/${id}`),
+  /** A title's details. Kept for a while, so the popup, a hover, and then the title page fetch them once. */
+  title: (type: MediaType, id: string): Promise<TitleDetail> => {
+    const key = `${type}/${id}/${isPrivate() ? 'p' : ''}`
+    const hit = titles.get(key)
+    if (hit && Date.now() - hit.at < TITLE_TTL) return hit.job
+    const job = req<TitleDetail>(`/api/title/${type}/${id}`)
+    titles.delete(key)
+    titles.set(key, { at: Date.now(), job })
+    if (titles.size > 60) titles.delete(titles.keys().next().value!)
+    job.catch(() => { if (titles.get(key)?.job === job) titles.delete(key) })
+    return job
+  },
+  /** More YouTube trailers for a title, found by searching (when Cinemeta's are missing or don't play). */
+  trailerSearch: (type: MediaType, id: string) => req<{ ids: string[] }>(`/api/trailer/${type}/${id}/search`),
   sources: (type: MediaType, streamId: string) => req<SourcesResponse>(`/api/sources/${type}/${encodeURIComponent(streamId)}`),
   swarm: (hashes: string[]) => req<HealthResponse>(`/api/swarm?h=${hashes.join(',')}`),
   open: (body: OpenSessionRequest) => req<Stats>('/api/sessions', json('POST', body)),
@@ -184,6 +209,8 @@ export const api = {
 
   // Taste state for one title.
   titleState: (type: MediaType, id: string) => req<TitleState>(`/api/me/state/${t(type, id)}`),
+  /** Every rating and My List entry, for the buttons under each poster. */
+  marks: () => req<TitleMarks>('/api/me/marks'),
   rate: (type: MediaType, id: string, value: Rating, source?: string) => req<TitleState>(`/api/me/rating/${t(type, id)}`, json('PUT', { value, source })),
   myList: () => req<RecItem[]>('/api/me/list'),
   addToList: (type: MediaType, id: string) => req<TitleState>(`/api/me/list/${t(type, id)}`, json('PUT')),
@@ -206,7 +233,7 @@ export const api = {
   castDevices: (refresh = false) => req<{ devices: CastDevice[] }>(`/api/cast/devices${refresh ? '?refresh=1' : ''}`),
   cast: () => req<CastStatus>('/api/cast'),
   castStart: (body: CastStartRequest) => req<CastStatus>('/api/cast', json('POST', body)),
-  castControl: (body: { action: 'play' | 'pause' | 'seek' | 'volume'; t?: number; level?: number; muted?: boolean }) => req<CastStatus>('/api/cast/control', json('POST', body)),
+  castControl: (body: CastControl) => req<CastStatus>('/api/cast/control', json('POST', body)),
   castStop: () => req<CastStatus>('/api/cast/stop', json('POST', {})),
   lan: () => req<LanStatus>('/api/lan'),
   setLan: (body: { enabled?: boolean; name?: string }) => req<LanStatus>('/api/lan', json('PATCH', body)),
@@ -234,3 +261,6 @@ export const api = {
   makeAiPicks: () => req<AiPicksResponse>('/api/ai/picks', json('POST', {})),
   aiSearch: (q: string, refresh = false) => req<AiSearchResponse>('/api/ai/search', json('POST', { q, refresh })),
 }
+
+/** For other API modules (music): the same profile, private-mode and error handling. */
+export { req as request }

@@ -258,6 +258,8 @@ export interface ReceiverStatus {
   applications?: Array<{ appId: string; sessionId: string; transportId: string; displayName?: string }>
 }
 
+export interface TextTrack { url: string; language?: string; name?: string }
+
 export interface LoadRequest {
   contentId: string
   contentType: string
@@ -267,9 +269,19 @@ export interface LoadRequest {
   title?: string
   subtitle?: string
   image?: string
-  /** A WebVTT track, shown from the start. */
-  textTrack?: { url: string; language?: string; name?: string }
+  /**
+   * WebVTT subtitle tracks the viewer can switch between without reloading (see showTextTrack). The
+   * receiver fetches a track's URL when it's shown.
+   */
+  textTracks?: TextTrack[]
+  /** Which of `textTracks` shows from the start (its index), if any. */
+  activeTextTrack?: number | null
+  /** A song: the TV shows it as music (artist and album under the title, the cover large). */
+  music?: { artist?: string; album?: string }
 }
+
+/** Track ids on the receiver: 1, 2, … for textTracks[0], [1], … */
+const textTrackId = (index: number) => index + 1
 
 /**
  * The Default Media Receiver on one device: launch it, load a URL, and control playback. Emits
@@ -314,14 +326,18 @@ export class MediaReceiver extends EventEmitter {
       contentUrl: req.contentId,
       contentType: req.contentType,
       streamType: 'BUFFERED',
-      metadata: { metadataType: 0, title: req.title, subtitle: req.subtitle, images: req.image ? [{ url: req.image }] : [] },
+      metadata: req.music
+        ? { metadataType: 3, title: req.title, artist: req.music.artist, albumName: req.music.album, images: req.image ? [{ url: req.image }] : [] }
+        : { metadataType: 0, title: req.title, subtitle: req.subtitle, images: req.image ? [{ url: req.image }] : [] },
     }
     if (req.duration) media.duration = req.duration
     const body: Record<string, unknown> = { type: 'LOAD', media, autoplay: true, currentTime: req.currentTime }
-    if (req.textTrack) {
-      media.tracks = [{ trackId: 1, type: 'TEXT', subtype: 'SUBTITLES', trackContentId: req.textTrack.url, trackContentType: 'text/vtt', language: req.textTrack.language, name: req.textTrack.name }]
+    if (req.textTracks?.length) {
+      media.tracks = req.textTracks.map((t, i) => ({ trackId: textTrackId(i), type: 'TEXT', subtype: 'SUBTITLES', trackContentId: t.url, trackContentType: 'text/vtt', language: t.language, name: t.name }))
       media.textTrackStyle = { backgroundColor: '#00000000', edgeType: 'OUTLINE', edgeColor: '#000000FF', foregroundColor: '#FFFFFFFF', fontScale: 1 }
-      body.activeTrackIds = [1]
+      // Always said, even when none shows: left out, a receiver may pick one by its own language setting.
+      const active = req.activeTextTrack
+      body.activeTrackIds = typeof active === 'number' && req.textTracks[active] ? [textTrackId(active)] : []
     }
     const r = await this.channel.request(NS.media, this.transport(), body, 30_000)
     const status = this.mediaFrom(r)
@@ -336,6 +352,8 @@ export class MediaReceiver extends EventEmitter {
   pause () { return this.mediaCommand('PAUSE') }
   seek (currentTime: number) { return this.mediaCommand('SEEK', { currentTime, resumeState: 'PLAYBACK_START' }) }
   stopMedia () { return this.mediaCommand('STOP') }
+  /** Shows text track `index` of the loaded media (or none), in place: playback carries on where it is. */
+  showTextTrack (index: number | null) { return this.mediaCommand('EDIT_TRACKS_INFO', { activeTrackIds: index === null ? [] : [textTrackId(index)] }) }
   getStatus () { return this.mediaCommand('GET_STATUS') }
 
   async setVolume (volume: { level?: number; muted?: boolean }): Promise<void> {

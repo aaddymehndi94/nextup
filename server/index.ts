@@ -8,7 +8,7 @@ import * as cinemeta from './catalog/cinemeta.ts'
 import { config } from './config.ts'
 import { EngineError, TorrentEngine, type Session } from './engine/engine.ts'
 import { contentType, parseRange } from './engine/range.ts'
-import { HttpError, UpstreamError } from './http.ts'
+import { fetchJson, HttpError, UpstreamError } from './http.ts'
 import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
 import { buildFfmpegArgs, castPlan, choosePlan } from './playback/plan.ts'
 import { findSources } from './sources/index.ts'
@@ -33,6 +33,17 @@ import { ChatgptAuth } from './ai/chatgpt.ts'
 import { providers as aiProviders } from './ai/providers.ts'
 import { registerAiRoutes } from './ai/routes.ts'
 import { AiService } from './ai/service.ts'
+import { Catalog, storeCountry } from './music/catalog.ts'
+import { MusicCast } from './music/cast.ts'
+import { MusicFiles } from './music/files.ts'
+import { Lyrics } from './music/lyrics.ts'
+import { canDrawLyrics } from './music/render.ts'
+import { registerMusicRoutes } from './music/routes.ts'
+import { MusicService } from './music/service.ts'
+import { FakeSource } from './music/source.ts'
+import { MusicStore } from './music/store.ts'
+import { YoutubeSource } from './music/youtube.ts'
+import { FakeTrailerSource, registerTrailerRoutes, Trailers, youtubeTrailers } from './trailers.ts'
 
 // No line per request: the log would otherwise be a record of every search and title opened. LOG_REQUESTS=1
 // brings them back for debugging, except for private mode (and streams of a private session), which never logs.
@@ -67,6 +78,7 @@ const cast = new CastService({
   discovery: castDiscovery,
   lan,
   log: msg => app.log.info(msg),
+  beforeStart: () => (musicCast.active ? musicCast.stop() : Promise.resolve()),
   media: {
     async plan (id, audio) {
       const s = session(id)
@@ -78,6 +90,52 @@ const cast = new CastService({
       return keyframeStart(s.id, t, (await getProbe(s)).container)
     },
   },
+})
+// Music (server/music, docs/adr/0010): songs from YouTube saved on this computer, played at home.
+// NEXTTUPP_MUSIC_SOURCE=fake plays generated chords instead (tests, demos).
+const musicStore = new MusicStore(db)
+const youtube = new YoutubeSource({ dataDir: config.dataDir, ffmpeg: config.ffmpeg, log: msg => app.log.info(msg) })
+const musicFiles = new MusicFiles({
+  db,
+  dir: join(config.dataDir, 'music'),
+  source: process.env.NEXTTUPP_MUSIC_SOURCE === 'fake'
+    ? new FakeSource(config.ffmpeg, Number(process.env.NEXTTUPP_MUSIC_FAKE_SECONDS) || 20)
+    : youtube,
+  capBytes: (Number(process.env.NEXTTUPP_MUSIC_CACHE_MB) || 3000) * 1e6,
+  log: msg => app.log.info(msg),
+})
+const musicLyrics = new Lyrics(fetchJson)
+const music = new MusicService({
+  catalog: new Catalog({ artists: musicStore, country: storeCountry() }),
+  store: musicStore,
+  files: musicFiles,
+  lyrics: musicLyrics,
+  ai,
+  fetch: fetchJson,
+  log: msg => app.log.info(msg),
+})
+const musicCast = new MusicCast({
+  discovery: castDiscovery,
+  lan,
+  files: musicFiles,
+  track: id => musicStore.track(id),
+  lyrics: await canDrawLyrics(config.ffmpeg),
+  beforeStart: () => (cast.casting ? cast.stop() : Promise.resolve()),
+  log: msg => app.log.info(msg),
+})
+// Trailers behind the hero (server/trailers.ts, docs/adr/0011), fetched with the music helper.
+// NEXTTUPP_TRAILER_SOURCE=fake makes a test pattern instead (tests, demos).
+const trailers = new Trailers({
+  dir: join(config.dataDir, 'trailers'),
+  source: process.env.NEXTTUPP_TRAILER_SOURCE === 'fake' ? new FakeTrailerSource(config.ffmpeg) : youtubeTrailers(youtube),
+  lookup: async (type, id) => (await cinemeta.detail(type, id)).trailers ?? [],
+  search: async (type, id) => {
+    if (!youtube.binary()) return []
+    const d = await cinemeta.detail(type, id)
+    return youtube.findTrailers(`${d.name} ${d.year?.slice(0, 4) ?? ''}${type === 'series' ? ' series' : ''}`.replace(/\s+/g, ' ').trim())
+  },
+  capBytes: (Number(process.env.NEXTTUPP_TRAILER_CACHE_MB) || 1000) * 1e6,
+  log: msg => app.log.info(msg),
 })
 const probes = new Map<string, Promise<ProbeResult>>()
 /** Where each copied stream really starts, keyed by `${sessionId}@${t}`. See findKeyframe. */
@@ -466,6 +524,8 @@ registerLanRoutes(app, lan, { signedIn: () => sync.signedIn, redeemHandoff: (cod
 
 registerTasteRoutes(app, tasteStore, reco)
 registerAiRoutes(app, ai, tasteStore, { port: () => config.port })
+registerMusicRoutes(app, { music, files: musicFiles, lyrics: musicLyrics, cast: musicCast, tasteStore, ffmpeg: config.ffmpeg, dataDir: config.dataDir })
+registerTrailerRoutes(app, trailers)
 
 // ---- Web app (production build) ----------------------------------------------
 
@@ -480,6 +540,7 @@ if (existsSync(config.webDist)) {
 const shutdown = async () => {
   sync.stop()
   cast.shutdown()
+  musicCast.shutdown()
   castDiscovery.close()
   lan.stop()
   transcodes.killAll()
@@ -501,6 +562,16 @@ await lan.start((req, res) => app.routing(req, res))
 const crawl = () => itemCache.crawl(msg => app.log.info(msg)).catch(err => app.log.warn(`catalog crawl: ${(err as Error).message}`))
 void crawl()
 setInterval(crawl, 12 * 3600_000).unref()
+
+// While a film plays on a TV, kept downloads seed slowly, so their uploads don't take Wi-Fi time from the TV's stream.
+let castUploadCap = false
+setInterval(() => {
+  const casting = cast.status().active
+  if (casting === castUploadCap) return
+  castUploadCap = casting
+  engine.limitUpload(casting ? 256 * 1024 : null)
+  app.log.info(casting ? 'cast: seeding capped at 256 KB/s while the TV plays' : 'cast: seeding uncapped')
+}, 5000).unref()
 setImmediate(() => reco.prewarm())
 // The CF model may be built after the server starts; pick it up when it appears.
 setInterval(async () => {

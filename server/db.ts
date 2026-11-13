@@ -5,11 +5,12 @@ import { DatabaseSync } from 'node:sqlite'
 
 // The local database: profiles, taste state and the metadata cache, in <dataDir>/nexttupp.db.
 //
-// Sync shape (see docs/adr/0003): everything that will sync to a future cloud service (profiles, events,
-// ratings, my_list, progress, dismissals, feature_prefs) has a globally unique key that is not an
-// autoincrement (UUIDv7 or profile id + IMDb/stream id), carries `updated_at` for last-write-wins merging,
-// and is never hard-deleted (removal = tombstone row). `events` is immutable and append-only. Tables
-// marked LOCAL never sync. No torrent info hash, file name or source name goes in any of them.
+// Sync shape (see docs/adr/0003, 0004): everything that syncs to the cloud (profiles, events, ratings,
+// my_list, progress, dismissals, feature_prefs, and since migration 5 music likes, listens and asked-for
+// mixes) has a globally unique key that is not an autoincrement (UUIDv7 or profile id + IMDb/stream id),
+// carries `updated_at` for last-write-wins merging, and is never hard-deleted (removal = tombstone row).
+// `events` and `music_listens` are immutable and append-only. Tables marked LOCAL never sync. No torrent
+// info hash, file name or source name goes in any of them.
 
 /** Each entry upgrades the schema by one version (`PRAGMA user_version`). Never edit a shipped entry. */
 const MIGRATIONS: string[] = [
@@ -194,18 +195,116 @@ ${outboxTriggers([
   );
   CREATE INDEX ai_usage_at ON ai_usage (at);
   `,
+  // Music (server/music, docs/adr/0010). Migration 5 syncs music_ratings, music_listens and the asked-for
+  // music_mixes (with the songs and artists they name); music_files and the engine's mixes stay local.
+  `
+  -- Every song the app has shown, so listens, likes and mixes can name it without asking Deezer again.
+  CREATE TABLE music_tracks (
+    id          TEXT PRIMARY KEY,           -- t + 16 hex, from the normalised artist and title
+    title       TEXT NOT NULL,
+    credit      TEXT,
+    artist_id   TEXT NOT NULL,
+    artist      TEXT NOT NULL,
+    picture     TEXT,                       -- the artist's picture
+    album_id    TEXT,
+    album       TEXT,
+    cover       TEXT,
+    duration    INTEGER NOT NULL,
+    explicit    INTEGER NOT NULL DEFAULT 0,
+    rank        REAL NOT NULL DEFAULT 0,
+    seen_at     INTEGER NOT NULL
+  ) WITHOUT ROWID;
+  -- Artists by name, with where each catalog keeps them.
+  CREATE TABLE music_artists (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    picture     TEXT,
+    itunes_id   TEXT,
+    deezer_id   TEXT,
+    seen_at     INTEGER NOT NULL
+  ) WITHOUT ROWID;
+  -- One row per listen, written when it ends: how much was heard and how it ended.
+  CREATE TABLE music_listens (
+    id          TEXT PRIMARY KEY,           -- UUIDv7
+    profile_id  TEXT NOT NULL,
+    track_id    TEXT NOT NULL,
+    artist_id   TEXT NOT NULL,
+    played      REAL NOT NULL,              -- seconds heard
+    outcome     TEXT NOT NULL,              -- 'complete' | 'partial' | 'skip'
+    at          INTEGER NOT NULL
+  );
+  CREATE INDEX music_listens_profile ON music_listens (profile_id, at);
+  -- Likes and dislikes of songs and artists. rating 0 rows are kept as "changed their mind".
+  CREATE TABLE music_ratings (
+    profile_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,              -- 'track' | 'artist'
+    item_id     TEXT NOT NULL,
+    rating      INTEGER NOT NULL,           -- 1 | -1 | 0
+    name        TEXT,
+    picture     TEXT,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (profile_id, kind, item_id)
+  ) WITHOUT ROWID;
+  -- Mixes as they were made (by the engine or a model), so Music home opens instantly.
+  CREATE TABLE music_mixes (
+    id          TEXT PRIMARY KEY,
+    profile_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    subtitle    TEXT NOT NULL,
+    tracks      TEXT NOT NULL,              -- JSON: [{ id, why }]
+    model       TEXT,
+    at          INTEGER NOT NULL
+  );
+  CREATE INDEX music_mixes_profile ON music_mixes (profile_id, at);
+  -- Song and video files kept on this computer (data/music), least recently played removed first.
+  CREATE TABLE music_files (
+    track_id    TEXT NOT NULL,
+    kind        TEXT NOT NULL,              -- 'audio' | 'video'
+    ref         TEXT,                       -- where it came from (a YouTube video id)
+    bytes       INTEGER NOT NULL,
+    duration    REAL,
+    used_at     INTEGER NOT NULL,
+    PRIMARY KEY (track_id, kind)
+  ) WITHOUT ROWID;
+  `,
+  /* 5 */ `
+  -- Music sync (server/sync/music.ts, docs/adr/0004 "Update: music"). Its own outbox, filled the same way as
+  -- sync_outbox, so film sync never waits behind thousands of listens and a cloud that doesn't sync music yet
+  -- leaves them queued without fuss. music_ratings is keyed k1 = profile, k2 = 'kind:item'; listens and mixes
+  -- by id. Only AI and mood mixes queue: the engine's daily, artist, Discover and On repeat mixes are remade
+  -- on each computer from the synced likes and listens. Songs and artists aren't queued: a push carries the
+  -- ones its rows name.
+  CREATE TABLE sync_music_outbox (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    tbl  TEXT NOT NULL,
+    k1   TEXT NOT NULL,
+    k2   TEXT NOT NULL DEFAULT '',
+    UNIQUE (tbl, k1, k2)
+  );
+${outboxTriggers([
+    ['music_ratings', 'NEW.profile_id', "NEW.kind || ':' || NEW.item_id"],
+    ['music_listens', 'NEW.id', "''"],
+    ['music_mixes', 'NEW.id', "''", "NEW.kind IN ('ai', 'mood')"],
+  ], 'sync_music_outbox')}
+  -- Everything from before this migration uploads on the first sync after it: likes first, then mixes, then listens.
+  INSERT INTO sync_music_outbox (tbl, k1, k2) SELECT 'music_ratings', profile_id, kind || ':' || item_id FROM music_ratings ORDER BY updated_at;
+  INSERT INTO sync_music_outbox (tbl, k1) SELECT 'music_mixes', id FROM music_mixes WHERE kind IN ('ai', 'mood') ORDER BY at;
+  INSERT INTO sync_music_outbox (tbl, k1) SELECT 'music_listens', id FROM music_listens ORDER BY at;
+  `,
 ]
 
 /**
  * AFTER INSERT/UPDATE triggers that (re)queue a row's key with a fresh id. Delete-then-insert rather than
  * INSERT OR REPLACE: inside a trigger, the outer statement's conflict policy (an upsert's is ABORT) wins.
+ * An optional fourth entry limits which rows queue.
  */
-function outboxTriggers (tables: Array<[string, string, string]>): string {
-  return tables.map(([t, k1, k2]) => ['INSERT', 'UPDATE'].map(op => `
-  CREATE TRIGGER ${t}_outbox_${op.toLowerCase()} AFTER ${op} ON ${t} WHEN NOT EXISTS (SELECT 1 FROM sync_mute)
+function outboxTriggers (tables: Array<[string, string, string, string?]>, outbox = 'sync_outbox'): string {
+  return tables.map(([t, k1, k2, only]) => ['INSERT', 'UPDATE'].map(op => `
+  CREATE TRIGGER ${t}_outbox_${op.toLowerCase()} AFTER ${op} ON ${t} WHEN NOT EXISTS (SELECT 1 FROM sync_mute)${only ? ` AND ${only}` : ''}
   BEGIN
-    DELETE FROM sync_outbox WHERE tbl = '${t}' AND k1 = ${k1} AND k2 = ${k2};
-    INSERT INTO sync_outbox (tbl, k1, k2) VALUES ('${t}', ${k1}, ${k2});
+    DELETE FROM ${outbox} WHERE tbl = '${t}' AND k1 = ${k1} AND k2 = ${k2};
+    INSERT INTO ${outbox} (tbl, k1, k2) VALUES ('${t}', ${k1}, ${k2});
   END;`).join('')).join('')
 }
 
@@ -219,10 +318,11 @@ export function openDb (file: string): DatabaseSync {
   return db
 }
 
-export function migrate (db: DatabaseSync): void {
+/** Upgrades to the latest schema (or to `target`, for tests of a migration itself). */
+export function migrate (db: DatabaseSync, target = MIGRATIONS.length): void {
   const current = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
   if (current > MIGRATIONS.length) throw new Error(`nexttupp.db is schema v${current}, newer than this build (v${MIGRATIONS.length})`)
-  for (let v = current; v < MIGRATIONS.length; v++) {
+  for (let v = current; v < Math.min(target, MIGRATIONS.length); v++) {
     transaction(db, () => {
       db.exec(MIGRATIONS[v])
       db.exec(`PRAGMA user_version = ${v + 1}`)

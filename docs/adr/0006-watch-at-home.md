@@ -95,8 +95,8 @@ discovery can't see, and is how the tests point at a fake receiver.
 **Control: Cast v2 written in-house** (`server/cast/protocol.ts`, about 400 lines with the media client): TLS
 to port 8009, length-prefixed protobuf `CastMessage` frames encoded by hand (a handful of string fields), JSON payloads on the
 `tp.connection`, `tp.heartbeat`, `receiver` and `media` namespaces. It LAUNCHes the Default Media Receiver
-(`CC1AD845`), CONNECTs to its transport, and then sends LOAD, PLAY, PAUSE, SEEK, GET_STATUS, SET_VOLUME and
-STOP. The well-known `castv2`/`castv2-client` packages were last published in 2019 and 2016, and `castv2`
+(`CC1AD845`), CONNECTs to its transport, and then sends LOAD, PLAY, PAUSE, SEEK, GET_STATUS, SET_VOLUME,
+EDIT_TRACKS_INFO and STOP. The well-known `castv2`/`castv2-client` packages were last published in 2019 and 2016, and `castv2`
 loads `cast_channel.proto` from its own directory at run time, which breaks the desktop app's single-file
 esbuild bundle. The protocol surface needed is small and stable.
 
@@ -104,7 +104,9 @@ esbuild bundle. The protocol surface needed is small and stable.
 valid for 12 hours, revoked on stop, and accepted only from the TV's own address (or loopback, for tests).
 After a reload, the previous token gets 30 seconds' grace. The routes are `/cast/<token>/raw` (direct
 play), `/cast/<token>/play.mp4?t=` (converted) and `/cast/<token>/subs.vtt`, with
-`Access-Control-Allow-Origin: *`, which the receiver needs for subtitles.
+`Access-Control-Allow-Origin: *`, which the receiver needs for subtitles. LOAD carries every subtitle in the
+player's panel (up to 40) as its own text track, each with its own token, and always sets `activeTrackIds` so the
+receiver can't pick one by its own language setting.
 
 **A "cast" capability profile** (`castPlan` in `server/playback/plan.ts`): H.264 8-bit + AAC/MP3 in MP4.
 Compatible MP4 direct-plays. Compatible video in MKV is remuxed to fragmented MP4. HEVC, 10-bit and HDR are
@@ -120,8 +122,17 @@ reports film time as `(clockBase ?? origin) + currentTime + time since the repor
 <TV>", play/pause, ±10 s, the scrubber, the TV's volume and "Stop casting". It polls `/api/cast` every
 second and keeps reporting progress (every 10 s while playing, on seek and pause, on exit) from the TV's
 position. A reload, or a phone opening the same title, finds the active cast and becomes its remote instead
-of playing too. Stopping resumes locally, paused, at the TV's position. Changing the audio track or
-subtitles reloads the TV at the current position.
+of playing too. Stopping resumes locally, paused, at the TV's position. Changing the audio track reloads the
+TV at the current position. Turning subtitles on, off or to another one sends EDIT_TRACKS_INFO, and the film
+plays on. The TV reloads only for a subtitle it wasn't loaded with, or if it refuses the switch. Seeks that
+queue up behind one in progress collapse into the newest. While a film plays on a TV, kept downloads seed at
+most 256 KB/s, so their uploads don't take Wi-Fi time from the stream.
+
+**Only the computer casts.** The player's `<video>` and music's `<audio>` set `disableRemotePlayback`. Without
+it, Chrome on Android puts its own cast button on the video. A cast started from that button belongs to the
+browser tab, so it ends when the phone's screen turns off or the tab is put away. Casting from nexttupp's own
+button is held by the computer and carries on. Play and pause from the phone's lock screen go to the TV while
+music is cast.
 
 ## Consequences
 

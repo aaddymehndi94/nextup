@@ -7,7 +7,7 @@ import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, typ
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
 import { useDocumentTitle } from '../hooks.ts'
-import { navigate } from '../router.ts'
+import { goBack } from '../router.ts'
 import { readKey, readSessionKey, writeKey } from '../storage.ts'
 import { isPrivate } from '../private.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
@@ -340,9 +340,13 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (note) toast(note)
   }, [attachLocal, audioTrack])
 
+  // The TV gets every subtitle in the panel as a track, so changing subtitles there doesn't reload the film.
+  const castSub = (s: SubtitleOption, offset = 0) => ({ url: s.url, lang: /^[a-z]{2,3}$/.test(s.lang) ? s.lang : undefined, label: s.label.slice(0, 60), offset })
+  const castSubs = () => subs.slice(0, 40).map(s => castSub(s))
   const castBody = (deviceId: string, t: number, audio: number | undefined, sub: SubtitleOption | null, offset: number) => ({
     deviceId, sessionId: sessionId!, t, audio,
-    subtitle: sub ? { url: sub.url, lang: /^[a-z]{2,3}$/.test(sub.lang) ? sub.lang : undefined, label: sub.label.slice(0, 60), offset } : null,
+    subtitle: sub ? castSub(sub, offset) : null,
+    subtitles: castSubs(),
     title: name || undefined,
     streamId: STREAM_ID.test(streamId) ? streamId : undefined,
     image: backdrop,
@@ -366,13 +370,13 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       })
   }
 
-  /** Same TV, same place, new audio or subtitles: the TV reloads the film. */
-  const recast = (audio: number | undefined, sub: SubtitleOption | null) => {
+  /** Same TV, same place, another audio track: the TV reloads the film. */
+  const recast = (audio: number | undefined) => {
     const c = castRef.current
     if (!c?.active || !c.device) return
     const device = { id: c.device.id, name: c.device.name, model: '' }
     setCastPending(device)
-    api.castStart(castBody(device.id, timeRef.current, audio, sub, 0))
+    api.castStart(castBody(device.id, timeRef.current, audio, subChoice, subOffset))
       .then(next => { follow(next); setCastPending(null) })
       .catch(err => { setCastPending(null); leaveRemote(c, err.message || 'The TV stopped playing') })
   }
@@ -428,6 +432,10 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => {
     const v = video.current
     if (!v) return
+    // No browser-made cast button (Chrome on Android overlays one on every video). A cast started from it belongs
+    // to this tab and ends when the phone sleeps; ours runs from the computer and keeps going.
+    v.disableRemotePlayback = true
+    v.setAttribute('x-webkit-airplay', 'deny')
     const onTime = () => {
       setTime(origin.current + v.currentTime)
       if (v.src && !exited.current) lastPosition.current = origin.current + v.currentTime
@@ -504,7 +512,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     setSubOffset(0)
     writeKey('subs-lang', s ? s.lang : null)
     setPanel('none')
-    if (castRef.current?.active) recast(audioTrack, s)
+    // On the TV only the subtitle track changes; the film plays on.
+    if (castRef.current?.active) api.castControl({ action: 'subtitle', subtitle: s ? castSub(s) : null, subtitles: castSubs() }).then(follow).catch(err => toast(err.message))
   }
 
   const activeCue = useMemo(() => {
@@ -515,7 +524,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const chooseAudio = (i: number) => {
     setAudioTrack(i)
     setPanel('none')
-    if (castRef.current?.active) { recast(i, subChoice); return }
+    if (castRef.current?.active) { recast(i); return }
     const t = now()
     if (mode === 'direct' && i === 0) {
       const v = video.current!
@@ -621,7 +630,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     exited.current = true
     const v = video.current
     if (v) { v.pause(); v.removeAttribute('src'); v.load() }
-    if (history.length > 1) history.back(); else navigate(`/title/${type}/${imdbId}`)
+    goBack(`/title/${type}/${imdbId}`)
   }
 
   const togglePin = () => {

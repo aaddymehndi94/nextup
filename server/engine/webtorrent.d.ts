@@ -47,5 +47,7 @@ declare module 'webtorrent' {
     get(torrentId: string): Promise<Torrent | null>
     remove(torrentId: string | Torrent, opts?: { destroyStore?: boolean }): Promise<void>
     destroy(cb?: (err?: Error) => void): void
+    /** Bytes per second, or -1 for no limit. */
+    throttleUpload(rate: number): boolean | void
   }
 }

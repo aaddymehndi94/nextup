@@ -1,0 +1,99 @@
+/* ---------- Trailers (components/Trailer.tsx) ----------
+   The trailer sits where the backdrop is, under the shade and the text: inside .hero-art on the title page,
+   and after the billboard's <picture> on home (same layer, later, so above it). */
+.trailer-video {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 1400ms var(--ease);
+}
+.trailer-video.is-on { opacity: 1; }
+.billboard > .trailer-video { z-index: -2; }
+
+.trailer-button { animation: trailer-button-in 500ms var(--ease); }
+@keyframes trailer-button-in { from { opacity: 0; transform: scale(0.9); } }
+@media (prefers-reduced-motion: reduce) { .trailer-button { animation: none; } }
+
+/* ---------- Quick view (components/Preview.tsx) ----------
+   A modal <dialog> over the list: the trailer on top (16:9), the gist under it. The page beneath keeps its
+   place; it doesn't scroll while this is open. With .is-trailer it's only the trailer, larger. */
+html:has(.preview[open]) { overflow: hidden; scrollbar-gutter: stable; }
+
+.preview {
+  /* The dialog is the dimmed backdrop too: a click on it, outside the card, closes. */
+  width: 100%; max-width: none; height: 100%; max-height: none;
+  margin: 0; padding: clamp(0.75rem, 4vh, 3rem) var(--gutter);
+  border: 0; background: rgb(0 0 0 / 0.72); color: var(--text);
+  display: grid; place-items: start center; overflow-y: auto; overscroll-behavior: contain;
+  animation: preview-fade 220ms var(--ease);
+}
+.preview:not([open]) { display: none; }
+.preview::backdrop { background: transparent; }
+.preview-card {
+  width: min(56rem, 100%);
+  background: var(--bg-1); border-radius: 0.875rem; overflow: hidden;
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 0.6), 0 0 0 1px var(--line);
+  animation: preview-rise 320ms var(--ease);
+}
+.preview.is-trailer { place-items: center; }
+.preview.is-trailer .preview-card { width: min(72rem, 100%, calc((100vh - 6rem) * 16 / 9)); }
+@keyframes preview-fade { from { opacity: 0; } }
+@keyframes preview-rise { from { opacity: 0; transform: translateY(1rem) scale(0.98); } }
+
+.preview-media { position: relative; aspect-ratio: 16 / 9; background: #000; }
+.preview-still, .preview-player, .preview-player iframe {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+}
+.preview-still { object-fit: cover; opacity: 0.55; transition: opacity 400ms var(--ease); }
+/* The player stays out of sight until it's actually playing, so a slow start shows the picture, not black. */
+.preview-player { opacity: 0; transition: opacity 500ms var(--ease); }
+.preview-media.is-playing .preview-player, .preview-media.is-ended .preview-player { opacity: 1; }
+.preview-media.is-playing .preview-still { opacity: 0; }
+.preview-media.is-none .preview-still, .preview-media.is-failed .preview-still { opacity: 0.8; }
+.preview-media::after {
+  /* Runs the picture into the card below. */
+  content: ''; position: absolute; inset: auto 0 0; height: 30%; pointer-events: none;
+  background: linear-gradient(to top, var(--bg-1), transparent);
+  transition: opacity 400ms var(--ease);
+}
+.preview.is-trailer .preview-media::after, .preview-media.is-playing::after, .preview-media.is-ended::after { opacity: 0; }
+
+.preview-spinner {
+  position: absolute; left: 50%; top: 50%; width: 2.5rem; height: 2.5rem; margin: -1.25rem 0 0 -1.25rem;
+  border-radius: 50%; border: 3px solid rgb(255 255 255 / 0.2); border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+.preview-note {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 0.5rem 0.875rem; border-radius: 999px; background: var(--veil);
+  font-size: 0.9375rem; color: var(--text-2); white-space: nowrap;
+}
+.preview-replay { position: absolute; left: 50%; bottom: 1.25rem; transform: translateX(-50%); }
+.preview-close { position: absolute; top: 0.75rem; right: 0.75rem; z-index: 1; background: rgb(10 10 11 / 0.7); }
+
+.preview-body { display: grid; gap: 1rem; padding: 0.25rem clamp(1rem, 3vw, 2rem) clamp(1.25rem, 3vw, 2rem); position: relative; }
+.preview-head { display: grid; gap: 0.5rem; }
+.preview-logo img { max-width: min(20rem, 70%); max-height: 5rem; object-fit: contain; object-position: left bottom; }
+.preview-logo.is-text, .preview-name {
+  font-size: clamp(1.5rem, 3.5vw, 2.25rem); font-stretch: var(--wide); font-weight: 800;
+  letter-spacing: -0.02em; line-height: 1.05; text-wrap: balance;
+}
+.preview-facts { color: var(--text-2); font-size: 0.9375rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
+.preview-desc { color: rgb(245 245 247 / 0.86); line-height: 1.55; max-width: 62ch; text-wrap: pretty; }
+
+@media (max-width: 640px) {
+  .preview { padding: 0; place-items: stretch; }
+  .preview-card { width: 100%; min-height: 100%; border-radius: 0; box-shadow: none; }
+  .preview.is-trailer { place-items: center stretch; background: #000; }
+  .preview.is-trailer .preview-card { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview, .preview-card { animation: none; }
+}
+
+/* ---------- Pages kept alive (main.tsx) ----------
+   A list page left for a title stays mounted, unrendered, so Back shows it as it was. content-visibility
+   keeps its rows' scroll; it takes no space and nothing in it can be reached. */
+.page-kept { content-visibility: hidden; }
+@supports not (content-visibility: hidden) { .page-kept { display: none; } }

@@ -215,7 +215,7 @@ describe('signing in on a second computer', () => {
   })
 
   it('a new install’s untouched "Me" becomes the account’s profile instead of joining it', () => {
-    const owner = a.store.createProfile({ name: 'Aadarsh' })
+    const owner = a.store.createProfile({ name: 'Alex' })
     a.store.setRating(owner.id, MOVIE, 1)
     a.db.prepare('UPDATE profiles SET account_id = ?').run(ACCOUNT)
     relay(a.db, b.db)
@@ -226,12 +226,12 @@ describe('signing in on a second computer', () => {
     b.store.recordImpressions(bMe, [OTHER.id])
 
     expect(linkProfiles(b.db, ACCOUNT, clock)).toEqual({ [bMe]: owner.id })
-    expect(b.store.listProfiles().map(x => x.name)).toEqual(['Aadarsh'])
+    expect(b.store.listProfiles().map(x => x.name)).toEqual(['Alex'])
     expect(relay(b.db, a.db).batch.profiles).toHaveLength(0)
   })
 
   it('keeps a "Me" that has been used, and any other new profile, as profiles of their own', () => {
-    const owner = a.store.createProfile({ name: 'Aadarsh' })
+    const owner = a.store.createProfile({ name: 'Alex' })
     a.db.prepare('UPDATE profiles SET account_id = ?').run(ACCOUNT)
     relay(a.db, b.db)
     const used = b.db.prepare("INSERT INTO profiles (id, account_id, name, avatar, created_at, updated_at) VALUES (?, NULL, 'Me', NULL, ?, ?)")
@@ -241,7 +241,7 @@ describe('signing in on a second computer', () => {
     const kids = b.store.createProfile({ name: 'Kids' })
 
     expect(linkProfiles(b.db, ACCOUNT, clock)).toEqual({})
-    expect(b.store.listProfiles().map(x => x.name).sort()).toEqual(['Aadarsh', 'Kids', 'Me'])
+    expect(b.store.listProfiles().map(x => x.name).sort()).toEqual(['Alex', 'Kids', 'Me'])
     expect(relay(b.db, a.db).batch.profiles.map(x => x.id).sort()).toEqual([bMe, kids.id].sort())
     expect(owner.id).toBeTruthy()
   })
