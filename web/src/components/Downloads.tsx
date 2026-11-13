@@ -35,7 +35,7 @@ export function Downloads () {
   }
 
   return (
-    <Row title="Downloads" variant="landscape">
+    <Row title="Downloads" variant="landscape" caption="Removed once you've watched them, or after 14 days without playing">
       {items.map(it => {
         const s = it.stats
         const progress = s?.progress ?? 0

@@ -2,7 +2,9 @@
 
 Search any film or series, see it like a streaming service shows it, pick a torrent (with live seeds and
 peers), and watch it in the browser within seconds. Files the browser can't play (MKV, HEVC, AC3/DTS, HDR)
-are converted on the fly, on the GPU when there is one. Anything can be kept for offline viewing.
+are converted on the fly, on the GPU when there is one. Anything can be kept for offline viewing. Films and
+episodes are deleted from the computer once they've been watched to the end, streamed data after a day
+without playing, and kept downloads after 14 days without playing.
 
 ## Run it
 
@@ -24,7 +26,7 @@ To watch on a phone or a TV, see [Phones and TVs](#phones-and-tvs) below.
 | `HOST` | `127.0.0.1` | the main listener; phones get their own listener on the home-network address (below). With `0.0.0.0`, other devices still need the phone cookie |
 | `NEXTTUPP_DATA` | `./data` | downloads, saved torrent metadata, library, taste database (`nexttupp.db`) |
 | `NEXTTUPP_LANGS` | `en` | preferred audio/subtitle languages, e.g. `en,hi` |
-| `NEXTTUPP_IDLE_MIN` | `15` | minutes before an unused torrent is stopped |
+| `NEXTTUPP_IDLE_MIN` | `15` | minutes before an unused torrent is stopped (and a watched file in it deleted) |
 | `NEXTTUPP_TORRENTIO` | `https://torrentio.strem.fun` | can include Torrentio options |
 | `NEXTTUPP_CLOUD_URL` | `https://api.nexttupp.com` | the accounts and sync service (`cloud/`); nothing is sent there until someone signs in |
 | `NEXTTUPP_CAST_DEVICES` | | extra TVs to cast to that discovery can't see, `Name@host[:port],…` (testing: `scripts/fake-tv.ts`) |
@@ -144,6 +146,7 @@ web (React)  ──►  server (Node 24, Fastify)
                    ├─ playback    ffprobe → direct play | remux (copy video) | transcode (NVENC/x264)
                    ├─ subtitles   OpenSubtitles via the Stremio addon
                    ├─ library     downloads kept for offline viewing, resumed on restart
+                   ├─ cleanup     watched films and episodes deleted, and what isn't played (a day; 14 for kept); not music
                    ├─ taste       profiles, likes, My List, progress → SQLite (nexttupp.db), sync-ready
                    ├─ reco        content + CF ranking → personalised home rows, each with a reason
                    ├─ ai          optional: ChatGPT / Claude / OpenAI on the viewer's account → AI picks, Ask AI

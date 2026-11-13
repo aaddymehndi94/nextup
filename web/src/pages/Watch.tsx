@@ -132,11 +132,12 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     setPhase('connecting'); setPhaseStarted(Date.now()); setError(null)
     let trackers: string[] = []
     try { trackers = JSON.parse(readSessionKey(`trackers:${infoHash}`) ?? '[]') } catch { /* none */ }
-    api.open({ infoHash, fileIdx, fileName, trackers, title: name })
+    // The title it plays, so the server can delete the file once it's been watched.
+    api.open({ infoHash, fileIdx, fileName, trackers, title: name, streamId: STREAM_ID.test(streamId) ? streamId : undefined })
       .then(s => { if (live) { setStats(s); setPhase('probing'); setPhaseStarted(Date.now()) } })
       .catch(err => { if (live) { setError(err.message); setPhase('error') } })
     return () => { live = false }
-  }, [infoHash, fileIdx, fileName, name, attempt])
+  }, [infoHash, fileIdx, fileName, name, streamId, attempt])
 
   // While waiting on the swarm nothing else re-renders; tick so the elapsed time (and the slow-source offer) show.
   const [, setTick] = useState(0)

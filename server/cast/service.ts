@@ -10,9 +10,9 @@ import { CastError, type MediaReceiver, type MediaStatus, MediaReceiver as Recei
 // old one alive for 30 s). Any page of the app (on the computer or a connected phone) can start, follow and
 // control it through /api/cast.
 //
-// Subtitles: the TV is loaded with every subtitle the viewer can pick as its own text track, each at
-// /cast/<its own token>/subs.vtt, so turning subtitles on, off or to another language only switches tracks
-// on the TV (EDIT_TRACKS_INFO). Reloading would restart the stream and make the TV buffer it all again.
+// Subtitles: the TV is loaded with a few of the viewer's subtitles as text tracks (the one showing and others
+// in its language; MAX_TEXT_TRACKS), each at /cast/<its own token>/subs.vtt. Turning subtitles off and on, or
+// to one of those, only switches tracks on the TV (EDIT_TRACKS_INFO); another one reloads from where it is.
 
 export type CastState = 'connecting' | 'loading' | 'buffering' | 'playing' | 'paused' | 'ended' | 'stopped' | 'error'
 
@@ -35,8 +35,15 @@ export interface CastStatus {
 
 export interface CastSubtitle { url: string; label?: string; lang?: string; offset?: number }
 
-/** As many subtitles as the player lists; each is a track on the TV. */
-export const MAX_TEXT_TRACKS = 40
+/** How many of the player's subtitles a cast is told about (the choices to pick tracks from). */
+export const MAX_SUBTITLE_CHOICES = 40
+
+/**
+ * Subtitle tracks the TV is loaded with. Few: an LG fetches every track as soon as the film loads, and forty
+ * of them (each a download from the subtitle service, which then refused with HTTP 429) left it buffering and
+ * deaf to the computer within minutes. The one showing and others in its language switch in place.
+ */
+export const MAX_TEXT_TRACKS = 3
 
 export interface StartCast {
   deviceId: string
@@ -116,21 +123,24 @@ const ORIGIN_WAIT_MS = 10_000
 const later = <T>(ms: number, value: T) => new Promise<T>(resolve => setTimeout(resolve, ms, value).unref())
 
 /**
- * The tracks for the TV: the viewer's choices (one per URL, at most MAX_TEXT_TRACKS) with `showing` among
- * them, carrying its timing offset. Returns them and the index of `showing`.
+ * The tracks for the TV: at most MAX_TEXT_TRACKS of the viewer's choices (one per URL): `showing`, then
+ * others in its language (or, with none showing, the first choice's), kept in the player's order. Returns
+ * them and the index of `showing`.
  */
 export function subtitleTracks (showing: CastSubtitle | null, choices: CastSubtitle[]): { tracks: CastSubtitle[]; activeTrack: number | null } {
-  const tracks: CastSubtitle[] = []
+  const all: CastSubtitle[] = []
   const seen = new Set<string>()
   for (const s of choices) {
     if (seen.has(s.url)) continue
     seen.add(s.url)
-    tracks.push(showing && s.url === showing.url ? showing : s)
+    all.push(showing && s.url === showing.url ? showing : s)
   }
-  if (showing && !seen.has(showing.url)) tracks.unshift(showing)
-  const kept = tracks.slice(0, MAX_TEXT_TRACKS)
-  if (showing && !kept.includes(showing)) kept[kept.length - 1] = showing
-  return { tracks: kept, activeTrack: showing ? kept.indexOf(showing) : null }
+  if (showing && !seen.has(showing.url)) all.unshift(showing)
+  const lang = showing?.lang ?? all[0]?.lang
+  const rank = (s: CastSubtitle) => (s === showing ? 0 : s.lang === lang ? 1 : 2)
+  const picked = new Set([...all].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_TEXT_TRACKS))
+  const tracks = all.filter(s => picked.has(s))
+  return { tracks, activeTrack: showing ? tracks.indexOf(showing) : null }
 }
 
 export interface CastOptions {

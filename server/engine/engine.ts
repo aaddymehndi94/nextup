@@ -21,6 +21,8 @@ export interface Session {
   id: string
   infoHash: string
   title?: string
+  /** Movie id or `tt…:season:episode`, when the player said; how a watched title finds its file (server/cleanup.ts). */
+  streamId?: string
   torrent: Torrent
   file: TorrentFile
   pinned: boolean
@@ -77,6 +79,7 @@ export class TorrentEngine {
   private readonly privateTorrents = new Map<string, string>()
   private readonly sweeper: NodeJS.Timeout
   private readonly idleMs: number
+  private closed = false
 
   constructor (dataDir: string, idleMs: number) {
     this.idleMs = idleMs
@@ -117,9 +120,10 @@ export class TorrentEngine {
     const id = sessionId(infoHash, idx)
     let session = this.sessions.get(id)
     if (!session) {
-      session = { id, infoHash, title: req.title, torrent, file: torrent.files[idx], pinned: false, private: false, activeStreams: 0, lastActive: Date.now(), readers: [] }
+      session = { id, infoHash, title: req.title, streamId: req.streamId, torrent, file: torrent.files[idx], pinned: false, private: false, activeStreams: 0, lastActive: Date.now(), readers: [] }
       this.sessions.set(id, session)
     }
+    session.streamId ??= req.streamId
     if (opts.private || this.privateTorrents.has(infoHash)) session.private = true
     session.lastActive = Date.now()
     return session
@@ -326,6 +330,33 @@ export class TorrentEngine {
     return t && !t.destroyed ? { peers: t.numPeers, downloadSpeed: t.downloadSpeed } : null
   }
 
+  /**
+   * True while something may still read a torrent: a stream is open on it, one ended less than the idle time
+   * ago (a paused player, the credits), or its metadata is still on the way.
+   */
+  inUse (infoHash: string): boolean {
+    if (this.closed) return false
+    if (this.pending.has(infoHash) || this.patient.has(infoHash)) return true
+    const now = Date.now()
+    return this.list().some(s => s.infoHash === infoHash && (s.activeStreams > 0 || now - s.lastActive <= this.idleMs))
+  }
+
+  /**
+   * Stops a torrent and closes its files, so files in its downloads folder can be deleted. Its sessions go too,
+   * kept downloads included (the library opens those again). A private torrent is left alone: its data is in
+   * its own folder, which dropPrivate deletes.
+   */
+  async unload (infoHash: string): Promise<void> {
+    if (this.closed || this.privateTorrents.has(infoHash)) return
+    for (const s of this.sessions.values()) if (s.infoHash === infoHash) this.sessions.delete(s.id)
+    const t = await this.client.get(infoHash)
+    if (!t || t.destroyed) return
+    // The callback, unlike the promise, waits for the files to be closed (Windows won't delete an open file).
+    await new Promise<void>((resolve, reject) => {
+      this.client.remove(t, { destroyStore: false }, err => (err ? reject(err) : resolve())).catch(reject)
+    })
+  }
+
   /** Drops a torrent nobody is using any more (a kept download removed before it got metadata). */
   async abandon (infoHash: string): Promise<void> {
     this.patient.delete(infoHash)
@@ -344,6 +375,7 @@ export class TorrentEngine {
   }
 
   destroy (): Promise<void> {
+    this.closed = true
     clearInterval(this.sweeper)
     return new Promise(resolve => this.client.destroy(() => {
       rmSync(this.privateDir, { recursive: true, force: true })

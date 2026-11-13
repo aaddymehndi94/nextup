@@ -102,7 +102,7 @@ export class Library {
     this.starting.add(id)
     try {
       const session = await this.engine.open(
-        { infoHash: e.infoHash, fileIdx: e.fileIdx >= 0 ? e.fileIdx : undefined, fileName: e.fileName || undefined, title: e.title, trackers: e.trackers },
+        { infoHash: e.infoHash, fileIdx: e.fileIdx >= 0 ? e.fileIdx : undefined, fileName: e.fileName || undefined, title: e.title, trackers: e.trackers, streamId: e.streamId },
         { patient: true },
       )
       if (!this.get(id)) return // deleted while we were waiting for peers
@@ -125,7 +125,12 @@ export class Library {
    */
   async resumeAll (log: (msg: string) => void): Promise<void> {
     this.log = log
-    setInterval(() => { for (const e of this.entries) if (e.pending || !this.engine.get(e.id)) void this.start(e.id) }, RETRY_MS).unref()
+    setInterval(() => this.resumeMissing(), RETRY_MS).unref()
     for (const e of this.entries) void this.start(e.id)
+  }
+
+  /** Opens again every kept download that isn't open (still waiting for peers, or stopped to delete a watched file beside it). */
+  resumeMissing (): void {
+    for (const e of this.entries) if (e.pending || !this.engine.get(e.id)) void this.start(e.id)
   }
 }

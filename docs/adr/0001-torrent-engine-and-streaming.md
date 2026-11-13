@@ -54,3 +54,35 @@ and the player uses it as its clock origin so position and subtitles stay correc
   ExoPlayer can direct-play MKV/HEVC/AC3, so most conversion disappears there.
 - Seeks shortly after a torrent is added are slow (tens of seconds) while peers connect; warm seeks are not.
 - Torrents with large pieces (4–16 MiB) seek slower, since a whole piece must arrive before any byte plays.
+
+## Update, 2026-11-13: watched and unplayed downloads are deleted
+
+Data kept under `downloads/<info hash>/` made reopening instant, but it was never deleted, and a film is
+several GB. The owner: "if content is watched it should be removed. not songs, but movies and series."
+
+- **Watched** means what Continue watching already uses: the progress row is finished (`isCompleted`: at the end
+  after real playback, not a seek to the credits) and this ping is at the end (`atEnd`: the last 10 % or 3
+  minutes). Requiring the end on each ping means a re-watch of something finished long ago only counts once it
+  reaches the end again. `POST /api/me/progress` reports it (`TasteHooks.onFinished`).
+- **Which files:** the player now sends the stream id (`tt…` or `tt…:season:episode`) when it opens a session,
+  so every non-private session of that title is matched, and every kept download ("Download to watch later")
+  of it. A kept one leaves the Downloads list at once and stops downloading. Private sessions are skipped:
+  their folder is deleted when they close (0007), and `unload` never touches a private torrent.
+- **When:** the file is queued in `cleanup.json` and deleted (`server/cleanup.ts`, every minute, at start-up
+  before kept downloads reopen, and at shutdown) once nothing can read its torrent: no stream open on it for
+  the idle time (`NEXTTUPP_IDLE_MIN`, 15 min; a paused player or the credits), its metadata isn't still
+  arriving, and it isn't playing on a TV. The torrent is stopped first (`engine.unload`), because a piece at
+  a file boundary belongs to two files and Windows won't delete an open file. A failed delete is logged once
+  and retried every minute, across restarts. Each deletion logs one line with the title and the space freed.
+- **Season packs:** only the watched episode's file goes. Other kept downloads in the pack are reopened at
+  once. The folder and the saved `.torrent` go only when no kept download uses the torrent and no other file
+  in it holds more than two pieces (the edges that streaming a neighbour writes into it).
+- **Not played:** the owner again: buffered data is temporary, "keep it minimum"; what was downloaded by
+  choice "can stay for 14 days". `cleanup.json` records when each torrent was last played: opened by the
+  player (`POST /api/sessions`, not in private mode) or streaming at a sweep (a long film, a TV). A torrent
+  nobody kept and nobody played for a day is deleted whole, folder and `.torrent`. One with no record
+  (streamed before this was recorded) goes by its newest file time. A kept download not played for 14 days,
+  counted from when it was kept or last played, leaves the Downloads list and goes like a watched file; one
+  kept before this rule got its 14 days from the update. Nothing in use or on a TV is touched.
+- Not covered: titles finished on another computer (sync brings the progress, but deletion follows playback on
+  this one). Music is separate (`data/music`, 0010) and never touched.

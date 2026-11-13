@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  computeSignals, DAY, DECAY, decay, exclusions, isCompleted, progressSignal, strength, WEIGHTS,
+  atEnd, computeSignals, DAY, DECAY, decay, exclusions, isCompleted, progressSignal, strength, WEIGHTS,
 } from './signals.ts'
 import type { ProgressRow, TasteSnapshot } from './types.ts'
 
@@ -127,5 +127,13 @@ describe('exclusions and strength', () => {
     expect(isCompleted(2600, 2700, 900)).toBe(true)
     expect(isCompleted(7000, 7200, 1300)).toBe(true)
     expect(isCompleted(10, 0, 10)).toBe(false)
+  })
+
+  it('atEnd is the last 10 % or the last three minutes', () => {
+    expect(atEnd(5400, 6000)).toBe(true)
+    expect(atEnd(5300, 6000)).toBe(false)
+    expect(atEnd(420, 600)).toBe(true)
+    expect(atEnd(410, 600)).toBe(false)
+    expect(atEnd(0, 0)).toBe(false)
   })
 })

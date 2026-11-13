@@ -104,9 +104,12 @@ esbuild bundle. The protocol surface needed is small and stable.
 valid for 12 hours, revoked on stop, and accepted only from the TV's own address (or loopback, for tests).
 After a reload, the previous token gets 30 seconds' grace. The routes are `/cast/<token>/raw` (direct
 play), `/cast/<token>/play.mp4?t=` (converted) and `/cast/<token>/subs.vtt`, with
-`Access-Control-Allow-Origin: *`, which the receiver needs for subtitles. LOAD carries every subtitle in the
-player's panel (up to 40) as its own text track, each with its own token, and always sets `activeTrackIds` so the
-receiver can't pick one by its own language setting.
+`Access-Control-Allow-Origin: *`, which the receiver needs for subtitles. LOAD carries at most three of the
+player's subtitles as text tracks, each with its own token: the one showing and others in its language. It
+always sets `activeTrackIds`, so the receiver can't pick one by its own language setting. (0.5.0 sent all of
+them, up to 40. An LG TV fetched every track at once; the subtitle service refused the burst with HTTP 429, and
+within two minutes the TV stopped answering the computer and was left buffering.) Subtitle files are downloaded
+once and kept; a TV whose track can't be downloaded gets an empty one, never an error.
 
 **A "cast" capability profile** (`castPlan` in `server/playback/plan.ts`): H.264 8-bit + AAC/MP3 in MP4.
 Compatible MP4 direct-plays. Compatible video in MKV is remuxed to fragmented MP4. HEVC, 10-bit and HDR are

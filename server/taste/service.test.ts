@@ -147,3 +147,35 @@ describe('GET /api/me/marks (the buttons under each poster)', () => {
     await app.close()
   })
 })
+
+describe('POST /api/me/progress: watched to the end', () => {
+  it('tells when a title is finished at its end, not on a seek to the credits, and again on a re-watch only at the end', async () => {
+    const { reco } = await setup(null)
+    let clock = Date.UTC(2026, 10, 1)
+    const store = new SqliteTasteStore(opened.at(-1)!.db, { now: () => clock })
+    const finished: string[] = []
+    const app = Fastify()
+    registerTasteRoutes(app, store, reco, { onFinished: t => finished.push(t.streamId) })
+    const ping = async (position: number) => {
+      clock += 10_000
+      const res = await app.inject({ method: 'POST', url: '/api/me/progress', payload: { type: 'movie', id: DIE_HARD, streamId: DIE_HARD, position, duration: 600 } })
+      expect(res.statusCode).toBe(200)
+    }
+
+    await ping(0)
+    await ping(590) // skipped to the credits
+    expect(finished).toEqual([])
+
+    for (let p = 0; p <= 410; p += 10) await ping(p)
+    expect(finished).toEqual([])
+    await ping(420) // three minutes left, after real playback
+    expect(finished).toEqual([DIE_HARD])
+
+    finished.length = 0
+    await ping(0) // watching it again: still "finished", but not at the end
+    expect(finished).toEqual([])
+    await ping(550)
+    expect(finished).toEqual([DIE_HARD])
+    await app.close()
+  })
+})

@@ -293,7 +293,7 @@ describe('casting', () => {
   const SUBS = ['en/a', 'fr/b', 'es/c'].map(p => ({ url: `https://subs5.strem.io/${p}.srt`, lang: p.slice(0, 2), label: p }))
   const tracksOf = (f: FakeReceiver, i = -1) => (sent(f, 'LOAD').at(i)!.data!.media as { tracks?: Array<{ trackId: number; trackContentId: string }> }).tracks ?? []
 
-  it('loads every subtitle the viewer can pick as a track, each URL with its own token', async () => {
+  it('loads the viewer’s subtitles as tracks, each URL with its own token', async () => {
     const { f, cast } = await service('remux', { keyframe: 1195 })
     await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 1200, subtitle: { ...SUBS[1], offset: -1 }, subtitles: [...SUBS, SUBS[0]] })
     const tracks = tracksOf(f)
@@ -304,6 +304,21 @@ describe('casting', () => {
     expect(grants.map(g => g?.subtitle?.offset ?? 0)).toEqual([0, -1, 0])
     expect(new Set(tracks.map(t => tokenOf(t.trackContentId))).size).toBe(3)
     expect(grants.every(g => g?.origin === 1195)).toBe(true)
+  })
+
+  it('loads only a few tracks: the one showing and others in its language, in the player’s order', async () => {
+    const many = ['en/1', 'fr/2', 'en/3', 'de/4', 'en/5', 'en/6', 'es/7'].map(p => ({ url: `https://subs5.strem.io/${p}.srt`, lang: p.slice(0, 2), label: p }))
+    const { f, cast } = await service('direct')
+    await cast.start({ deviceId: 'static-0', sessionId: SESSION, t: 0, subtitle: many[4], subtitles: many })
+    const urls = tracksOf(f).map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)
+    expect(urls).toEqual([many[0], many[2], many[4]].map(s => s.url))
+    expect(sent(f, 'LOAD')[0].data!.activeTrackIds).toEqual([3])
+    // Nothing showing: the first few in the first one's language.
+    await cast.stop()
+    const { f: g, cast: other } = await service('direct')
+    await other.start({ deviceId: 'static-0', sessionId: SESSION, t: 0, subtitle: null, subtitles: many })
+    expect(tracksOf(g).map(t => other.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)).toEqual([many[0], many[2], many[4]].map(s => s.url))
+    expect(sent(g, 'LOAD')[0].data!.activeTrackIds).toEqual([])
   })
 
   it('turning subtitles off, on or to another language switches tracks on the TV, without a reload', async () => {
@@ -343,12 +358,13 @@ describe('casting', () => {
     expect(sent(f, 'LOAD')).toHaveLength(2)
     const reload = sent(f, 'LOAD')[1].data!
     expect(reload.currentTime).toBeGreaterThanOrEqual(640)
-    expect(tracksOf(f).map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)).toEqual([extra.url, ...SUBS.map(s => s.url)])
+    // The new one and, with none other in German, the first others in the player's order (three at most).
+    expect(tracksOf(f).map(t => cast.verify(tokenOf(t.trackContentId), '127.0.0.1')?.subtitle?.url)).toEqual([extra.url, SUBS[0].url, SUBS[1].url])
     expect(reload.activeTrackIds).toEqual([1])
 
-    // From now on the player's whole list switches in place.
-    await cast.setSubtitle(SUBS[2])
-    expect(sent(f, 'EDIT_TRACKS_INFO').map(m => m.data!.activeTrackIds)).toEqual([[4]])
+    // Those now switch in place.
+    await cast.setSubtitle(SUBS[1])
+    expect(sent(f, 'EDIT_TRACKS_INFO').map(m => m.data!.activeTrackIds)).toEqual([[3]])
     expect(sent(f, 'LOAD')).toHaveLength(2)
 
     f.refuse.add('EDIT_TRACKS_INFO')

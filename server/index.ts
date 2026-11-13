@@ -15,6 +15,7 @@ import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
 import { fetchCues, listSubtitles, toWebVtt } from './subtitles.ts'
 import { Library } from './library.ts'
+import { WatchedCleanup } from './cleanup.ts'
 import { openDb } from './db.ts'
 import { loadCf } from './reco/cf.ts'
 import { SqliteTasteStore } from './store.ts'
@@ -90,6 +91,14 @@ const cast = new CastService({
       return keyframeStart(s.id, t, (await getProbe(s)).container)
     },
   },
+})
+// Films and episodes watched to the end are deleted from disk once nothing plays them (server/cleanup.ts).
+const cleanup = new WatchedCleanup({
+  dataDir: config.dataDir,
+  engine,
+  library,
+  casting: () => { const c = cast.status(); return c.active ? c.sessionId : undefined },
+  log: msg => app.log.info(msg),
 })
 // Music (server/music, docs/adr/0010): songs from YouTube saved on this computer, played at home.
 // NEXTTUPP_MUSIC_SOURCE=fake plays generated chords instead (tests, demos).
@@ -281,7 +290,10 @@ app.post<{ Body: OpenSessionRequest }>('/api/sessions', async req => {
     fileName: typeof body.fileName === 'string' ? body.fileName : undefined,
     trackers: Array.isArray(body.trackers) ? body.trackers.filter(t => typeof t === 'string' && /^(udp|https?|wss?):\/\//.test(t)).slice(0, 30) : [],
     title: typeof body.title === 'string' ? body.title.slice(0, 200) : undefined,
+    streamId: typeof body.streamId === 'string' && STREAM_ID.test(body.streamId) ? body.streamId : undefined,
   }, { private: hasPrivateHeader(req) })
+  // Played now: streamed data stays a day from here, a kept download 14 days (server/cleanup.ts).
+  if (!s.private) cleanup.touch(s.infoHash, s.title)
   return engine.stats(s)
 })
 
@@ -508,7 +520,12 @@ app.get<{ Params: { token: string }; Querystring: { t?: string } }>('/cast/:toke
 app.get<{ Params: { token: string } }>('/cast/:token/subs.vtt', async (req, reply) => {
   const g = castGrant(req.params.token, req)
   if (!g.subtitle) throw new HttpError(404, 'Not found')
-  const cues = await fetchCues(g.subtitle.url)
+  // An error here can leave a TV's player stuck (an LG stopped answering), so a subtitle that can't be
+  // downloaded is an empty one; the viewer can pick another.
+  const cues = await fetchCues(g.subtitle.url).catch(err => {
+    app.log.warn(`cast: subtitle ${g.subtitle!.label ?? ''} unavailable for the TV (${(err as Error).message})`)
+    return []
+  })
   return reply.headers(CAST_HEADERS).header('content-type', 'text/vtt; charset=utf-8').header('cache-control', 'no-store')
     .send(toWebVtt(cues, (g.subtitle.offset ?? 0) - g.origin))
 })
@@ -522,7 +539,9 @@ registerLanRoutes(app, lan, { signedIn: () => sync.signedIn, redeemHandoff: (cod
 
 // ---- Profiles, taste and recommendations ----------------------------------------
 
-registerTasteRoutes(app, tasteStore, reco)
+registerTasteRoutes(app, tasteStore, reco, {
+  onFinished: t => { cleanup.finished(t.streamId).catch(err => app.log.warn(`cleanup: ${(err as Error).message}`)) },
+})
 registerAiRoutes(app, ai, tasteStore, { port: () => config.port })
 registerMusicRoutes(app, { music, files: musicFiles, lyrics: musicLyrics, cast: musicCast, tasteStore, ffmpeg: config.ffmpeg, dataDir: config.dataDir })
 registerTrailerRoutes(app, trailers)
@@ -546,6 +565,7 @@ const shutdown = async () => {
   transcodes.killAll()
   await app.close()
   await engine.destroy()
+  await cleanup.close()
   db.close()
   process.exit(0)
 }
@@ -554,6 +574,9 @@ process.on('SIGTERM', shutdown)
 
 await app.listen({ port: config.port, host: config.host })
 app.log.info(`nexttupp server on http://${config.host}:${config.port} · encoder=${encoder} · data=${config.dataDir}`)
+// Watched files left from last time go before kept downloads are opened again.
+await cleanup.sweep()
+cleanup.start()
 library.resumeAll(msg => app.log.info(msg)).catch(err => app.log.error(err))
 sync.start()
 await lan.start((req, res) => app.routing(req, res))

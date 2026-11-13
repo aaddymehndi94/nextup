@@ -96,11 +96,31 @@ export function parseSubtitles (text: string): Cue[] {
   return cues.sort((x, y) => x.start - y.start)
 }
 
-export async function fetchCues (url: string): Promise<Cue[]> {
-  if (!isAllowedSubtitleUrl(url)) throw new Error('Subtitle URL not allowed')
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-  if (!res.ok) throw new Error(`Subtitle download failed: HTTP ${res.status}`)
-  return parseSubtitles(await res.text())
+/**
+ * Downloaded subtitles by URL. The player, the TV (which may fetch a track again after every seek) and a
+ * reload all ask for the same file, and the subtitle service answers bursts with HTTP 429. A failure is kept
+ * for a minute, so a refused file isn't asked for again at once.
+ */
+const cueCache = new Map<string, { at: number; failed: boolean; job: Promise<Cue[]> }>()
+const CUES_KEPT_MS = 6 * 3600_000
+const FAILURE_KEPT_MS = 60_000
+
+export function fetchCues (url: string): Promise<Cue[]> {
+  if (!isAllowedSubtitleUrl(url)) return Promise.reject(new Error('Subtitle URL not allowed'))
+  const now = Date.now()
+  const hit = cueCache.get(url)
+  if (hit && now - hit.at < (hit.failed ? FAILURE_KEPT_MS : CUES_KEPT_MS)) return hit.job
+  const job = (async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+    if (!res.ok) throw new Error(`Subtitle download failed: HTTP ${res.status}`)
+    return parseSubtitles(await res.text())
+  })()
+  const entry = { at: now, failed: false, job }
+  job.catch(() => { entry.failed = true; entry.at = Date.now() })
+  cueCache.delete(url)
+  cueCache.set(url, entry)
+  if (cueCache.size > 80) cueCache.delete(cueCache.keys().next().value!)
+  return job
 }
 
 const vttTime = (t: number) => {

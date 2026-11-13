@@ -6,6 +6,7 @@ import { plainText } from '../../cloud/src/validate.ts'
 import { UUID } from '../db.ts'
 import { HttpError } from '../http.ts'
 import { hasPrivateHeader, refuseInPrivate } from '../private.ts'
+import { atEnd } from '../reco/signals.ts'
 import { isTunableFeature } from '../reco/taste.ts'
 import type { TasteStore } from '../store.ts'
 import type { RecoService } from './service.ts'
@@ -52,7 +53,15 @@ export function profileFrom (store: TasteStore, req: FastifyRequest): Profile {
   return store.defaultProfile()
 }
 
-export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, reco: RecoService): void {
+export interface TasteHooks {
+  /**
+   * A film or episode was watched to the end: finished (by the same rule as Continue watching) and this ping
+   * is at the end. Called on every such ping, so a re-watch counts again once it reaches the end too.
+   */
+  onFinished?: (t: { type: MediaType; id: string; streamId: string }) => void
+}
+
+export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, reco: RecoService, hooks: TasteHooks = {}): void {
   // Private mode saves nothing: no likes, list, progress, dismissals, taste tuning or profile changes.
   app.addHook('preHandler', async req => {
     if (req.method === 'GET' || req.method === 'HEAD') return
@@ -139,7 +148,9 @@ export function registerTasteRoutes (app: FastifyInstance, store: TasteStore, re
     const duration = Number(b.duration)
     if (!Number.isFinite(position) || !Number.isFinite(duration) || duration <= 0 || duration > 86_400 || position < 0) throw new HttpError(400, 'Bad position or duration')
     const from = typeof b.from === 'string' && /^[a-z]+(:[^\s]{1,200})?$/.test(b.from) ? b.from : undefined
-    return { progress: store.recordProgress(p.id, { ...t, streamId: b.streamId, position, duration, from }) }
+    const progress = store.recordProgress(p.id, { ...t, streamId: b.streamId, position, duration, from })
+    if (progress.completed && atEnd(progress.position, progress.duration)) hooks.onFinished?.({ ...t, streamId: b.streamId })
+    return { progress }
   })
 
   app.delete<TitleParams & { Querystring: { forget?: string } }>('/api/me/progress/:type/:id', async req => {

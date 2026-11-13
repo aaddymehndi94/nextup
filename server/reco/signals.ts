@@ -50,14 +50,17 @@ export function decay (ageMs: number, kind: 'explicit' | 'implicit'): number {
   return floor + (1 - floor) * 0.5 ** (Math.max(0, ageMs) / (halfLifeDays * DAY))
 }
 
+/** At the end of a film or episode: ≥90 % in, or ≤3 min left (the credits). */
+export function atEnd (position: number, duration: number): boolean {
+  return duration > 0 && (position / duration >= 0.9 || duration - position <= 180)
+}
+
 /**
- * A finished title: reached the end (≥90 % or ≤3 min left) after real playback — at least 30 % of it,
- * or 20 minutes for long films (seen partly elsewhere) — not a seek to the credits.
+ * A finished title: reached the end after real playback — at least 30 % of it, or 20 minutes for long
+ * films (seen partly elsewhere) — not a seek to the credits.
  */
 export function isCompleted (position: number, duration: number, watchedSec: number): boolean {
-  if (!(duration > 0)) return false
-  const nearEnd = position / duration >= 0.9 || duration - position <= 180
-  return nearEnd && watchedSec >= Math.min(0.3 * duration, 1200)
+  return atEnd(position, duration) && watchedSec >= Math.min(0.3 * duration, 1200)
 }
 
 export type SignalLabel =

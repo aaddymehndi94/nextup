@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { HttpError } from '../http.ts'
 import { isAllowedSubtitleUrl } from '../subtitles.ts'
 import { CastError } from './protocol.ts'
-import { MAX_TEXT_TRACKS, type CastService, type CastSubtitle } from './service.ts'
+import { MAX_SUBTITLE_CHOICES, type CastService, type CastSubtitle } from './service.ts'
 
 // Casting from the player, on this computer or a connected phone:
 //
@@ -34,7 +34,7 @@ function parseSubtitle (v: unknown): CastSubtitle | null {
 function parseSubtitles (v: unknown): CastSubtitle[] {
   if (!Array.isArray(v)) return []
   const out: CastSubtitle[] = []
-  for (const item of v.slice(0, MAX_TEXT_TRACKS)) {
+  for (const item of v.slice(0, MAX_SUBTITLE_CHOICES)) {
     try { const s = parseSubtitle(item); if (s) out.push({ ...s, offset: 0 }) } catch { /* not from the subtitle CDN */ }
   }
   return out

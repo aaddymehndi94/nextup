@@ -45,7 +45,8 @@ declare module 'webtorrent' {
     torrents: Torrent[]
     add(torrentId: string | Uint8Array, opts?: AddOptions, onTorrent?: (t: Torrent) => void): Torrent
     get(torrentId: string): Promise<Torrent | null>
-    remove(torrentId: string | Torrent, opts?: { destroyStore?: boolean }): Promise<void>
+    /** The promise settles before the files are closed; the callback once they are. */
+    remove(torrentId: string | Torrent, opts?: { destroyStore?: boolean }, cb?: (err?: Error) => void): Promise<void>
     destroy(cb?: (err?: Error) => void): void
     /** Bytes per second, or -1 for no limit. */
     throttleUpload(rate: number): boolean | void

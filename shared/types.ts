@@ -167,6 +167,8 @@ export interface OpenSessionRequest {
   fileName?: string
   trackers?: string[]
   title?: string
+  /** Movie id or `tt…:season:episode`: lets the server delete the file once the title is watched. */
+  streamId?: string
 }
 
 export interface ProbeResponse {
