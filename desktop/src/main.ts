@@ -1,6 +1,6 @@
 // nexttupp desktop: runs the nexttupp server in an Electron utility process on a localhost port and shows it
 // in a window. Decisions and measurements: docs/adr/0005-desktop-app.md.
-import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage, shell, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage, powerSaveBlocker, shell, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type UtilityProcess } from 'electron'
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type WriteStream } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -60,6 +60,22 @@ async function start (): Promise<void> {
   listenToPage()
   createWindow()
   updater.start()
+  keepAwakeWhilePlaying()
+}
+
+/**
+ * The computer is the home's player: while a TV, a phone or music plays from it, it mustn't go to sleep, though
+ * no one touches it (the system would count that as idle). The screen may still turn off.
+ */
+function keepAwakeWhilePlaying (): void {
+  let blocker: number | null = null
+  const check = async () => {
+    const playing = await fetch(`${baseUrl}/api/awake`).then(r => r.json() as Promise<{ playing?: boolean }>).then(b => b.playing === true, () => false)
+    if (playing && blocker === null) blocker = powerSaveBlocker.start('prevent-app-suspension')
+    else if (!playing && blocker !== null) { powerSaveBlocker.stop(blocker); blocker = null }
+  }
+  void check()
+  setInterval(() => { void check() }, 30_000).unref()
 }
 
 // ---- Server ------------------------------------------------------------------------------------------------

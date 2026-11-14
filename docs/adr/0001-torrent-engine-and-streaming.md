@@ -86,3 +86,21 @@ several GB. The owner: "if content is watched it should be removed. not songs, b
   kept before this rule got its 14 days from the update. Nothing in use or on a TV is touched.
 - Not covered: titles finished on another computer (sync brings the progress, but deletion follows playback on
   this one). Music is separate (`data/music`, 0010) and never touched.
+
+## Update, 2026-11-14: picture and sound start together after a seek
+
+- **Copied video, converted audio** (an HEVC or H.264 file with AC3/EAC3/DTS sound on a phone that decodes the
+  video) used to be out of sync after every seek or resume. The video started at the keyframe before the
+  requested time. The audio, converted with accurate seeking, started exactly at that time.
+  - The fragmented MP4 put both at 0, with the audio's first packet followed by a jump of up to ~10 s.
+    Chrome stamps decoded audio by counting samples from the first packet and ignores that jump. So the sound
+    played early by the distance to the keyframe, on the phone and on a TV.
+  - ffmpeg's own decoder keeps the jump, which is why it didn't show in ffprobe checks.
+  - Now `-noaccurate_seek` starts the converted audio at the keyframe too.
+- **Converted video, copied audio** (HEVC with AAC on a computer) had the opposite: the audio started back at
+  the keyframe, and the picture froze on its first frame until the requested time. From a seek point, the
+  audio is now converted as well, so both start exactly there.
+- Checked with a test film that flashes and beeps once at a known time. With each plan, picture and sound now
+  start together and agree within 10 ms.
+- **Music** paused only for the quick view's trailer, so a song left playing went on under a film. Starting a
+  film, here or on a TV, now pauses the music on that device.

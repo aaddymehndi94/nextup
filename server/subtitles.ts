@@ -103,7 +103,8 @@ export function parseSubtitles (text: string): Cue[] {
  */
 const cueCache = new Map<string, { at: number; failed: boolean; job: Promise<Cue[]> }>()
 const CUES_KEPT_MS = 6 * 3600_000
-const FAILURE_KEPT_MS = 60_000
+/** A failed download is answered from memory this long (the TV fetches its few tracks at once), then tried again. */
+const FAILURE_KEPT_MS = 15_000
 
 export function fetchCues (url: string): Promise<Cue[]> {
   if (!isAllowedSubtitleUrl(url)) return Promise.reject(new Error('Subtitle URL not allowed'))

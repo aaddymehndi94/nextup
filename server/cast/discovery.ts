@@ -66,12 +66,19 @@ export class CastDiscovery {
     this.log = opts.log ?? (() => {})
   }
 
-  /** Asks the network and returns what answered within `waitMs`, plus anything seen in the last 10 minutes. */
+  /**
+   * Asks the network and returns what answered within `waitMs`, plus anything seen in the last 10 minutes. Asks
+   * twice, a second apart: multicast is easily lost on Wi-Fi, and a TV that missed the first question (or whose
+   * answer was lost) answers the second.
+   */
   async browse (waitMs = 2500): Promise<CastDevice[]> {
     if (this.staticDevices) return this.staticDevices
     this.open()
-    this.mdns!.query({ questions: [{ name: SERVICE, type: 'PTR' }] })
+    const ask = () => this.mdns?.query({ questions: [{ name: SERVICE, type: 'PTR' }] })
+    ask()
+    const again = setTimeout(ask, Math.min(1000, waitMs / 2))
     await new Promise(resolve => setTimeout(resolve, waitMs))
+    clearTimeout(again)
     return this.list()
   }
 

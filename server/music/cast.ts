@@ -3,7 +3,7 @@ import type { MusicCastMode, MusicCastRequest, MusicCastStatus, MusicTrack } fro
 import { artSize } from '../../shared/music.ts'
 import { isLoopback } from '../lan/net.ts'
 import type { CastDevice, CastDiscovery } from '../cast/discovery.ts'
-import { CastError, type MediaReceiver, type MediaStatus, MediaReceiver as Receiver } from '../cast/protocol.ts'
+import { CastError, type MediaReceiver, type MediaStatus, MediaReceiver as Receiver, REJOIN_DELAYS_MS, rejoinPlayer } from '../cast/protocol.ts'
 import type { MusicFiles } from './files.ts'
 
 // Music on a TV (docs/adr/0010). The TV gets a queue and plays through it on its own: when a song finishes
@@ -42,6 +42,8 @@ export interface MusicCastOptions {
   connect?: (device: CastDevice) => Promise<MediaReceiver>
   log?: (msg: string) => void
   pollMs?: number
+  /** Waits between tries to join the TV again after the connection dropped (tests make them short). */
+  rejoinDelays?: number[]
 }
 
 interface Session {
@@ -65,6 +67,8 @@ interface Session {
   loading: boolean
   release: () => void
   poll?: NodeJS.Timeout
+  /** Settles when a dropped connection is joined again (or given up on). */
+  rejoining: Promise<void> | null
 }
 
 const TOKEN_TTL_MS = 6 * 3600_000
@@ -124,7 +128,8 @@ export class MusicCast {
     return this.serial(async () => {
       await this.end('stopped', true)
       await this.o.beforeStart?.().catch(() => {})
-      const device = this.o.discovery.get(req.deviceId)
+      // Not seen lately (nexttupp just started, or an answer was lost): look once more before giving up.
+      const device = this.o.discovery.get(req.deviceId) ?? (await this.o.discovery.browse()).find(d => d.id === req.deviceId)
       if (!device) throw new CastError('unknown_device', 'That TV isn’t on the network any more. Look for TVs again.')
       if (!this.o.track(req.queue[req.index] ?? '')) throw new CastError('no_media', 'Nothing to play')
       const release = this.o.lan.holdForCast()
@@ -138,19 +143,10 @@ export class MusicCast {
         const s: Session = {
           device, receiver, lanAddress, queue: req.queue.slice(0, 500), index: req.index, mode: this.modes.includes(req.mode) ? req.mode : 'audio',
           token: '', from: 0, duration: 0, last: null, state: 'loading', volume: null, muted: false, loading: false, release,
+          rejoining: null,
         }
         this.s = s
-        receiver.on('media', (m: MediaStatus) => { if (this.s === s) this.onMedia(s, m) })
-        receiver.on('receiver', (r: { volume?: { level?: number; muted?: boolean } }) => {
-          if (this.s !== s || !r.volume) return
-          if (typeof r.volume.level === 'number') s.volume = r.volume.level
-          if (typeof r.volume.muted === 'boolean') s.muted = r.volume.muted
-        })
-        receiver.on('close', (err?: Error) => {
-          if (this.s !== s || DONE.includes(s.state)) return
-          this.log(`music cast: ${s.device.name} closed: ${err?.message ?? 'no reason'}`)
-          void this.end(err && (err as CastError).code !== 'replaced' ? 'error' : 'stopped', false, err?.message)
-        })
+        this.wire(s, receiver)
         await this.load(s, s.index, Math.max(0, req.t))
         s.poll = setInterval(() => {
           if (this.s !== s || s.receiver.closed || s.loading) return
@@ -181,6 +177,8 @@ export class MusicCast {
 
   control (action: string, arg: { t?: number; index?: number; level?: number; muted?: boolean; mode?: MusicCastMode }): Promise<MusicCastStatus> {
     return this.serial(async () => {
+      // While the connection is being joined again, a tap on the phone waits for it instead of failing.
+      if (this.s?.rejoining) await this.s.rejoining
       const s = this.s
       if (!s || DONE.includes(s.state)) throw new CastError('not_casting', 'Nothing is casting')
       switch (action) {
@@ -218,16 +216,64 @@ export class MusicCast {
   }
 
   stop (): Promise<MusicCastStatus> {
-    return this.serial(async () => {
+    const run = async () => {
       const last = this.status()
       await this.end('stopped', true)
-      return last.device ? { ...last, active: false, state: 'stopped' } : last
+      return last.device ? { ...last, active: false, state: 'stopped' as const } : last
+    }
+    // Commands wait for a dropped connection to come back; Stop doesn't.
+    return this.s?.rejoining ? run() : this.serial(run)
+  }
+
+  /** Follows one connection to the TV: its statuses, and what to do when it closes. */
+  private wire (s: Session, receiver: MediaReceiver): void {
+    s.receiver = receiver
+    if (typeof receiver.volume?.level === 'number') s.volume = receiver.volume.level
+    if (typeof receiver.volume?.muted === 'boolean') s.muted = receiver.volume.muted
+    const mine = () => this.s === s && s.receiver === receiver
+    receiver.on('media', (m: MediaStatus) => { if (mine()) this.onMedia(s, m) })
+    receiver.on('receiver', (r: { volume?: { level?: number; muted?: boolean } }) => {
+      if (!mine() || !r.volume) return
+      if (typeof r.volume.level === 'number') s.volume = r.volume.level
+      if (typeof r.volume.muted === 'boolean') s.muted = r.volume.muted
     })
+    receiver.on('close', (err?: Error) => {
+      if (!mine() || DONE.includes(s.state)) return
+      this.log(`music cast: ${s.device.name} closed: ${err?.message ?? 'no reason'}`)
+      // Someone started something else on the TV, or quit the player there: the cast is over.
+      if ((err as CastError | undefined)?.code === 'replaced') { void this.end('stopped', false, err!.message); return }
+      void this.rejoin(s, receiver)
+    })
+  }
+
+  /** The connection dropped but the TV is probably still playing: join its player again (see rejoinPlayer). */
+  private rejoin (s: Session, old: MediaReceiver): Promise<void> {
+    if (s.rejoining) return s.rejoining
+    const app = old.appSession
+    const connect = () => {
+      const d = this.o.discovery.get(s.device.id) ?? s.device
+      return (this.o.connect ?? (x => Receiver.connect(x.host, x.port)))(d)
+    }
+    const still = () => this.s === s && !DONE.includes(s.state)
+    s.rejoining = (async () => {
+      const back = app ? await rejoinPlayer(connect, app, old.mediaSessionId, still, this.o.rejoinDelays ?? REJOIN_DELAYS_MS) : null
+      s.rejoining = null
+      if (!still()) { back?.receiver.close(); return }
+      if (!back) { await this.end('error', false, `Lost the connection to ${s.device.name}`); return }
+      this.wire(s, back.receiver)
+      this.log(`music cast: joined ${s.device.name} again`)
+      // No song on the player: it finished while the connection was down, so the next one plays.
+      if (back.status) this.onMedia(s, back.status)
+      else this.songEnded(s)
+    })()
+    return s.rejoining
   }
 
   shutdown (): void {
     const s = this.s
     if (!s) return
+    // Over, so closing the connection isn't taken for a drop to rejoin.
+    if (!DONE.includes(s.state)) s.state = 'stopped'
     clearInterval(s.poll)
     s.receiver.close()
     s.release()
@@ -294,34 +340,36 @@ export class MusicCast {
 
   private onMedia (s: Session, m: MediaStatus | null): void {
     if (!m) return
+    // (A media status's volume is the stream's, always 1; the TV's own comes with receiver statuses.)
     s.last = { currentTime: m.currentTime, playerState: m.playerState, at: Date.now() }
-    if (m.volume) {
-      if (typeof m.volume.level === 'number') s.volume = m.volume.level
-      if (typeof m.volume.muted === 'boolean') s.muted = m.volume.muted
-    }
     switch (m.playerState) {
       case 'PLAYING': s.state = 'playing'; break
       case 'PAUSED': s.state = 'paused'; break
       case 'BUFFERING': s.state = 'buffering'; break
       case 'IDLE':
         if (s.loading) break
-        if (m.idleReason === 'FINISHED') {
-          s.loading = true
-          void this.serial(async () => {
-            if (this.s !== s || DONE.includes(s.state)) return
-            if (s.index + 1 < s.queue.length) {
-              await this.load(s, s.index + 1, 0).catch(err => {
-                this.log(`music cast: next song failed: ${(err as Error).message}`)
-                s.note = (err as Error).message
-                // Try the one after, once.
-                return s.index + 1 < s.queue.length ? this.load(s, s.index + 1, 0).catch(() => this.end('ended', false)) : this.end('ended', false)
-              })
-            } else await this.end('ended', false)
-          }).finally(() => { s.loading = false })
-        } else if (m.idleReason === 'ERROR') void this.end('error', false, 'The TV couldn’t play this song.')
+        if (m.idleReason === 'FINISHED') this.songEnded(s)
+        else if (m.idleReason === 'ERROR') void this.end('error', false, 'The TV couldn’t play this song.')
         else if (m.idleReason === 'CANCELLED') void this.end('stopped', false)
         break
     }
+  }
+
+  /** The song played to the end: the next one, if there is one. */
+  private songEnded (s: Session): void {
+    if (s.loading) return
+    s.loading = true
+    void this.serial(async () => {
+      if (this.s !== s || DONE.includes(s.state)) return
+      if (s.index + 1 < s.queue.length) {
+        await this.load(s, s.index + 1, 0).catch(err => {
+          this.log(`music cast: next song failed: ${(err as Error).message}`)
+          s.note = (err as Error).message
+          // Try the one after, once.
+          return s.index + 1 < s.queue.length ? this.load(s, s.index + 1, 0).catch(() => this.end('ended', false)) : this.end('ended', false)
+        })
+      } else await this.end('ended', false)
+    }).finally(() => { s.loading = false })
   }
 
   private position (s: Session): number {

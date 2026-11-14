@@ -253,6 +253,12 @@ class StandInTv extends EventEmitter {
   async stopApp () { this.closed = true }
   close () { this.closed = true }
   finish () { this.status = { mediaSessionId: 1, playerState: 'IDLE', idleReason: 'FINISHED', currentTime: 0 }; this.emit('media', this.status) }
+  appSession = 'APP-1'
+  mediaSessionId = 1
+  /** What joining this TV's player finds: its status, nothing playing (null), or the player gone (false). */
+  joins: MediaStatus | null | false = null
+  async join () { return this.joins === false ? null : { status: this.joins } }
+  drop () { this.closed = true; this.emit('close') }
 }
 
 describe('MusicCast', () => {
@@ -355,5 +361,45 @@ describe('Set up music (downloading yt-dlp)', () => {
     const src = new YoutubeSource({ dataDir: dir, ffmpeg: 'ffmpeg', fetch: release({ sum: 'a'.repeat(64) }), stallMs: 1000 })
     await expect(src.install()).rejects.toThrow(/checksum/)
     expect(existsSync(join(dir, 'bin'))).toBe(false)
+  })
+})
+
+describe('MusicCast and a dropped connection', () => {
+  it('joins the TV again; a song that ended meanwhile goes on to the next', async () => {
+    const store = new MusicStore(db)
+    const songs = [track('Diljit Dosanjh', 'Lover'), track('AP Dhillon', 'Excuses'), track('Karan Aujla', 'Softly')]
+    store.saveTracks(songs)
+    const files = new MusicFiles({ db, dir: join(dir, 'music'), source: new InstantSource(), capBytes: 1e9 })
+    const tvs = [new StandInTv(), new StandInTv(), new StandInTv()]
+    let made = 0
+    const device: CastDevice = { id: 'tv', name: 'Kitchen TV', host: '192.168.1.40', port: 8009 } as CastDevice
+    const cast = new MusicCast({
+      discovery: { get: () => device } as unknown as CastDiscovery,
+      lan: { holdForCast: () => () => {}, refresh: async () => {}, addressFor: async () => '192.168.1.10', port: 4545 },
+      files,
+      track: id => store.track(id),
+      lyrics: false,
+      connect: async () => tvs[made++] as unknown as MediaReceiver,
+      pollMs: 60_000,
+      rejoinDelays: [0, 10],
+    })
+    await cast.start({ deviceId: 'tv', queue: songs.map(t => t.id), index: 0, t: 0, mode: 'audio' })
+    // Still playing on the TV: joined again, nothing reloads.
+    tvs[1].joins = { mediaSessionId: 1, playerState: 'PLAYING', currentTime: 7 }
+    tvs[0].drop()
+    await new Promise(r => setTimeout(r, 20))
+    expect(cast.status()).toMatchObject({ active: true, index: 0, state: 'playing' })
+    expect(cast.status().position).toBeGreaterThanOrEqual(7)
+    expect(tvs[1].loads).toHaveLength(0)
+    // The song finished while the connection was down: the next one plays.
+    tvs[2].joins = null
+    tvs[1].drop()
+    await new Promise(r => setTimeout(r, 30))
+    expect(cast.status()).toMatchObject({ active: true, index: 1 })
+    expect(tvs[2].loads[0]).toMatchObject({ title: 'Excuses' })
+    // Taps on the phone go to the new connection.
+    await cast.control('pause', {})
+    expect(tvs[2].status.playerState).toBe('PAUSED')
+    await cast.stop()
   })
 })

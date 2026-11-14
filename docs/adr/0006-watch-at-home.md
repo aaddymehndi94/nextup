@@ -117,9 +117,12 @@ transcoded to H.264 SDR, and 4K is brought down to 1080p even when it could be c
 Chromecasts can't decode it. AC3/EAC3/DTS become AAC. Seeking: SEEK on the TV for direct play; for a converted stream,
 reload with `?t=` (from the keyframe before it when the video is copied).
 
-**Position:** the receiver reports `currentTime` either relative to the reloaded stream or absolute,
-depending on the stream. The service learns which from the first report after each load (`clockBase`), and
-reports film time as `(clockBase ?? origin) + currentTime + time since the report while playing`.
+**Position:** a converted stream for a TV carries film time and the film's length. ffmpeg's `delay_moov`
+writes each track's start into an edit list. `declareLength` (`server/playback/fmp4.ts`) writes the length into
+the header as the stream passes. So the TV's own clock and seek bar show where the film is. (Before 0.5.2 the
+TV's bar started at 0:00 after every seek or resume, and its end was however much had loaded.) A TV that restarts
+its clock at 0 anyway is spotted on its first reading (`clockBase`). Until then, the position is where the cast
+started. The phone's own player still gets a stream whose clock starts at 0, plus the keyframe lookup.
 
 **The player becomes a remote.** Casting stops local playback. The page shows the backdrop, "Playing on
 <TV>", play/pause, ±10 s, the scrubber, the TV's volume and "Stop casting". It polls `/api/cast` every
@@ -181,3 +184,45 @@ website for visitors on a computer too. The words now follow the phone: the page
 its button is "Connect to <computer>", the app's setting is "Let phones play from this computer" under
 "Watch on your phone", and the website shows the phone link only on touch-first screens (computers see
 Download).
+
+## Update, 2026-11-14: a cast that holds (0.5.2)
+
+Checked on a real Chromecast (Google TV) from a phone-sized browser, with a second phone joining.
+
+- **The computer holds the cast.**
+  - If the link to the TV drops (Wi-Fi, a sleeping computer), the service joins the TV's running player
+    again (`rejoinPlayer`, retried for about a minute) instead of ending the cast. The phone shows
+    "Reconnecting to <TV>…".
+  - If the TV finished meanwhile, the film counts as finished. If it stopped, the cast ends with "<TV>
+    stopped playing".
+  - Progress is saved by the computer every 15 s, on pause and at the end, so Continue watching is right
+    even with the phone asleep. The phone no longer reports progress while casting.
+  - The desktop app keeps the computer from sleeping while anything plays (`/api/awake`).
+- **Next episode on the TV.**
+  - At the end of an episode, the computer finds the next one (the same torrent when it has it), with
+    subtitles in the same language, and plays it.
+  - The phone shows "Next episode on <TV>" (play it now) with × (not now), and follows to the new episode.
+  - A failure says what couldn't play.
+- **Subtitles as on the phone.**
+  - The phone's size (A−/A+) goes to the TV as `textTrackStyle.fontScale` and changes in place.
+  - A timing change reloads the TV at its position, once the taps stop.
+  - A track the TV got empty, because the subtitle service didn't answer, is fetched again in the
+    background and reloaded once it downloads.
+  - A phone that joins shows the TV's subtitle and size.
+- **TV volume.**
+  - The TV's own volume and mute come from receiver statuses only. Media statuses carry the stream's
+    volume, always 1, which had been overwriting it.
+  - Phones get a volume row on the remote.
+- **Discovery** asks twice per browse, and a TV that isn't known yet is looked for again before a cast
+  fails.
+- **Film time and length** in converted streams, as above.
+
+The fake receiver (`server/cast/cast.test.ts`) covers each of these. The real TV covered:
+- cast from the phone's player;
+- subtitle choice, size and timing;
+- a second phone joining;
+- mute;
+- 30 s with the computer frozen (it rejoined and playback carried on);
+- film time and length in converted streams.
+
+Next episode has only been tested against the fake receiver.

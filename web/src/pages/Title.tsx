@@ -22,8 +22,9 @@ import { TrailerButton, TrailerVideo, useTrailer } from '../components/Trailer.t
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; message: string }
 
 /** Hands the chosen source to the player. Trackers ride in sessionStorage to keep the URL short. */
-export function watchSource (s: Source, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }, opts: { replace?: boolean } = {}) {
-  writeSessionKey(`trackers:${s.infoHash}`, JSON.stringify(s.trackers))
+export function watchSource (s: Pick<Source, 'infoHash' | 'fileIdx' | 'fileName'> & { trackers?: string[] }, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }, opts: { replace?: boolean } = {}) {
+  // Without trackers (following a cast to the next episode), the computer already has the torrent.
+  if (s.trackers) writeSessionKey(`trackers:${s.infoHash}`, JSON.stringify(s.trackers))
   const q = new URLSearchParams({ ih: s.infoHash, type: ctx.type, id: ctx.imdbId, s: ctx.streamId, n: ctx.name })
   if (s.fileIdx !== undefined) q.set('f', String(s.fileIdx))
   if (s.fileName) q.set('fn', s.fileName)

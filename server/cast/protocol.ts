@@ -260,6 +260,11 @@ export interface ReceiverStatus {
 
 export interface TextTrack { url: string; language?: string; name?: string }
 
+/** Subtitles on the TV: white with a black outline, no box, at `scale` times the TV's own size (the player's A−/A+). */
+export function textTrackStyle (scale = 1): Record<string, unknown> {
+  return { backgroundColor: '#00000000', edgeType: 'OUTLINE', edgeColor: '#000000FF', foregroundColor: '#FFFFFFFF', fontScale: scale }
+}
+
 export interface LoadRequest {
   contentId: string
   contentType: string
@@ -276,6 +281,10 @@ export interface LoadRequest {
   textTracks?: TextTrack[]
   /** Which of `textTracks` shows from the start (its index), if any. */
   activeTextTrack?: number | null
+  /** Subtitle size, times the TV's own (1 = its default). */
+  textScale?: number
+  /** An episode: the TV shows the series, season and episode with it (`title` is then the episode's name). */
+  show?: { series: string; season: number; episode: number }
   /** A song: the TV shows it as music (artist and album under the title, the cover large). */
   music?: { artist?: string; album?: string }
 }
@@ -293,6 +302,11 @@ export class MediaReceiver extends EventEmitter {
   private transportId: string | null = null
   private appSessionId: string | null = null
   mediaSessionId: number | null = null
+  /**
+   * The TV's own volume (what its remote changes, and SET_VOLUME), from the latest receiver status. Media statuses
+   * carry the stream's volume instead, which stays at 1: never mix the two.
+   */
+  volume: { level?: number; muted?: boolean } | null = null
 
   constructor (channel: CastChannel) {
     super()
@@ -313,11 +327,38 @@ export class MediaReceiver extends EventEmitter {
   async launch (): Promise<void> {
     const r = await this.channel.request(NS.receiver, 'receiver-0', { type: 'LAUNCH', appId: DEFAULT_MEDIA_RECEIVER }, 20_000)
     if (r.data?.type === 'LAUNCH_ERROR') throw new CastError('launch_failed', `The TV couldn’t start its player (${String(r.data.reason ?? 'unknown reason')})`)
+    this.volume = (r.data?.status as ReceiverStatus | undefined)?.volume ?? this.volume
     const app = (r.data?.status as ReceiverStatus | undefined)?.applications?.find(a => a.appId === DEFAULT_MEDIA_RECEIVER)
     if (!app) throw new CastError('launch_failed', 'The TV didn’t start its player')
     this.transportId = app.transportId
     this.appSessionId = app.sessionId
     this.channel.send(NS.connection, app.transportId, { type: 'CONNECT' })
+  }
+
+  /** The player's app session on the TV (to join it again over a new connection). */
+  get appSession (): string | null { return this.appSessionId }
+
+  /**
+   * Joins the Default Media Receiver already running on the TV, over this (new) connection, without restarting
+   * it: the film plays on. A TV keeps playing when the connection to it drops (a Wi-Fi blip, the computer
+   * sleeping a moment), so a cast can carry on. Only the app session `appSession`. Returns null when that player
+   * is gone; else its status for media session `media` (when given), which is null when the player holds nothing
+   * else (it finished, or failed, while the connection was down).
+   */
+  async join (appSession: string, media?: number | null): Promise<{ status: MediaStatus | null } | null> {
+    const r = await this.channel.request(NS.receiver, 'receiver-0', { type: 'GET_STATUS' })
+    this.volume = (r.data?.status as ReceiverStatus | undefined)?.volume ?? this.volume
+    const app = (r.data?.status as ReceiverStatus | undefined)?.applications?.find(a => a.appId === DEFAULT_MEDIA_RECEIVER && a.sessionId === appSession)
+    if (!app) return null
+    this.transportId = app.transportId
+    this.appSessionId = app.sessionId
+    this.channel.send(NS.connection, app.transportId, { type: 'CONNECT' })
+    this.mediaSessionId = media ?? null
+    // An idle player answers with no media, or (some) refuses: either way it holds nothing.
+    const s = await this.getStatus().catch(err => { if (err instanceof CastError && err.code === 'invalid') return null; throw err })
+    const mine = s && (media == null || s.mediaSessionId === media) && !(s.playerState === 'IDLE' && !s.idleReason) ? s : null
+    if (!mine) this.mediaSessionId = media ?? null
+    return { status: mine }
   }
 
   async load (req: LoadRequest): Promise<MediaStatus> {
@@ -328,13 +369,15 @@ export class MediaReceiver extends EventEmitter {
       streamType: 'BUFFERED',
       metadata: req.music
         ? { metadataType: 3, title: req.title, artist: req.music.artist, albumName: req.music.album, images: req.image ? [{ url: req.image }] : [] }
-        : { metadataType: 0, title: req.title, subtitle: req.subtitle, images: req.image ? [{ url: req.image }] : [] },
+        : req.show
+          ? { metadataType: 2, seriesTitle: req.show.series, title: req.title, subtitle: req.subtitle, season: req.show.season, episode: req.show.episode, images: req.image ? [{ url: req.image }] : [] }
+          : { metadataType: 0, title: req.title, subtitle: req.subtitle, images: req.image ? [{ url: req.image }] : [] },
     }
     if (req.duration) media.duration = req.duration
     const body: Record<string, unknown> = { type: 'LOAD', media, autoplay: true, currentTime: req.currentTime }
     if (req.textTracks?.length) {
       media.tracks = req.textTracks.map((t, i) => ({ trackId: textTrackId(i), type: 'TEXT', subtype: 'SUBTITLES', trackContentId: t.url, trackContentType: 'text/vtt', language: t.language, name: t.name }))
-      media.textTrackStyle = { backgroundColor: '#00000000', edgeType: 'OUTLINE', edgeColor: '#000000FF', foregroundColor: '#FFFFFFFF', fontScale: 1 }
+      media.textTrackStyle = textTrackStyle(req.textScale)
       // Always said, even when none shows: left out, a receiver may pick one by its own language setting.
       const active = req.activeTextTrack
       body.activeTrackIds = typeof active === 'number' && req.textTracks[active] ? [textTrackId(active)] : []
@@ -354,6 +397,8 @@ export class MediaReceiver extends EventEmitter {
   stopMedia () { return this.mediaCommand('STOP') }
   /** Shows text track `index` of the loaded media (or none), in place: playback carries on where it is. */
   showTextTrack (index: number | null) { return this.mediaCommand('EDIT_TRACKS_INFO', { activeTrackIds: index === null ? [] : [textTrackId(index)] }) }
+  /** Changes the subtitle size in place (a Mi TV and other Android TVs apply it at once, the film playing on). */
+  setTextScale (scale: number) { return this.mediaCommand('EDIT_TRACKS_INFO', { textTrackStyle: textTrackStyle(scale) }) }
   getStatus () { return this.mediaCommand('GET_STATUS') }
 
   async setVolume (volume: { level?: number; muted?: boolean }): Promise<void> {
@@ -406,6 +451,7 @@ export class MediaReceiver extends EventEmitter {
       if (s) this.emit('media', s)
     } else if (m.namespace === NS.receiver && type === 'RECEIVER_STATUS') {
       const status = m.data!.status as ReceiverStatus
+      if (status.volume) this.volume = status.volume
       this.emit('receiver', status)
       // Someone else started another app (or quit ours) on the TV: this cast is over.
       if (this.appSessionId && !(status.applications ?? []).some(a => a.sessionId === this.appSessionId)) {
@@ -415,4 +461,37 @@ export class MediaReceiver extends EventEmitter {
       this.channel.close(new CastError('closed', 'The TV closed its player'))
     }
   }
+}
+
+/** Waits before each try to join the TV's player again: about a minute in all. */
+export const REJOIN_DELAYS_MS = [0, 1500, 3000, 5000, 8000, 12_000, 15_000, 15_000]
+
+/**
+ * After the connection to a TV dropped, joins its player again over a new connection (MediaReceiver.join), so the
+ * cast carries on. `status` is null when the player is there but no longer holds the media (it finished meanwhile).
+ * Gives up, returning null, when the player is gone, when `still()` turns false (the cast was stopped or replaced
+ * meanwhile), or after REJOIN_DELAYS_MS.
+ */
+export async function rejoinPlayer (
+  connect: () => Promise<MediaReceiver>,
+  appSession: string,
+  media: number | null,
+  still: () => boolean,
+  delays: number[] = REJOIN_DELAYS_MS,
+): Promise<{ receiver: MediaReceiver; status: MediaStatus | null } | null> {
+  for (const ms of delays) {
+    if (ms) await new Promise(resolve => setTimeout(resolve, ms).unref())
+    if (!still()) return null
+    let receiver: MediaReceiver | null = null
+    try {
+      receiver = await connect()
+      const joined = await receiver.join(appSession, media)
+      if (!joined || !still()) { receiver.close(); return null }
+      return { receiver, status: joined.status }
+    } catch {
+      // The TV isn't answering yet (Wi-Fi coming back, or it's off): try again.
+      receiver?.close()
+    }
+  }
+  return null
 }

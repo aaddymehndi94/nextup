@@ -1,13 +1,14 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, SkipForward, Tv, Volume2, VolumeX, X,
+  ArrowLeft, AudioLines, Captions, Cast, Check, CircleArrowDown, Download, Info, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, SkipForward, Tv, Volume1, Volume2, VolumeX, X,
 } from 'lucide-react'
 import type { Episode, MediaType, ProbeResponse, ProgressRequest, WatchProgress } from '../../../shared/types.ts'
-import { api, capsParam, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption, imageUrl } from '../api.ts'
+import { api, capsParam, type CastControl, type CastDevice, type CastStatus, getActiveProfile, type Cue, type Stats, type SubtitleOption, imageUrl } from '../api.ts'
 import { detectCaps } from '../caps.ts'
 import { bytes, clock, languageName, speed } from '../format.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { goBack } from '../router.ts'
+import { pause as pauseMusic } from '../music/player.ts'
 import { readKey, readSessionKey, writeKey } from '../storage.ts'
 import { isPrivate } from '../private.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
@@ -114,6 +115,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     const next = SUB_SIZES[Math.min(SUB_SIZES.length - 1, Math.max(0, SUB_SIZES.indexOf(subSize) + by))]
     setSubSize(next)
     writeKey('subs-size', next === 1 ? null : String(next))
+    // The TV's subtitles change size in place.
+    if (castRef.current?.active) castControl({ action: 'subtitleSize', scale: next }).then(follow).catch(err => toast(err.message))
   }
 
   const sessionId = stats?.id
@@ -263,8 +266,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => {
     if (phase !== 'ready') return
     const id = setInterval(() => {
-      const c = castRef.current
-      if (c?.active) { if (c.state === 'playing') report(); return }
+      // While a TV plays, the computer saves the progress itself, even with this phone asleep (server/cast).
+      if (castRef.current?.active) return
       const v = video.current
       if (v && !v.paused && !v.seeking && !seekPending.current) report()
     }, REPORT_EVERY_MS)
@@ -294,7 +297,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     t = Math.max(0, Math.min(t, duration - 1))
     setTime(t)
     if (castRef.current?.active) {
-      api.castControl({ action: 'seek', t }).then(c => { follow(c); played.current = true; reportRef.current() }).catch(err => toast(err.message))
+      castControl({ action: 'seek', t }).then(c => { follow(c); played.current = true; reportRef.current() }).catch(err => toast(err.message))
       return
     }
     seekPending.current = true
@@ -310,7 +313,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const togglePlay = useCallback(() => {
     const c = castRef.current
     if (c?.active) {
-      api.castControl({ action: c.state === 'paused' ? 'play' : 'pause' }).then(next => { follow(next); reportRef.current() }).catch(err => toast(err.message))
+      castControl({ action: c.state === 'paused' ? 'play' : 'pause' }).then(next => { follow(next); reportRef.current() }).catch(err => toast(err.message))
       return
     }
     const v = video.current
@@ -319,6 +322,9 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   }, [])
 
   // ---- Casting -----------------------------------------------------------------------------------------
+  /** When this page last told the TV something: a status asked for before that is out of date. */
+  const controlAt = useRef(0)
+  const castControl = (body: CastControl) => { controlAt.current = Date.now(); return api.castControl(body) }
   const follow = useCallback((c: CastStatus) => {
     setCast(c)
     if (typeof c.position === 'number') setTime(c.position)
@@ -348,9 +354,14 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     deviceId, sessionId: sessionId!, t, audio,
     subtitle: sub ? castSub(sub, offset) : null,
     subtitles: castSubs(),
+    subtitleScale: subSize,
     title: name || undefined,
     streamId: STREAM_ID.test(streamId) ? streamId : undefined,
     image: backdrop,
+    source: IMDB_ID.test(imdbId) && /^[0-9a-f]{40}$/i.test(infoHash)
+      ? { infoHash, fileIdx: Number.isInteger(fileIdx) ? fileIdx : undefined, fileName, type, imdbId }
+      : undefined,
+    from: readSessionKey(`from:${imdbId}`) ?? undefined,
   })
 
   const startCast = (device: CastDevice) => {
@@ -362,8 +373,9 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (v) { v.pause(); v.removeAttribute('src'); v.load() }
     setBuffering(false)
     setCastPending(device)
+    castOffset.current = subOffset
     api.castStart(castBody(device.id, t, audioTrack, subChoice, subOffset))
-      .then(c => { played.current = true; follow(c); setCastPending(null) })
+      .then(c => { played.current = true; follow(c); setCastPending(null); pauseMusic() })
       .catch(err => {
         setCastPending(null)
         attachLocal(t, audioTrack, wasPlaying)
@@ -377,6 +389,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     if (!c?.active || !c.device) return
     const device = { id: c.device.id, name: c.device.name, model: '' }
     setCastPending(device)
+    castOffset.current = subOffset
     api.castStart(castBody(device.id, timeRef.current, audio, subChoice, subOffset))
       .then(next => { follow(next); setCastPending(null) })
       .catch(err => { setCastPending(null); leaveRemote(c, err.message || 'The TV stopped playing') })
@@ -386,23 +399,47 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     api.castStop().then(last => leaveRemote(last)).catch(err => toast(err.message))
   }
 
-  // While casting, follow the TV (and notice when it finishes, fails, or another screen stops it).
+  // While casting, follow the TV (and notice when it finishes, fails, or another screen stops it). Straight away
+  // when the phone wakes: the TV may have moved on while it slept.
   useEffect(() => {
     if (!remote) return
-    const id = setInterval(() => {
+    const check = () => {
       if (document.hidden || castPending) return
+      const asked = Date.now()
       api.cast().then(c => {
         if (castRef.current?.sessionId !== sessionId || !castRef.current?.active) return
+        // A tap went out after this was asked: its own answer is newer (no flicker back to the old state).
+        if (asked <= controlAt.current) return
         if (c.active && c.sessionId === sessionId) { follow(c); return }
+        // The computer went on to the next episode on the TV: be its remote there. (It saved this one's progress.)
+        if (c.active && c.source && c.streamId && c.source.imdbId === imdbId) {
+          exited.current = true
+          watchSource(c.source, { type: c.source.type, imdbId, streamId: c.streamId, name: c.title ?? name }, { replace: true })
+          return
+        }
         const last = { ...castRef.current, ...(c.sessionId === sessionId ? c : {}) }
         const tv = castRef.current.device?.name ?? 'the TV'
-        leaveRemote(last, c.state === 'ended' ? `Finished on ${tv}`
-          : c.state === 'error' ? (c.error || `${tv} stopped playing`)
+        leaveRemote(last, c.error ? c.error
+          : c.state === 'ended' ? `Finished on ${tv}`
             : `Stopped playing on ${tv}`)
       }).catch(() => {})
-    }, 1000)
-    return () => clearInterval(id)
-  }, [remote, castPending, sessionId, follow, leaveRemote])
+    }
+    const id = setInterval(check, 1000)
+    const onVisible = () => { if (!document.hidden) check() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
+  }, [remote, castPending, sessionId, imdbId, name, follow, leaveRemote])
+
+  // A new subtitle timing reaches the TV once the taps stop (the TV reloads the subtitle with it).
+  const castOffset = useRef(0)
+  useEffect(() => {
+    if (!remote || !subChoice || subOffset === castOffset.current) return
+    const id = setTimeout(() => {
+      castOffset.current = subOffset
+      castControl({ action: 'subtitle', subtitle: castSub(subChoice, subOffset), subtitles: castSubs() }).then(follow).catch(err => toast(err.message))
+    }, 1200)
+    return () => clearTimeout(id)
+  }, [remote, subChoice, subOffset]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openCastPanel = () => {
     if (panel === 'cast') { setPanel('none'); return }
@@ -415,7 +452,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const setRemoteVolume = (body: { level?: number; muted?: boolean }) => {
     if (body.level !== undefined) setVolume(body.level)
     if (body.muted !== undefined) setMuted(body.muted)
-    api.castControl({ action: 'volume', ...body }).then(follow).catch(err => toast(err.message))
+    castControl({ action: 'volume', ...body }).then(follow).catch(err => toast(err.message))
   }
 
   const toggleFullscreen = useCallback(() => {
@@ -443,6 +480,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     }
     const settled = () => { if (seekPending.current) { seekPending.current = false; reportRef.current() } }
     const onPlaying = () => { setBuffering(false); setPlaying(true); setEnded(false); played.current = true; settled() }
+    // A film starting stops the music on this device (it plays app-wide, and the two would play together).
+    const onPlay = () => pauseMusic()
     const onSeeked = () => { if (v.paused) settled() }
     const onPause = () => { setPlaying(false); if (!v.ended) reportRef.current() }
     const onEnded = () => { setEnded(true); reportRef.current() }
@@ -457,6 +496,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     }
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('playing', onPlaying)
+    v.addEventListener('play', onPlay)
     v.addEventListener('seeked', onSeeked)
     v.addEventListener('ended', onEnded)
     v.addEventListener('pause', onPause)
@@ -467,6 +507,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     return () => {
       v.removeEventListener('timeupdate', onTime)
       v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('play', onPlay)
       v.removeEventListener('seeked', onSeeked)
       v.removeEventListener('ended', onEnded)
       v.removeEventListener('pause', onPause)
@@ -488,7 +529,9 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   useEffect(() => {
     if (!stats?.fileName || !imdbId) return
     let live = true
-    api.subtitles(type, streamId, stats.fileName).then(list => {
+    let retry: number | undefined
+    // The subtitle service sometimes fails for a moment: try again, a little later each time.
+    const load = (attempt: number) => api.subtitles(type, streamId, stats.fileName).then(list => {
       if (!live) return
       setSubs(list)
       const lang = readKey('subs-lang')
@@ -496,25 +539,45 @@ export function Watch ({ query }: { query: URLSearchParams }) {
         const best = list.filter(s => s.lang === lang).sort((a, b) => b.match - a.match)[0]
         if (best) setSubChoice(best)
       }
-    }).catch(() => {})
-    return () => { live = false }
+    }).catch(() => { if (live && attempt < 3) retry = window.setTimeout(() => load(attempt + 1), 2000 * 3 ** attempt) })
+    load(0)
+    return () => { live = false; window.clearTimeout(retry) }
   }, [stats?.fileName, type, streamId, imdbId])
+
+  // A cast and the subtitle list, once both are known: the TV's subtitle shows as chosen here (another screen
+  // started it), or one chosen here goes to the TV (the cast started before the list arrived).
+  const castSubsSynced = useRef(false)
+  useEffect(() => {
+    if (!remote || !subs.length || castSubsSynced.current) return
+    castSubsSynced.current = true
+    // The size shown is the TV's (this phone's own choice stays saved for playing here).
+    const scale = castRef.current?.subtitleScale
+    if (scale && SUB_SIZES.includes(scale)) setSubSize(scale)
+    const showing = castRef.current?.subtitle
+    if (showing) { const s = subs.find(x => x.url === showing); if (s) setSubChoice(s); return }
+    if (subChoice) castControl({ action: 'subtitle', subtitle: castSub(subChoice, subOffset), subtitles: castSubs() }).then(follow).catch(() => {})
+  }, [remote, subs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setCues([])
     if (!subChoice) return
     let live = true
-    api.cues(subChoice.url).then(c => { if (live) setCues(c) }).catch(() => {})
-    return () => { live = false }
+    let retry: number | undefined
+    // The subtitle service sometimes doesn't answer for a while: try again, later each time.
+    const load = (attempt: number) => api.cues(subChoice.url).then(c => { if (live) setCues(c) })
+      .catch(() => { if (live && attempt < 3) retry = window.setTimeout(() => load(attempt + 1), [5000, 20_000, 60_000][attempt]) })
+    load(0)
+    return () => { live = false; window.clearTimeout(retry) }
   }, [subChoice])
 
   const chooseSub = (s: SubtitleOption | null) => {
     setSubChoice(s)
     setSubOffset(0)
+    castOffset.current = 0
     writeKey('subs-lang', s ? s.lang : null)
     setPanel('none')
     // On the TV only the subtitle track changes; the film plays on.
-    if (castRef.current?.active) api.castControl({ action: 'subtitle', subtitle: s ? castSub(s) : null, subtitles: castSubs() }).then(follow).catch(err => toast(err.message))
+    if (castRef.current?.active) castControl({ action: 'subtitle', subtitle: s ? castSub(s) : null, subtitles: castSubs() }).then(follow).catch(err => toast(err.message))
   }
 
   const activeCue = useMemo(() => {
@@ -616,6 +679,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     }).catch(err => { setGoingNext(false); toast(`Couldn’t find the next episode. ${(err as Error).message}`) })
   }, [next, goingNext, infoHash, imdbId, report])
 
+  // On a TV the computer goes on to the next episode itself; the remote offers it for the last stretch.
+  const castUpNext = remote && cast?.upNext && !castPending && duration > 0 && duration - time <= NEXT_OFFER_SEC ? cast.upNext : null
   const offerNext = Boolean(next) && !nextHidden && !casting && phase === 'ready' && duration > 0 && (ended || duration - time <= NEXT_OFFER_SEC)
   useEffect(() => {
     if (!ended || !offerNext || goingNext) { setCountdown(null); return }
@@ -663,6 +728,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const togglePanel = (p: 'audio' | 'subs' | 'info') => setPanel(cur => (cur === p ? 'none' : p))
   const castName = castPending?.name ?? cast?.device?.name ?? 'the TV'
   const castLine = castPending ? `Connecting to ${castName}…`
+    : cast?.reconnecting ? `Reconnecting to ${castName}…`
     : cast?.state === 'paused' ? `Paused on ${castName}`
       : cast?.state === 'loading' || cast?.state === 'buffering' || cast?.state === 'connecting' ? `Loading on ${castName}…`
         : `Playing on ${castName}`
@@ -678,7 +744,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
       {activeCue && !casting && <div className="subtitle" aria-live="off" style={{ '--sub-scale': subSize } as CSSProperties}><span>{activeCue.text}</span></div>}
 
       {casting && (
-        <div className="cast-screen">
+        // A tap beside the remote's buttons closes an open panel, as a tap on the picture does.
+        <div className="cast-screen" onClick={e => { if (panel !== 'none' && !(e.target as Element).closest('button')) setPanel('none') }}>
           {backdrop && <img className="overlay-backdrop" src={backdrop} alt="" />}
           <div className="cast-card" role="status">
             <Tv className="cast-tv" aria-hidden />
@@ -690,6 +757,14 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </button>
               <button className="icon-button" onClick={() => seekTo(now() + 10)} aria-label="Forward 10 seconds" disabled={castPending !== null}><RotateCw aria-hidden /></button>
             </div>
+            {remote && typeof cast?.volume === 'number' && (
+              <div className="cast-volume" role="group" aria-label={`Volume on ${castName}`}>
+                <button className="icon-button" onClick={() => setRemoteVolume({ muted: !muted })} aria-label={muted ? 'Unmute the TV' : 'Mute the TV'} aria-pressed={muted}>{muted ? <VolumeX aria-hidden /> : <Volume2 aria-hidden />}</button>
+                <button className="icon-button" onClick={() => setRemoteVolume({ level: Math.max(0, Math.round((volume - 0.05) * 20) / 20), muted: false })} aria-label="TV volume down" disabled={volume <= 0}><Volume1 aria-hidden /></button>
+                <span className="tabular cast-volume-level">{muted ? 'Muted' : `${Math.round(volume * 100)}%`}</span>
+                <button className="icon-button" onClick={() => setRemoteVolume({ level: Math.min(1, Math.round((volume + 0.05) * 20) / 20), muted: false })} aria-label="TV volume up" disabled={volume >= 1}><Volume2 aria-hidden /></button>
+              </div>
+            )}
             {cast?.mode && cast.mode !== 'direct' && !castPending && <p className="overlay-hint">{cast.mode === 'transcode' ? 'Converting the video for the TV' : 'Repackaging the file for the TV'}</p>}
             <button className="button secondary" onClick={stopCast} disabled={Boolean(castPending)}>Stop casting</button>
           </div>
@@ -748,6 +823,19 @@ export function Watch ({ query }: { query: URLSearchParams }) {
             </span>
           </button>
           <button className="icon-button small" onClick={() => { setNextHidden(true); setCountdown(null) }} aria-label="Not now"><X aria-hidden /></button>
+        </div>
+      )}
+
+      {castUpNext && (
+        <div className="next-episode" role="group" aria-label="Next episode">
+          <button className="button primary" onClick={() => castControl({ action: 'next' }).then(follow).catch(err => toast(err.message))} disabled={cast?.state === 'loading'}>
+            <SkipForward aria-hidden />
+            <span className="next-episode-text">
+              <span>{cast?.state === 'loading' ? 'Getting it ready…' : `Next episode on ${castName}`}</span>
+              <span className="next-episode-name ellipsis">{castUpNext.name.split(' · ').slice(1).join(' · ') || castUpNext.name}</span>
+            </span>
+          </button>
+          <button className="icon-button small" onClick={() => castControl({ action: 'upNext', on: false }).then(follow).catch(err => toast(err.message))} aria-label="Not now: stop after this episode"><X aria-hidden /></button>
         </div>
       )}
 
@@ -868,7 +956,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </button>
             ))}
           </div>
-          {subChoice && !casting && (
+          {subChoice && (
             <div className="sub-offset">
               <span>Size</span>
               <span className="stepper">
@@ -878,7 +966,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
               </span>
             </div>
           )}
-          {subChoice && !casting && (
+          {subChoice && (
             <div className="sub-offset">
               <span>Timing</span>
               <span className="stepper">

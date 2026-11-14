@@ -71,6 +71,22 @@ describe('buildFfmpegArgs', () => {
     expect(args.at(-1)).toBe('pipe:1')
   })
 
+  it('starts converted audio at the copied video’s keyframe, and converts copied audio when the video is converted', () => {
+    const mkv = (codec: string, v = 'h264') => probe({ container: 'mkv', v: { codec: v }, audio: [{ index: 0, codec, default: true }] })
+    const at = (pr: ReturnType<typeof probe>, t: number) => buildFfmpegArgs({ ...base, startSec: t, probe: pr, plan: choosePlan(pr, chrome, ['en']) })
+    // H.264 copied, AC3 converted: both start at the keyframe before 600.
+    const remux = at(mkv('ac3'), 600)
+    expect(remux.indexOf('-noaccurate_seek')).toBeGreaterThan(-1)
+    expect(remux.indexOf('-noaccurate_seek')).toBeLessThan(remux.indexOf('-i'))
+    expect(remux.join(' ')).toContain('-c:a aac')
+    expect(at(mkv('ac3'), 0)).not.toContain('-noaccurate_seek')
+    // HEVC converted (this browser can't), AAC that could be copied: converted too, from 600 exactly.
+    const tx = at(mkv('aac', 'hevc'), 600)
+    expect(tx).not.toContain('-noaccurate_seek')
+    expect(tx.join(' ')).toContain('-c:a aac')
+    expect(at(mkv('aac', 'hevc'), 0).join(' ')).toContain('-c:a copy')
+  })
+
   it('omits -ss at the start of the file', () => {
     const pr = probe({ container: 'mkv' })
     expect(buildFfmpegArgs({ ...base, startSec: 0, probe: pr, plan: choosePlan(pr, chrome, ['en']) })).not.toContain('-ss')

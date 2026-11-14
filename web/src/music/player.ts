@@ -52,6 +52,12 @@ export const CROSSFADE_CHOICES = [0, 3, 6, 10] as const
 let crossfade = (() => { try { const v = Number(localStorage.getItem(FADE_KEY) ?? 6); return CROSSFADE_CHOICES.includes(v as 0) ? v : 6 } catch { return 6 } })()
 /** iOS ignores an element's volume, so overlapping there would just play two songs at once: no fades. */
 const canFade = (() => { if (!audio) return false; audio.volume = 0.5; const ok = audio.volume === 0.5; audio.volume = 1; return ok })()
+/**
+ * Fades, and handing a song over to the other element, only while the page is on screen. With the phone locked
+ * or the browser in the background, Chrome on Android lets the element that's playing go on to the next song,
+ * but a second element starting (or one waiting on a fade timer at volume 0) kills the music.
+ */
+const fades = () => canFade && !document.hidden
 const fadeListeners = new Set<() => void>()
 export const useCrossfade = (): number => useSyncExternalStore(fn => { fadeListeners.add(fn); return () => { fadeListeners.delete(fn) } }, () => (canFade ? crossfade : -1))
 export function setCrossfade (seconds: number) {
@@ -60,25 +66,31 @@ export function setCrossfade (seconds: number) {
   fadeListeners.forEach(fn => fn())
 }
 
-const ramps = new Map<HTMLAudioElement, number>()
+const ramps = new Map<HTMLAudioElement, { id: number; finish: () => void }>()
+/** Abandons a fade where it is (its promise never settles, so what was to follow it doesn't happen). */
+function stopRamp (el: HTMLAudioElement) {
+  const r = ramps.get(el)
+  if (r) { clearInterval(r.id); ramps.delete(el) }
+}
 /**
  * Moves an element's volume to `to` over `sec` (equal-power curve, so a crossfade doesn't dip). Timed by the clock,
  * not by frames, so it finishes on time in a background tab too.
  */
 function ramp (el: HTMLAudioElement, to: number, sec: number): Promise<void> {
-  clearInterval(ramps.get(el))
+  stopRamp(el)
   const from = el.volume
-  if (!canFade || sec <= 0) { el.volume = to; return Promise.resolve() }
+  if (!fades() || sec <= 0) { el.volume = to; return Promise.resolve() }
   const start = Date.now()
   return new Promise(resolve => {
+    const finish = () => { stopRamp(el); el.volume = to; resolve() }
     const id = window.setInterval(() => {
       const k = Math.min(1, (Date.now() - start) / (sec * 1000))
+      if (k >= 1) { finish(); return }
       // Rising: sin; falling: 1 - cos (so the outgoing volume follows cos). sin² + cos² = 1 keeps the loudness even.
       const curve = to > from ? Math.sin(k * Math.PI / 2) : 1 - Math.cos(k * Math.PI / 2)
       el.volume = Math.max(0, Math.min(1, from + (to - from) * curve))
-      if (k >= 1) { clearInterval(id); ramps.delete(el); resolve() }
     }, 40)
-    ramps.set(el, id)
+    ramps.set(el, { id, finish })
   })
 }
 
@@ -98,7 +110,7 @@ const urlOf = (id: string) => new URL(audioUrl(id), location.href).href
 
 /** Stops the other element too (a song still fading out, or the next one getting ready). */
 function silenceSpare () {
-  clearInterval(ramps.get(spare))
+  stopRamp(spare)
   spare.pause()
   if (spare.src) { spare.removeAttribute('src'); spare.load() }
   spare.volume = 1
@@ -203,24 +215,24 @@ function load (index: number, at = 0, autoplay = true, fade = 0) {
   set({ index, time: at, duration: t.duration, buffering: autoplay, playing: autoplay && !state.cast?.active })
   mediaSession(t)
   if (state.cast?.active) return
-  // A song that's playing hands over to the other element: it fades out (briefly for a skip) as this one starts.
-  // The other element may already hold this song, ready near the end of the last one: then it starts at once.
+  // On screen, a song that's playing hands over to the other element: it fades out (briefly for a skip) as this
+  // one starts. The other element may already hold this song, ready near the end of the last one: then it starts
+  // at once. Off screen, the same element plays the next song (see `fades`).
   const outgoing = audio
   const playing = !outgoing.paused && !!outgoing.src
   const ready = spare.src === urlOf(t.id)
-  if (autoplay && (playing || ready)) {
+  if (autoplay && fades() && (playing || ready)) {
     audio = spare
     spare = outgoing
     if (playing) fadeAway(outgoing, fade || 0.35)
     else { outgoing.removeAttribute('src'); outgoing.load() }
-  } else if (spare.src && !ready) {
-    spare.removeAttribute('src')
-    spare.load()
+  } else {
+    silenceSpare()
   }
   if (audio.src !== urlOf(t.id)) audio.src = audioUrl(t.id)
   if (at > 0 || audio.currentTime > 0) audio.currentTime = at
-  clearInterval(ramps.get(audio))
-  audio.volume = autoplay && canFade ? 0 : 1
+  stopRamp(audio)
+  audio.volume = autoplay && fades() ? 0 : 1
   if (autoplay) {
     audio.play()
       .then(() => ramp(audio, 1, fade || 0.25))
@@ -287,7 +299,7 @@ export function toggle () {
   if (!audio.src) { load(state.index, resumeAt); resumeAt = 0; return }
   const el = audio
   if (el.paused) {
-    el.volume = canFade ? 0 : 1
+    el.volume = fades() ? 0 : 1
     el.play().then(() => ramp(el, 1, 0.3)).catch(() => { el.volume = 1 })
   } else {
     void ramp(el, 0, 0.2).then(() => { if (el === audio) { el.pause(); el.volume = 1 } })
@@ -432,7 +444,7 @@ function nearEnd (el: HTMLAudioElement) {
   if (!Number.isFinite(left) || state.cast?.active || el.paused) return
   const t = current()
   const n = state.queue[state.index + 1]
-  if (!t || !n) return
+  if (!t || !n || !fades()) return
   // Ready the next song a little before it's needed, so it starts without a gap.
   if (left < crossfade + 10 && !spare.src) { spare.src = audioUrl(n.id); spare.load() }
   // Album tracks run into each other as recorded; very short songs don't overlap.
@@ -486,6 +498,8 @@ if (audio) {
   wire(audio)
   wire(spare)
   window.addEventListener('pagehide', () => { save(); if (!audio.paused) report('left') })
+  // Going off screen mid-fade: finish it now, not on timers the browser may slow down or stop.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) [...ramps.values()].forEach(r => r.finish()) })
 
   if ('mediaSession' in navigator) {
     const on = (action: MediaSessionAction, fn: MediaSessionActionHandler) => { try { navigator.mediaSession.setActionHandler(action, fn) } catch { /* not supported */ } }

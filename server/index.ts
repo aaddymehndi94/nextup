@@ -11,6 +11,7 @@ import { contentType, parseRange } from './engine/range.ts'
 import { fetchJson, HttpError, UpstreamError } from './http.ts'
 import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
 import { buildFfmpegArgs, castPlan, choosePlan } from './playback/plan.ts'
+import { declareLength } from './playback/fmp4.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
 import { fetchCues, listSubtitles, toWebVtt } from './subtitles.ts'
@@ -20,7 +21,8 @@ import { openDb } from './db.ts'
 import { loadCf } from './reco/cf.ts'
 import { SqliteTasteStore } from './store.ts'
 import { ItemCache } from './taste/items.ts'
-import { registerTasteRoutes } from './taste/routes.ts'
+import { profileFrom, registerTasteRoutes } from './taste/routes.ts'
+import { atEnd } from './reco/signals.ts'
 import { RecoService } from './taste/service.ts'
 import { registerAccountRoutes } from './sync/routes.ts'
 import { SyncService } from './sync/service.ts'
@@ -28,6 +30,7 @@ import { registerLanGate, registerLanRoutes } from './lan/routes.ts'
 import { LanService } from './lan/service.ts'
 import { CastDiscovery, parseStaticDevices } from './cast/discovery.ts'
 import { registerCastRoutes } from './cast/routes.ts'
+import { MAX_SUBTITLE_CHOICES } from './cast/service.ts'
 import { CastService, type CastToken } from './cast/service.ts'
 import { hasPrivateHeader, refuseInPrivate, relayableImage } from './private.ts'
 import { ChatgptAuth } from './ai/chatgpt.ts'
@@ -80,15 +83,47 @@ const cast = new CastService({
   lan,
   log: msg => app.log.info(msg),
   beforeStart: () => (musicCast.active ? musicCast.stop() : Promise.resolve()),
+  // While a film plays on a TV the phone may sleep: the computer saves progress, as the player would.
+  onProgress: p => {
+    const progress = tasteStore.recordProgress(p.profile, { type: p.type, id: p.imdbId, streamId: p.streamId, position: p.position, duration: p.duration, from: p.from })
+    if (progress.completed && atEnd(progress.position, progress.duration)) cleanup.finished(p.streamId).catch(err => app.log.warn(`cleanup: ${(err as Error).message}`))
+  },
   media: {
     async plan (id, audio) {
       const s = session(id)
       const probe = await getProbe(s)
       return { plan: castPlan(probe, config.preferredLanguages, audio), durationSec: probe.durationSec, contentType: contentType(s.file.name) }
     },
-    async streamStart (id, t) {
-      const s = session(id)
-      return keyframeStart(s.id, t, (await getProbe(s)).container)
+    subtitle: url => fetchCues(url),
+    // The next episode, as the player's "Next episode" finds it.
+    async upNext (streamId) {
+      const [imdbId, season, episode] = streamId.split(':')
+      const t = await cinemeta.detail('series', imdbId)
+      const i = t.episodes.findIndex(e => e.season === Number(season) && e.episode === Number(episode))
+      const ep = i >= 0 ? t.episodes.slice(i + 1).find(e => e.season > 0) : undefined
+      if (!ep || (ep.released && Date.parse(ep.released) > Date.now())) return null
+      return { streamId: ep.id, name: `${t.name} · S${ep.season}E${ep.episode} ${ep.name}` }
+    },
+    // From the same torrent when it has the episode (a season pack), else the best source; subtitles in the
+    // language that was showing.
+    async openNext (prev, up) {
+      const [imdbId, season, episode] = up.streamId.split(':')
+      const meta = await cinemeta.detail('series', imdbId).catch(() => null)
+      const { sources } = await findSources({ type: 'series', imdbId, season: Number(season), episode: Number(episode), name: meta?.name ?? '', year: meta?.year }, Number.parseInt(meta?.runtime ?? '') || undefined)
+      const src = sources.find(x => x.infoHash.toLowerCase() === prev.source?.infoHash) ?? sources[0]
+      if (!src) throw new Error('no sources for it yet')
+      const s = await engine.open({ infoHash: src.infoHash, fileIdx: src.fileIdx, fileName: src.fileName, trackers: src.trackers ?? [], title: up.name, streamId: up.streamId }, { private: Boolean(prev.private) })
+      if (!s.private) cleanup.touch(s.infoHash, s.title)
+      const lang = prev.subtitle?.lang
+      const subtitles = (lang ? await listSubtitles('series', up.streamId, s.file.name).catch(() => []) : [])
+        .slice(0, MAX_SUBTITLE_CHOICES)
+        .map(x => ({ url: x.url, label: x.label.slice(0, 60), lang: /^[a-z]{2,3}$/.test(x.lang) ? x.lang : undefined, offset: 0 }))
+      const fileIdx = Number(s.id.split('-')[1])
+      return {
+        ...prev, sessionId: s.id, t: 0, audio: undefined, title: up.name, streamId: up.streamId,
+        subtitle: subtitles.find(x => x.lang === lang) ?? null, subtitles,
+        source: { infoHash: s.infoHash, fileIdx: Number.isInteger(fileIdx) ? fileIdx : undefined, fileName: s.file.name, type: 'series', imdbId },
+      }
     },
   },
 })
@@ -237,6 +272,16 @@ function parseCaps (raw: string | undefined): ClientCaps {
 // ---- Catalog ---------------------------------------------------------------
 
 app.get('/api/health', async () => ({ ok: true, encoder }))
+
+// Whether something plays from this computer (a TV, a phone, music), so the desktop app keeps it from sleeping:
+// a phone or TV reading from it is no activity to the system. A film or song asked for in the last 10 minutes
+// counts, so a pause or the gap before the next song doesn't let it sleep.
+let lastPlayback = 0
+const PLAYBACK_PATH = /^\/(stream\/|cast\/|api\/music\/audio\/)/
+app.addHook('onRequest', async req => { if (PLAYBACK_PATH.test(req.url)) lastPlayback = Date.now() })
+app.get('/api/awake', async () => ({
+  playing: cast.casting || musicCast.active || engine.list().some(s => s.activeStreams > 0) || Date.now() - lastPlayback < 10 * 60_000,
+}))
 
 app.get<{ Querystring: { q?: string } }>('/api/search', async req => {
   const q = (req.query.q ?? '').trim()
@@ -430,11 +475,12 @@ app.get<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(
 app.head<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, true, reply))
 
 /** Remuxed / transcoded fragmented MP4 from `startSec`. Seeking is a new request with a new `t`. */
-async function servePlay (s: Session, plan: PlaybackPlan, startSec: number, req: FastifyRequest, reply: FastifyReply, opts: { registryKey?: string; headers?: Record<string, string> } = {}) {
+async function servePlay (s: Session, plan: PlaybackPlan, startSec: number, req: FastifyRequest, reply: FastifyReply, opts: { registryKey?: string; headers?: Record<string, string>; filmClock?: boolean } = {}) {
   const result = await getProbe(s)
   startSec = Math.max(0, Math.min(startSec, Math.max(0, result.durationSec - 1)))
-  const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder: hw.encoder, hwDevice: hw.device })
-  if (plan.copyVideo && startSec > 0) {
+  const { filmClock } = opts
+  const args = buildFfmpegArgs({ input: rawUrl(s.id), startSec, probe: result, plan, encoder: hw.encoder, hwDevice: hw.device, filmClock })
+  if (plan.copyVideo && startSec > 0 && !filmClock) {
     // Runs alongside ffmpeg; both need the same pieces, so this costs no extra waiting.
     keyframeStart(s.id, startSec, result.container)
   }
@@ -453,7 +499,8 @@ async function servePlay (s: Session, plan: PlaybackPlan, startSec: number, req:
     .header('content-type', 'video/mp4')
     .header('cache-control', 'no-store')
     .header('x-playback-mode', plan.mode)
-    .send(proc.stdout)
+    // A TV's seek bar shows the film's length, not how much it has loaded so far.
+    .send(filmClock ? proc.stdout!.pipe(declareLength(result.durationSec)) : proc.stdout)
 }
 
 /** Starts (once) finding where a copied stream asked for at `t` really begins: the keyframe before it. */
@@ -515,7 +562,8 @@ app.get<{ Params: { token: string } }>('/cast/:token/raw', (req, reply) => serve
 app.head<{ Params: { token: string } }>('/cast/:token/raw', (req, reply) => serveRaw(castGrant(req.params.token, req).sessionId, req.headers.range, true, reply, CAST_HEADERS))
 app.get<{ Params: { token: string }; Querystring: { t?: string } }>('/cast/:token/play.mp4', async (req, reply) => {
   const g = castGrant(req.params.token, req)
-  return servePlay(session(g.sessionId), g.plan, Number(req.query.t) || 0, req, reply, { registryKey: `${g.sessionId}#cast`, headers: CAST_HEADERS })
+  // Film time and length in the stream itself: the TV's own seek bar shows where the film is.
+  return servePlay(session(g.sessionId), g.plan, Number(req.query.t) || 0, req, reply, { registryKey: `${g.sessionId}#cast`, headers: CAST_HEADERS, filmClock: true })
 })
 app.get<{ Params: { token: string } }>('/cast/:token/subs.vtt', async (req, reply) => {
   const g = castGrant(req.params.token, req)
@@ -524,13 +572,15 @@ app.get<{ Params: { token: string } }>('/cast/:token/subs.vtt', async (req, repl
   // downloaded is an empty one; the viewer can pick another.
   const cues = await fetchCues(g.subtitle.url).catch(err => {
     app.log.warn(`cast: subtitle ${g.subtitle!.label ?? ''} unavailable for the TV (${(err as Error).message})`)
+    // The TV keeps the empty one: the cast tries again and, once it downloads, gives the TV the real one.
+    cast.subtitleUnavailable(g.subtitle!.url)
     return []
   })
   return reply.headers(CAST_HEADERS).header('content-type', 'text/vtt; charset=utf-8').header('cache-control', 'no-store')
-    .send(toWebVtt(cues, (g.subtitle.offset ?? 0) - g.origin))
+    .send(toWebVtt(cues, g.subtitle.offset ?? 0))
 })
 
-registerCastRoutes(app, cast)
+registerCastRoutes(app, cast, { profile: req => profileFrom(tasteStore, req).id, private: hasPrivateHeader })
 
 // ---- Account and sync (optional) ---------------------------------------------------
 

@@ -86,7 +86,10 @@ song, and nothing goes through the cloud.
   - for songs under 45 seconds;
   - while casting.
   
-  A skip uses a quarter-second fade, and pause and resume fade too. iOS ignores an element's volume, so on
+  A skip uses a quarter-second fade, and pause and resume fade too. All of this happens only while the page is
+  on screen. With the phone locked or the browser in the background, the next song plays on the same element,
+  with no fade, and a fade already running finishes at once. Chrome on Android kills the music when a second
+  element starts in the background (fixed in 0.5.2). iOS ignores an element's volume, so on
   iPhones there are no fades and the setting is hidden.
 - **Closing.** The bar's X stops the music (on the TV too, when cast) and empties the queue. With no song
   loaded, the bar goes, and so does the phone's lock-screen notification. A toast offers Undo, which brings

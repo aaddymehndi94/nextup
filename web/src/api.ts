@@ -57,14 +57,31 @@ export interface CastStatus {
   muted?: boolean
   mode?: 'direct' | 'remux' | 'transcode'
   error?: string
+  /** Subtitle size on the TV, times its own. */
+  subtitleScale?: number
+  /** The subtitle showing on the TV (its URL), or null for none. */
+  subtitle?: string | null
+  /** The file playing: after the computer went on to the next episode, the page opens it. */
+  source?: CastSource
+  /** The episode the computer plays when this one ends ("Show · S1E3 Name"). */
+  upNext?: { streamId: string; name: string }
+  /** The connection to the TV dropped; the computer is joining its player again. */
+  reconnecting?: boolean
 }
 export interface CastSubtitle { url: string; lang?: string; label?: string; offset?: number }
+export interface CastSource { infoHash: string; fileIdx?: number; fileName?: string; type: MediaType; imdbId: string }
 export interface CastStartRequest {
   deviceId: string; sessionId: string; t: number; audio?: number
   /** The subtitle showing from the start, and every one the viewer can switch to (tracks on the TV). */
   subtitle?: CastSubtitle | null
   subtitles?: CastSubtitle[]
+  /** The player's subtitle size (A−/A+). */
+  subtitleScale?: number
   title?: string; streamId?: string; image?: string
+  /** With it, the computer saves this profile's progress and plays the next episode on the TV. */
+  source?: CastSource
+  /** Where the title was opened from, kept with the progress. */
+  from?: string
 }
 /** "subtitle" switches the TV's subtitle in place (null: off); `subtitles` is the player's list again. */
 export type CastControl =
@@ -72,6 +89,10 @@ export type CastControl =
   | { action: 'seek'; t: number }
   | { action: 'volume'; level?: number; muted?: boolean }
   | { action: 'subtitle'; subtitle: CastSubtitle | null; subtitles?: CastSubtitle[] }
+  | { action: 'subtitleSize'; scale: number }
+  /** Whether the next episode follows on the TV ("Not now": false), or play it now. */
+  | { action: 'upNext'; on: boolean }
+  | { action: 'next' }
 
 export class ApiError extends Error {
   readonly status: number

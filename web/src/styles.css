@@ -844,6 +844,11 @@ h1, h2, h3, p { margin: 0; }
 .cast-tv { width: 3rem; height: 3rem; stroke-width: 1.5; color: rgb(255 255 255 / 0.85); }
 .cast-line { font-size: clamp(1.125rem, 2.4vw, 1.5rem); font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; }
 .cast-card .button { margin-top: 0.5rem; }
+/* The TV's volume, from the phone (its own volume keys only reach the phone). */
+.cast-volume { display: none; align-items: center; gap: 0.25rem; color: var(--text-2); }
+.cast-volume-level { min-width: 4.5ch; text-align: center; font-size: 0.875rem; }
+/* Over the remote's bright controls, a see-through panel would be hard to read. */
+.is-casting .panel { background: rgb(24 24 27 / 0.97); }
 /* Phones hide the bar's play and skip buttons (they sit mid-screen there), so the remote carries its own. */
 .cast-transport { display: none; align-items: center; gap: clamp(1.5rem, 8vw, 3rem); margin: 0.75rem 0 0.25rem; }
 .cast-transport .icon-button { width: 3.25rem; height: 3.25rem; }
@@ -1316,7 +1321,7 @@ html.has-mini .update-banner { bottom: calc(env(safe-area-inset-bottom, 0px) + 6
 @media (pointer: coarse), (max-width: 640px) {
   .center-controls { display: flex; }
   .controls .play, .controls .skip { display: none; }
-  .cast-transport { display: flex; }
+  .cast-transport, .cast-volume { display: flex; }
 }
 
 /* ---------- TV / large screens ---------- */

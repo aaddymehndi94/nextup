@@ -151,11 +151,16 @@ export interface FfmpegArgsInput {
   encoder: Encoder
   /** Device for encoders that need one (VAAPI render node). */
   hwDevice?: string
+  /**
+   * Keep film time in the stream (for a TV): its clock and seek bar read where the film is. Without it the
+   * player's clock restarts at 0 and the player adds where the stream began (the browser's player does).
+   */
+  filmClock?: boolean
 }
 
 const KEYFRAME_EVERY_SEC = 2
 
-export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevice }: FfmpegArgsInput): string[] {
+export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevice, filmClock }: FfmpegArgsInput): string[] {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin']
   const enc = encoderArgs({ encoder, device: hwDevice })
   if (!plan.copyVideo) args.push(...enc.global)
@@ -165,6 +170,11 @@ export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevi
   // Without this ffmpeg reads ~12 MB from the start of the file before it will seek, and on a torrent
   // that means waiting for pieces nobody asked for. Other containers (AVI, TS) need the default probing.
   if (['mkv', 'mp4', 'webm'].includes(probe.container)) args.push('-probesize', '1000000', '-analyzeduration', '0')
+  // Copied video can only start at the keyframe before startSec. Converted audio would start exactly at startSec,
+  // leaving a gap at the head of its track that browsers don't keep: Chrome stamps decoded audio by counting
+  // samples from the first packet, so the sound played that many seconds early (up to ~10 s after every seek or
+  // resume of an HEVC file with Dolby sound on a phone). Without accurate seeking it starts at the keyframe too.
+  if (startSec > 0 && plan.copyVideo) args.push('-noaccurate_seek')
   if (startSec > 0) args.push('-ss', startSec.toFixed(3))
   // Keep original timestamps so the player knows exactly where a stream starts. With stream copy the
   // cut lands on the keyframe *before* the requested time, so "requested t" alone would drift.
@@ -188,14 +198,17 @@ export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevi
   }
 
   if (probe.audio.length > 0) {
-    if (plan.copyAudio) args.push('-c:a', 'copy')
+    // The reverse: converted video starts exactly at startSec, but copied audio would start back at the keyframe
+    // (the picture then froze for those seconds). Converting the audio too starts both at startSec.
+    if (plan.copyAudio && (plan.copyVideo || startSec === 0)) args.push('-c:a', 'copy')
     else args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2')
   }
 
   args.push(
     '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
     '-max_muxing_queue_size', '4096',
-    '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-frag_duration', '2000000',
+    // delay_moov writes the header after the first fragment, with each track's real start in an edit list.
+    '-f', 'mp4', '-movflags', `frag_keyframe+empty_moov+default_base_moof${filmClock ? '+delay_moov' : ''}`, '-frag_duration', '2000000',
     'pipe:1',
   )
   return args
