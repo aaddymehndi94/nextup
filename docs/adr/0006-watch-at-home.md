@@ -238,6 +238,8 @@ Connect. Now **nexttupp.com/watch can be added to the home screen** and opens li
     fetches network first, so a deploy shows at once. The cached copy is used only when the network fails.
     It never touches the API, another origin.
   - The rest of nexttupp.com stays an ordinary website. The CSP adds `worker-src 'self'`.
+  - `watch-sw.js` is served with a CSP of its own (`connect-src 'self'`). A worker's fetches follow the
+    CSP sent with its script, and the page CSP allows only the API, so with it the worker's install failed.
 - **The install offer** is one quiet line at the end of /watch, on phones only, never inside the app:
   - Chrome on Android: `beforeinstallprompt`, shown as an "Add to home screen" button instead of Chrome's banner.
   - iOS: the Share → Add to Home Screen steps. iOS has no install prompt. Its home-screen apps also keep their

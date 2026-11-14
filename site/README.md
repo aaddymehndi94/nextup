@@ -74,7 +74,7 @@ To try the www redirect locally:
 
 ## Deploying
 
-Nothing has been deployed. These steps change the Cloudflare account and DNS, so the owner runs them.
+Live since 2026-11. A deploy changes the owner's Cloudflare account, so each one waits for the owner's go-ahead. Steps 1 and 2 were the first deploy; later deploys are step 2's `npx wrangler deploy` alone (Node 24, from `site/`).
 
 1. **Clear the parking records.** In Cloudflare, open the nexttupp.com zone, then DNS. Delete the GoDaddy
    parking records on `nexttupp.com` (the apex `A`/`AAAA`/`CNAME`) and on `www`. Wrangler won't attach a custom
