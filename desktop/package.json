@@ -1,7 +1,7 @@
 {
   "name": "nexttupp",
   "productName": "nexttupp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Search a film or series, pick a torrent, watch it. Everything runs on your own computer.",
   "private": true,
   "main": "build/main.cjs",
