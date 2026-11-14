@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, CircleArrowUp, CircleUserRound, Pencil, RefreshCw, SlidersHorizontal, Sparkles, VenetianMask } from 'lucide-react'
+import { Check, CircleArrowUp, CircleUserRound, HardDrive, Laptop, Pencil, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, VenetianMask } from 'lucide-react'
 import { desktop, useDesktopUpdate } from '../desktop.ts'
 import { setPrivate, usePrivate } from '../private.ts'
 import { chooseProfile, useProfiles } from '../profiles.ts'
@@ -7,9 +7,15 @@ import { navigate } from '../router.ts'
 import { toast } from '../toast.ts'
 import { Avatar } from './Avatar.tsx'
 
+/** Opened on the computer that runs nexttupp, rather than on a phone over the home Wi-Fi. */
+const onComputer = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
+/** The phone app's computer list, without connecting by itself (server/lan/routes.ts has the base URL). */
+const SWITCH_COMPUTER = 'https://nexttupp.com/watch?choose'
+
 /**
  * The active profile's avatar in the masthead. Opens a small menu: switch profile, private mode, see
- * "Your taste", manage profiles, and the optional account (sign-in and sync). Arrow keys move through it
+ * "Your taste", manage profiles, the optional account (sign-in and sync) and storage. On the computer it also
+ * points the way to the phone app; on a phone it leads back to the list of computers. Arrow keys move through it
  * (remote friendly); Escape closes it. While private mode is on, a "Private" label sits beside the avatar.
  */
 export function ProfileMenu () {
@@ -120,6 +126,23 @@ export function ProfileMenu () {
             <CircleUserRound className="menu-icon" aria-hidden />
             <span className="menu-label">Account</span>
           </a>
+          <a href="/storage" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/storage') }}>
+            <HardDrive className="menu-icon" aria-hidden />
+            <span className="menu-label">Storage</span>
+          </a>
+          {onComputer
+            ? (
+              <a href="/account#phones" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/account#phones') }}>
+                <Smartphone className="menu-icon" aria-hidden />
+                <span className="menu-label">Watch on your phone</span>
+              </a>
+              )
+            : (
+              <a href={SWITCH_COMPUTER} role="menuitem" className="menu-item">
+                <Laptop className="menu-icon" aria-hidden />
+                <span className="menu-label">Switch computer</span>
+              </a>
+              )}
           {desktop && (update && update.state !== 'failed'
             ? (
               <button type="button" role="menuitem" className="menu-item" disabled={update.state === 'installing'} onClick={() => { setOpen(false); desktop!.installUpdate() }}>

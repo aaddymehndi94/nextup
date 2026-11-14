@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Clapperboard, Info, RefreshCw, Search, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react'
+import { Check, ChevronRight, Clapperboard, Info, RefreshCw, Search, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { AiPicksResponse, AiSearchResponse, HomeResponse, HomeRow, MediaType, OnboardingResponse, Rating, RecItem, TitleDetail, TitleSummary } from '../../../shared/types.ts'
-import { api } from '../api.ts'
+import { api, getActiveProfile } from '../api.ts'
+import { chooseFeatured, featuredLately, markFeatured } from '../billboard.ts'
 import { useDocumentTitle, useLoaded, usePageActive, useScrolled } from '../hooks.ts'
 import { navigate, onLinkClick, replaceUrl } from '../router.ts'
 import { usePrivate } from '../private.ts'
@@ -169,11 +170,16 @@ function useNearBottom (onVisible: () => void, active: boolean, deps: unknown) {
   return ref
 }
 
-/** The billboard's title: the top pick once picks are personal, otherwise the most popular film. */
+/**
+ * The billboard's title: one of the top picks once picks are personal, otherwise of the most popular films. They
+ * take turns (billboard.ts), so Home doesn't open on the same film every time. Chosen once per visit to Home.
+ */
 function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId: string } | null {
   const row = data.coldStart ? data.rows.find(r => r.id.startsWith('popular:')) : data.rows.find(r => r.kind === 'top')
-  const item = row?.items.find(i => i.background)
+  const profile = getActiveProfile()
+  const item = row && chooseFeatured(row.items.filter(i => i.background), featuredLately(profile))
   if (!row || !item) return null
+  markFeatured(profile, item.id)
   return { item, label: data.coldStart ? 'Popular now' : item.reason.text, rowId: row.id }
 }
 
@@ -293,8 +299,9 @@ function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null;
       shelves.push(<Onboarding key={row.id} row={row} onReady={refresh} />)
     } else if (row.kind === 'list') {
       shelves.push(
-        <Row key={row.id} title={row.title} id="row-my-list" className="row-list" source="list">
-          {row.items.map(it => <RecCard key={it.id} item={it} onRemove={removeFromList} removeLabel="Remove from My List" />)}
+        <Row key={row.id} title={row.title} id="row-my-list" className="row-list" source="list"
+          aside={<a className="row-link" href="/list" onClick={onLinkClick}>See all<ChevronRight aria-hidden /></a>}>
+          {row.items.map(it => <RecCard key={it.id} item={it} onRemove={removeFromList} removeLabel="Remove from My List" listed />)}
         </Row>,
       )
     } else {

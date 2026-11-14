@@ -43,4 +43,8 @@ export interface DesktopBridge {
   installUpdate (): void
   /** Asks GitHub now; resolves with the result (null: this is the latest). */
   checkForUpdate (): Promise<DesktopUpdate | null>
+  /** Opens a folder in the computer's file manager. Resolves false when it isn't a folder. (Older apps lack it.) */
+  openFolder?: (path: string) => Promise<boolean>
+  /** The system's folder picker; resolves with the chosen folder, or null if cancelled. (Older apps lack it.) */
+  chooseFolder?: (start?: string) => Promise<string | null>
 }

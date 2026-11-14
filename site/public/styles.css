@@ -405,6 +405,14 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .watch-row-meta { font-size: 0.8125rem; color: var(--text-3); }
 .watch-status { margin-top: 1.25rem; min-height: 1.5em; font-size: 0.9375rem; color: var(--text-2); text-wrap: pretty; }
 .join-foot .link { background: none; border: 0; padding: 0; font: inherit; color: var(--text-2); cursor: pointer; }
+/* The computer this phone used last, while signed out: a second way in, under the sign-in form. */
+.watch-last { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line); display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.watch-last-text { margin: 0; font-size: 0.9375rem; color: var(--text-2); text-wrap: pretty; }
+.watch-last .button { width: 100%; }
+/* Add to home screen: one quiet line at the end, phones only. */
+.watch-install { margin-top: 2.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.875rem; }
+.watch-install[hidden], .watch-last[hidden] { display: none; }
+.watch-install-text { margin: 0; font-size: 0.875rem; color: var(--text-3); text-wrap: pretty; }
 
 /* ---------- Sign in / create account (cloud.js) ---------- */
 .auth-tabs { display: inline-flex; gap: 0.25rem; margin-top: 2.25rem; padding: 0.25rem; border-radius: 999px; background: rgb(255 255 255 / 0.06); box-shadow: var(--edge); }
@@ -422,6 +430,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .ready-note { margin-top: 1.25rem; color: var(--text-2); line-height: 1.6; }
 .watch-list + .watch-primary { margin-top: 2rem; }
 .join-foot .sep { margin-inline: 0.25rem; opacity: 0.6; }
+/* A long email wraps on a phone: sign-out goes on its own line instead of a dangling dot. */
+@media (max-width: 480px) { .watch .join-foot .sep { display: none; } .watch .join-foot [data-signout] { display: block; margin-top: 0.25rem; } }
 
 /* Phones and tablets get the phone links, computers the downloads. Touch-first screens, no script needed. */
 @media not all and (hover: none) and (pointer: coarse) { .phone-only { display: none; } }

@@ -1,4 +1,4 @@
-// The page's only way to the desktop app: the "Now playing" notification and updates (shared/desktop.ts).
+// The page's only way to the desktop app: the "Now playing" notification, updates and folders (shared/desktop.ts).
 // Sandboxed preload: just messages, no Node.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { DesktopBridge, DesktopMusicAction, DesktopNowPlaying, DesktopUpdate } from '../../shared/desktop.ts'
@@ -20,6 +20,8 @@ const bridge: DesktopBridge = {
   },
   installUpdate: () => ipcRenderer.send('update-install'),
   checkForUpdate: () => ipcRenderer.invoke('update-check') as Promise<DesktopUpdate | null>,
+  openFolder: (path: string) => ipcRenderer.invoke('open-folder', path) as Promise<boolean>,
+  chooseFolder: (start?: string) => ipcRenderer.invoke('choose-folder', start) as Promise<string | null>,
 }
 
 contextBridge.exposeInMainWorld('nexttuppDesktop', bridge)

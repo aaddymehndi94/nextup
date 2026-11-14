@@ -122,7 +122,8 @@ try {
   // "Not interested" straight from a card, by keyboard: Tab from the poster reaches the button.
   const victim = await page.$eval('.row-kind-top .card .poster', a => ({ href: a.getAttribute('href'), name: a.querySelector('.poster-name').textContent }))
   await page.focus(`.row-kind-top .card .poster[href="${victim.href}"]`)
-  await page.keyboard.press('Tab')
+  // Past My List, Like and Dislike to Not interested.
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Tab')
   const focused = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))
   await page.keyboard.press('Enter')
   await page.waitForFunction(h => !document.querySelector(`.row-kind-top .poster[href="${h}"]`), { timeout: 5000 }, victim.href)
@@ -150,7 +151,9 @@ try {
   log('search returns results', first === `/title/movie/${NOTLD}`, first)
   await shot('2-search')
 
+  // A poster opens Quick view; its title (or the URL) leads to the full page.
   await page.click('.results .poster')
+  await page.goto(BASE + first, { waitUntil: 'networkidle2' })
   await page.waitForSelector('.hero-content', { timeout: 15000 })
   await page.waitForSelector('.source', { timeout: 30000 })
   const sources = await page.$$eval('.source', els => els.length)
@@ -244,11 +247,17 @@ try {
   log('add to My List, and it appears in the My List row', listRow === 1)
   await shot('11-continue')
 
-  // One click resumes, from the server's position (clear this browser's own copy to prove it).
+  // The card opens the title's page; its Resume plays from the server's position (clear this browser's own copy to prove it).
   await page.evaluate(id => ['nexttupp:', 'nextup:'].forEach(p => localStorage.removeItem(`${p}progress:${id}`)), NOTLD)
   await page.evaluate(() => { window.__first = undefined })
   const resumeStart = Date.now()
   await page.click(`.row-continue a[href^="/title/movie/${NOTLD}"]`)
+  await page.waitForFunction(id => location.pathname === `/title/movie/${id}`, { timeout: 10000 }, NOTLD)
+  await page.waitForFunction(() => /^Resume/.test(document.querySelector('.hero-actions .button.primary')?.textContent ?? ''), { timeout: 60000 })
+  log('Continue watching opens the title page with Resume', true)
+  // Pages change with a view transition, and a click during one doesn't reach the page.
+  await sleep(600)
+  await page.click('.hero-actions .button.primary')
   await page.waitForFunction(() => location.pathname === '/watch', { timeout: 60000 })
   await waitForPlayback(1, 150000)
   const toastText = await page.$eval('.toast', el => el.textContent).catch(() => '')
@@ -258,8 +267,12 @@ try {
   await page.mouse.move(700, 450)
   await shot('12-resumed')
   await page.click('.player-top .round-button')
+  await page.waitForFunction(id => location.pathname === `/title/movie/${id}`, { timeout: 10000 }, NOTLD)
+  await page.waitForSelector('.topbar .round-button', { timeout: 15000 })
+  await sleep(600)
+  await page.click('.topbar .round-button')
   await page.waitForFunction(() => location.pathname === '/', { timeout: 10000 })
-  log('Back from a resumed title returns home', true)
+  log('Back from a resumed title returns to its page, then home', true)
 } catch (err) {
   log('playback / progress error', false, err.message)
   await shot('error-playback').catch(() => {})

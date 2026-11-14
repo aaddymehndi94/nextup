@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LogOut, RefreshCw, X } from 'lucide-react'
 import { type AccountStatus, api, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
 import { useDocumentTitle } from '../hooks.ts'
@@ -29,12 +29,19 @@ export function Account () {
       <div className="account-body">
         <header className="account-head">
           <h1 className="account-title">Account</h1>
-          {load.state === 'ok' && !load.status.signedIn && (
-            <p className="account-lede">
-              Sign in, or create a free account, to keep your profiles, likes, My List and Continue watching the same on
-              every computer you use, and to watch on your phone. nexttupp works just as well without one.
-            </p>
-          )}
+          {load.state === 'ok' && !load.status.signedIn && (location.hash === '#phones'
+            ? (
+              <p className="account-lede">
+                To watch on your phone, sign in here, or create a free account. Then go to nexttupp.com/watch on your phone
+                and sign in with the same account.
+              </p>
+              )
+            : (
+              <p className="account-lede">
+                Sign in, or create a free account, to keep your profiles, likes, My List and Continue watching the same on
+                every computer you use, and to watch on your phone. nexttupp works just as well without one.
+              </p>
+              ))}
         </header>
         {load.state === 'loading' && <div aria-busy="true"><div className="skeleton-line" style={{ width: '50%', height: '1.25rem' }} /></div>}
         {load.state === 'error' && <p className="notice" role="alert">{load.message}</p>}
@@ -184,6 +191,7 @@ function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: 
       {lan && !lan.local && (
         <section className="account-section" aria-label="This phone">
           <p className="account-note">This phone is connected to <strong>{lan.name}</strong>. Account settings are changed on that computer.</p>
+          <a className="text-button" href="https://nexttupp.com/watch?choose">Switch computer</a>
         </section>
       )}
       {lan?.local && <Phones lan={lan} onLan={setLan} />}
@@ -219,32 +227,38 @@ function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void
     } catch (err) { toast(`Couldn’t remove it. ${(err as Error).message}`) }
   }
 
+  // Arrived from "Watch on your phone" in the profile menu.
+  const section = useRef<HTMLElement>(null)
+  useEffect(() => { if (location.hash === '#phones') section.current?.scrollIntoView({ block: 'start' }) }, [])
+
   const now = Date.now()
   return (
-    <section className="account-section" aria-labelledby="lan-h">
+    <section className="account-section" id="phones" ref={section} aria-labelledby="lan-h">
       <h2 id="lan-h" className="section-title">Watch on your phone</h2>
       <label className="switch-row">
         <span className="switch-text">
           <span className="switch-label">Let phones play from this computer</span>
           <span className="account-note">
-            On a phone on the same Wi-Fi, go to nexttupp.com/watch and sign in with this account. Films play on the phone,
-            streamed from this computer. For a TV, press Cast in the player.
+            Films play on a phone on the same Wi-Fi, streamed from this computer. For a TV, press Cast in the player.
           </span>
         </span>
         <input type="checkbox" role="switch" className="switch" checked={lan.enabled} disabled={busy} onChange={e => { void save({ enabled: e.target.checked }) }} />
       </label>
       {lan.enabled && (
         <>
+          <div className="phone-qr">
+            <img src="/watch-qr.svg" alt="QR code for nexttupp.com/watch" width={132} height={132} />
+            <p className="account-note">
+              On your phone, scan this with the camera or go to <strong className="phone-qr-url">nexttupp.com/watch</strong>,
+              and sign in with this account. Add it to the home screen, and it opens straight to this computer next time.
+            </p>
+          </div>
           <label className="field lan-name">
             <span className="field-label">This computer’s name, as your phone shows it</span>
             <input value={name} maxLength={40} placeholder={lan.defaultName} onChange={e => setName(e.target.value)} onBlur={saveName}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
           </label>
-          <p className="fine-print">
-            {lan.urls.length
-              ? <>A connected phone can also bookmark <span className="lan-url">{lan.urls[0]}</span>.</>
-              : 'Not on a home network right now.'}
-          </p>
+          {lan.urls.length === 0 && <p className="fine-print">Not on a home network right now.</p>}
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}

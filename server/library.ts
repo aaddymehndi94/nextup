@@ -27,6 +27,12 @@ export interface LibraryEntry {
    * listing's hint (-1 when it gave none) and `id` is provisional.
    */
   pending?: boolean
+  /** Paused by the viewer: not downloading until resumed (playing it still streams). */
+  paused?: boolean
+  /** How far it had got, when it was paused (nothing is open to ask then). */
+  progress?: number
+  /** The file's size, once known. */
+  fileSize?: number
 }
 
 const RETRY_MS = 3 * 60_000
@@ -34,14 +40,14 @@ const RETRY_MS = 3 * 60_000
 export class Library {
   private readonly file: string
   private readonly engine: TorrentEngine
-  private readonly downloadsDir: string
+  private readonly folderOf: (infoHash: string) => string
   private entries: LibraryEntry[]
   private readonly starting = new Set<string>()
   private log: (msg: string) => void = () => {}
 
-  constructor (dataDir: string, engine: TorrentEngine) {
+  constructor (dataDir: string, engine: TorrentEngine, folderOf?: (infoHash: string) => string) {
     this.engine = engine
-    this.downloadsDir = join(dataDir, 'downloads')
+    this.folderOf = folderOf ?? (infoHash => join(dataDir, 'downloads', infoHash))
     this.file = join(dataDir, 'library.json')
     this.entries = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) as LibraryEntry[] : []
   }
@@ -82,7 +88,43 @@ export class Library {
     if (session) await this.engine.close(session)
     const shared = this.entries.some(e => e.infoHash === entry.infoHash)
     const inUse = this.engine.list().some(s => s.infoHash === entry.infoHash)
-    if (!shared && !inUse) await rm(join(this.downloadsDir, entry.infoHash), { recursive: true, force: true })
+    if (!shared && !inUse) await rm(this.folderOf(entry.infoHash), { recursive: true, force: true })
+  }
+
+  /**
+   * Stops downloading it, keeping what's saved. The torrent stops too (no more seeding) unless something else
+   * uses it: a player, or another kept file of the same torrent.
+   */
+  async pause (id: string): Promise<LibraryEntry | undefined> {
+    const e = this.get(id)
+    if (!e || e.paused) return e
+    const session = e.pending ? undefined : this.engine.get(id)
+    const paused: LibraryEntry = { ...e, paused: true }
+    if (session) {
+      paused.progress = session.file.progress
+      paused.fileSize = session.file.length
+      this.engine.unpin(session)
+    }
+    this.entries = this.entries.map(x => (x.id === id ? paused : x))
+    this.save()
+    const others = this.entries.some(x => x.infoHash === e.infoHash && x.id !== id && !x.paused)
+    if (!others) {
+      if (e.pending || !session) await this.engine.abandon(e.infoHash)
+      else if (!this.engine.inUse(e.infoHash)) await this.engine.unload(e.infoHash).catch(() => {})
+    }
+    return this.get(id)
+  }
+
+  /** Downloads it again from where it stopped. */
+  resume (id: string): LibraryEntry | undefined {
+    const e = this.get(id)
+    if (!e?.paused) return e
+    const resumed: LibraryEntry = { ...e }
+    delete resumed.paused
+    this.entries = this.entries.map(x => (x.id === id ? resumed : x))
+    this.save()
+    void this.start(id)
+    return resumed
   }
 
   /**
@@ -98,17 +140,19 @@ export class Library {
 
   private async start (id: string): Promise<void> {
     const e = this.get(id)
-    if (!e || this.starting.has(id)) return
+    if (!e || e.paused || this.starting.has(id)) return
     this.starting.add(id)
     try {
       const session = await this.engine.open(
         { infoHash: e.infoHash, fileIdx: e.fileIdx >= 0 ? e.fileIdx : undefined, fileName: e.fileName || undefined, title: e.title, trackers: e.trackers, streamId: e.streamId },
         { patient: true },
       )
-      if (!this.get(id)) return // deleted while we were waiting for peers
+      const now = this.get(id)
+      if (!now || now.paused) return // deleted or paused while we were waiting for peers
       this.engine.pin(session)
-      const ready: LibraryEntry = { ...e, id: session.id, fileIdx: Number(session.id.split('-')[1]), fileName: session.file.name }
+      const ready: LibraryEntry = { ...now, id: session.id, fileIdx: Number(session.id.split('-')[1]), fileName: session.file.name, fileSize: session.file.length }
       delete ready.pending
+      delete ready.progress
       this.entries = [...this.entries.filter(x => x.id !== id && x.id !== session.id), ready]
       this.save()
       this.log(`downloading: ${e.title}`)
@@ -131,6 +175,6 @@ export class Library {
 
   /** Opens again every kept download that isn't open (still waiting for peers, or stopped to delete a watched file beside it). */
   resumeMissing (): void {
-    for (const e of this.entries) if (e.pending || !this.engine.get(e.id)) void this.start(e.id)
+    for (const e of this.entries) if (!e.paused && (e.pending || !this.engine.get(e.id))) void this.start(e.id)
   }
 }

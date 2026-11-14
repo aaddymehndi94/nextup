@@ -7,6 +7,9 @@ import { loadProfiles, useProfiles } from './profiles.ts'
 import { restoreScroll, useLocation } from './router.ts'
 import { PageActive } from './hooks.ts'
 import { Account } from './pages/Account.tsx'
+import { DownloadsPage } from './pages/DownloadsPage.tsx'
+import { MyList } from './pages/MyList.tsx'
+import { Storage } from './pages/Storage.tsx'
 import { Ai } from './pages/Ai.tsx'
 import { Home } from './pages/Home.tsx'
 import { Profiles } from './pages/Profiles.tsx'
@@ -23,10 +26,13 @@ import { MiniPlayer, NowPlaying } from './music/NowPlaying.tsx'
 /** The page for an address. */
 function page (path: string, query: URLSearchParams): ReactElement {
   const title = path.match(/^\/title\/(movie|series)\/(tt\d+)$/)
-  if (title) return <Title key={title[2]} type={title[1] as 'movie' | 'series'} id={title[2]} season={query.get('season')} play={query.get('play')} />
+  if (title) return <Title key={title[2]} type={title[1] as 'movie' | 'series'} id={title[2]} season={query.get('season')} episode={query.get('ep') ?? query.get('play')} />
   if (path === '/watch') return <Watch key={query.toString()} query={query} />
   if (path === '/taste') return <Taste />
   if (path === '/account') return <Account />
+  if (path === '/storage') return <Storage />
+  if (path === '/list') return <MyList />
+  if (path === '/downloads') return <DownloadsPage />
   if (path === '/ai') return <Ai />
   if (path === '/profiles') return <Profiles mode="manage" />
   if (path === '/music') return <Music initialQuery={query.get('q') ?? ''} />
@@ -37,7 +43,7 @@ function page (path: string, query: URLSearchParams): ReactElement {
 }
 
 /** Pages worth keeping: long lists that are scrolled through and then left for a title or an artist. */
-const isList = (path: string) => path === '/' || path === '/films' || path === '/series' || path === '/music'
+const isList = (path: string) => ['/', '/films', '/series', '/music', '/list', '/downloads'].includes(path)
 const KEEP = 3
 
 interface Kept { key: string; el: ReactElement }

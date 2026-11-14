@@ -4,7 +4,7 @@ import { HttpError } from '../http.ts'
 import { CloudError } from '../sync/cloud.ts'
 import { clientLabel, defaultDeviceName, isLoopback, isLoopbackHost } from './net.ts'
 import type { LanService } from './service.ts'
-import { COOKIE, COOKIE_MAX_AGE_S, type LanClient } from './store.ts'
+import { COOKIE, COOKIE_MAX_AGE_S, type LanClient, readCookie } from './store.ts'
 
 // The LAN gate, the phone handoff, and the Account page's "Phones and TVs" settings.
 //
@@ -26,6 +26,8 @@ export interface HandoffRedeemer {
   /** Settings changed: tell the cloud soon. */
   nudge (): void
 }
+
+const phoneCookie = (token: string) => `${COOKIE}=${token}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; HttpOnly; SameSite=Lax`
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
 
@@ -83,6 +85,8 @@ export function registerLanGate (app: FastifyInstance, lan: LanService): void {
       return reply.code(401).header('cache-control', 'no-store').send({ error: 'Not connected. Open nexttupp.com on this phone and sign in to connect.' })
     }
     req.lanClient = client
+    // Opening the app renews the cookie, so a phone used within 400 days stays connected.
+    if (req.method === 'GET' && wantsHtml(req)) reply.header('set-cookie', phoneCookie(readCookie(req.headers.cookie, COOKIE)!))
     if (req.method !== 'GET' && req.method !== 'HEAD' && /^\/api\/(account|lan)(\/|$)/.test(path)) {
       return reply.code(403).send({ error: 'Change this on the computer that runs nexttupp.' })
     }
@@ -117,7 +121,7 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
     }
     if (!lan.store.verify(req.headers.cookie)) {
       const { token, client } = lan.store.add(clientLabel(req.headers['user-agent']))
-      reply.header('set-cookie', `${COOKIE}=${token}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; HttpOnly; SameSite=Lax`)
+      reply.header('set-cookie', phoneCookie(token))
       req.log.info({ lanClient: client.label }, 'phone connected')
     }
     return reply.code(303).headers({ location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }).send()

@@ -35,7 +35,7 @@ export function watchSource (s: Pick<Source, 'infoHash' | 'fileIdx' | 'fileName'
 export function downloadSource (s: Source, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }): Promise<void> {
   return api.download({ infoHash: s.infoHash, fileIdx: s.fileIdx, fileName: s.fileName, trackers: s.trackers, type: ctx.type, imdbId: ctx.imdbId, streamId: ctx.streamId, title: ctx.name })
     .then(item => {
-      const home = { label: 'Downloads', run: () => navigate('/') }
+      const home = { label: 'Downloads', run: () => navigate('/downloads') }
       toast(item.pending
         ? `Downloading ${ctx.name}. Peers are scarce, so it will keep looking, even after a restart.`
         : `Downloading ${ctx.name} to watch later.`, home)
@@ -46,12 +46,12 @@ export function downloadSource (s: Source, ctx: { type: MediaType; imdbId: strin
 const released = (e: Episode) => !e.released || new Date(e.released) <= new Date()
 
 /**
- * The episode to open on: the one asked for (?play from Continue watching, or ?season), else where this
+ * The episode to open on: the one asked for (?ep from Continue watching, or ?season), else where this
  * profile left off (the next one if that episode was finished), else the first of season 1.
  */
-function initialEpisode (episodes: Episode[], opts: { season: string | null; play: string | null; state: TitleState | null }): Episode | null {
-  if (opts.play) {
-    const [, s, e] = opts.play.split(':').map(Number)
+function initialEpisode (episodes: Episode[], opts: { season: string | null; episode: string | null; state: TitleState | null }): Episode | null {
+  if (opts.episode) {
+    const [, s, e] = opts.episode.split(':').map(Number)
     const ep = episodes.find(x => x.season === s && x.episode === e)
     if (ep) return ep
   }
@@ -180,12 +180,11 @@ function bestLine (s: Source) {
   return `${parts.length ? parts.join(' ') + ', ' : ''}${s.seeders ?? 0} seeders`
 }
 
-export function Title ({ type, id, season, play }: { type: MediaType; id: string; season: string | null; play: string | null }) {
+export function Title ({ type, id, season, episode: askedEpisode }: { type: MediaType; id: string; season: string | null; episode: string | null }) {
   const [detail, setDetail] = useState<Load<TitleDetail>>({ state: 'loading' })
   const [episode, setEpisode] = useState<Episode | null>(null)
   const taste = useTitleState(type, id)
   const chosenFor = useRef<string | null>(null)
-  const autoplayed = useRef(false)
   // Sources kept from this page (infoHash:fileIdx), so their buttons show they're on the way.
   const [saved, setSaved] = useState<ReadonlySet<string>>(new Set())
 
@@ -199,32 +198,16 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
   // runs once, for the right episode.
   useEffect(() => {
     if (type !== 'series' || detail.state !== 'ok' || !taste.ready) return
-    const key = `${season}|${play}`
+    const key = `${season}|${askedEpisode}`
     if (chosenFor.current === key) return
     chosenFor.current = key
-    setEpisode(initialEpisode(detail.data.episodes, { season, play, state: taste.state }))
-  }, [type, detail, taste.ready, taste.state, season, play])
+    setEpisode(initialEpisode(detail.data.episodes, { season, episode: askedEpisode, state: taste.state }))
+  }, [type, detail, taste.ready, taste.state, season, askedEpisode])
 
   const streamId = type === 'movie' ? id : episode?.id ?? null
   const { load, health } = useSources(type, streamId)
   useDocumentTitle(detail.state === 'ok' ? detail.data.name : undefined)
   const trailer = useTrailer(type, id, { enabled: detail.state === 'ok' && Boolean(detail.data.background && detail.data.trailers?.length) })
-
-  // From Continue watching (?play=…): start the best source as soon as it is known, the way Play would.
-  // The player replaces this entry, so Back returns to where the viewer came from.
-  useEffect(() => {
-    if (!play || autoplayed.current || detail.state !== 'ok' || !streamId || !load || load.state === 'loading') return
-    autoplayed.current = true
-    const best = load.state === 'ok' ? load.data.sources[0] : undefined
-    if (best && streamId === play) {
-      const t = detail.data
-      const name = episode ? `${t.name} · S${episode.season}E${episode.episode} ${episode.name}` : t.name
-      watchSource(best, { type, imdbId: id, streamId, name }, { replace: true })
-    } else {
-      replaceUrl(location.pathname)
-      if (!best) toast('No sources found to resume this. Try again later or pick another episode.')
-    }
-  }, [play, detail, streamId, load, episode, type, id])
 
   if (detail.state === 'loading' || (type === 'series' && !episode && detail.state === 'ok' && detail.data.episodes.length > 0)) {
     return (
@@ -255,7 +238,7 @@ export function Title ({ type, id, season, play }: { type: MediaType; id: string
   const keyOf = (s: Source) => `${s.infoHash}:${s.fileIdx ?? ''}`
   const download = (s: Source) => {
     const key = keyOf(s)
-    if (saved.has(key)) { toast(`${ctx.name} is already downloading.`, { label: 'Downloads', run: () => navigate('/') }); return }
+    if (saved.has(key)) { toast(`${ctx.name} is already downloading.`, { label: 'Downloads', run: () => navigate('/downloads') }); return }
     setSaved(prev => new Set(prev).add(key))
     downloadSource(s, ctx).catch(() => setSaved(prev => { const next = new Set(prev); next.delete(key); return next }))
   }

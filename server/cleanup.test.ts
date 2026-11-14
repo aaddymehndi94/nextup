@@ -246,7 +246,7 @@ describe('WatchedCleanup: what is not played goes too', () => {
     expect(existsSync(playing)).toBe(true)
     expect(existsSync(kept)).toBe(true)
     expect(t.logs).toContain('not played for a day, so deleted: Dune (1 MB freed)')
-    expect(t.logs.some(l => l.includes('Show.S01E01.mkv'))).toBe(true)
+    expect(t.logs.some(l => l.includes('Show S01E01'))).toBe(true)
     expect(t.f.unloaded).toEqual(expect.arrayContaining([MOVIE, PACK]))
 
     // Played again (after a restart, from what was recorded): another day from then.
@@ -295,5 +295,31 @@ describe('WatchedCleanup: what is not played goes too', () => {
     await cleanup.sweep()
     expect(t.library.list()).toHaveLength(1)
     expect(existsSync(file)).toBe(true)
+  })
+})
+
+describe('WatchedCleanup: the Storage page', () => {
+  it('lists what streaming left (not what is kept), and deletes one now unless it is playing or kept', async () => {
+    const t = setup()
+    const cleanup = t.make()
+    t.put(MOVIE, 'Dune.Part.Two.2024.mkv', 40_000)
+    t.saved(MOVIE)
+    cleanup.touch(MOVIE, 'Dune: Part Two')
+    t.put(PACK, 'Show.S01E01.mkv', 10_000)
+    t.library.add({ id: `${PACK}-0`, infoHash: PACK, fileIdx: 0, fileName: 'Show.S01E01.mkv', title: 'Show · S1E1', type: 'series', imdbId: 'tt1', streamId: 'tt1:1:1', addedAt: Date.now() })
+
+    const listed = await cleanup.streamed()
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({ infoHash: MOVIE, title: 'Dune: Part Two', inUse: false })
+    expect(listed[0].bytes).toBeGreaterThanOrEqual(40_000)
+
+    expect(await cleanup.remove(PACK)).toBeNull() // kept: Downloads deletes it
+    t.f.busy.add(MOVIE)
+    expect(await cleanup.remove(MOVIE)).toBeNull() // playing
+    t.f.busy.delete(MOVIE)
+    expect(await cleanup.remove(MOVIE)).toMatchObject({ title: 'Dune: Part Two' })
+    expect(existsSync(join(t.dir, 'downloads', MOVIE))).toBe(false)
+    expect(existsSync(join(t.dir, 'torrents', `${MOVIE}.torrent`))).toBe(false)
+    expect(await cleanup.streamed()).toEqual([])
   })
 })

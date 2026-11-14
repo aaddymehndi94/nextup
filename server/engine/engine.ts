@@ -71,7 +71,8 @@ export class TorrentEngine {
   private readonly pending = new Map<string, Promise<Torrent>>()
   /** Info hashes a kept download is waiting on; a player's metadata timeout must not drop them. */
   private readonly patient = new Set<string>()
-  private readonly downloadsDir: string
+  /** A torrent's folder (server/folders.ts). */
+  private readonly folderOf: (infoHash: string) => string
   private readonly torrentsDir: string
   /** Private-mode torrents, each in a random folder under here; wiped when they close and at every start. */
   private readonly privateDir: string
@@ -81,12 +82,12 @@ export class TorrentEngine {
   private readonly idleMs: number
   private closed = false
 
-  constructor (dataDir: string, idleMs: number) {
+  constructor (dataDir: string, idleMs: number, folderOf?: (infoHash: string) => string) {
     this.idleMs = idleMs
-    this.downloadsDir = join(dataDir, 'downloads')
+    const downloads = join(dataDir, 'downloads')
+    this.folderOf = folderOf ?? (infoHash => join(downloads, infoHash))
     this.torrentsDir = join(dataDir, 'torrents')
     this.privateDir = join(dataDir, 'private')
-    mkdirSync(this.downloadsDir, { recursive: true })
     mkdirSync(this.torrentsDir, { recursive: true })
     // Whatever a private session left behind when the app last stopped without cleaning up (a crash, a power cut).
     rmSync(this.privateDir, { recursive: true, force: true })
@@ -167,7 +168,7 @@ export class TorrentEngine {
         ? readFileSync(saved)
         : `magnet:?xt=urn:btih:${infoHash}${announce.map(t => `&tr=${encodeURIComponent(t)}`).join('')}`
       // A private torrent's folder has a random name, so not even the folder says what it was.
-      const path = isPrivate ? join(this.privateDir, randomUUID()) : join(this.downloadsDir, infoHash)
+      const path = isPrivate ? join(this.privateDir, randomUUID()) : this.folderOf(infoHash)
       if (isPrivate) this.privateTorrents.set(infoHash, path)
       const torrent = this.client.add(torrentId, { path, deselect: true, announce, strategy: 'sequential' })
       try {

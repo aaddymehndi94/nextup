@@ -115,6 +115,17 @@ describe('phone handoff', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 
+  it('keeps a phone that visits connected: opening the app renews its cookie', async () => {
+    const { app } = await setup()
+    const cookie = await connectPhone(app)
+    const page = await app.inject({ method: 'GET', url: '/', ...fromPhone({ cookie, accept: 'text/html' }) })
+    expect(page.statusCode).toBe(200)
+    expect(String(page.headers['set-cookie'])).toBe(`${cookie}; Path=/; Max-Age=34560000; HttpOnly; SameSite=Lax`)
+    // Not on every API call or video range request.
+    const api = await app.inject({ method: 'GET', url: '/api/health', ...fromPhone({ cookie }) })
+    expect(api.headers['set-cookie']).toBeUndefined()
+  })
+
   it('doesn’t add the phone twice when it comes back through nexttupp.com', async () => {
     const { app, lan } = await setup()
     const cookie = await connectPhone(app)

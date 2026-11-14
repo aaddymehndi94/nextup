@@ -179,11 +179,31 @@ export class Trailers {
     try { utimesSync(this.file(yt), t, t) } catch { /* gone */ }
   }
 
+  /** Saved trailers: how many, and the bytes they take. */
+  usage (): { bytes: number; count: number } {
+    const files = this.files()
+    return { bytes: files.reduce((n, x) => n + x.bytes, 0), count: files.length }
+  }
+
+  /** Deletes every saved trailer (one being downloaded finishes and stays). Returns the bytes freed. */
+  clear (): number {
+    let freed = 0
+    for (const x of this.files()) {
+      // On Windows a file being played can't be deleted; it goes next time.
+      try { rmSync(join(this.o.dir, x.f)); freed += x.bytes } catch { /* in use */ }
+    }
+    return freed
+  }
+
+  private files (): Array<{ f: string; bytes: number; at: number }> {
+    return readdirSync(this.o.dir).filter(f => FILE.test(f)).flatMap(f => {
+      try { const s = statSync(join(this.o.dir, f)); return [{ f, bytes: s.size, at: s.mtimeMs }] } catch { return [] }
+    })
+  }
+
   /** Least recently shown first, until the folder fits (never the one just saved). */
   private evict (keep: string): void {
-    const files = readdirSync(this.o.dir).filter(f => FILE.test(f)).flatMap(f => {
-      try { const s = statSync(join(this.o.dir, f)); return [{ f, bytes: s.size, at: s.mtimeMs }] } catch { return [] }
-    }).sort((a, b) => a.at - b.at)
+    const files = this.files().sort((a, b) => a.at - b.at)
     let total = files.reduce((n, x) => n + x.bytes, 0)
     for (const x of files) {
       if (total <= this.o.capBytes) break

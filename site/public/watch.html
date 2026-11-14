@@ -12,6 +12,8 @@
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/watch.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="nexttupp">
   <link rel="preload" href="/fonts/MonaSansVF.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/watch.js"></script>
@@ -35,6 +37,10 @@
       <h1>Watch on this phone.</h1>
       <p class="join-lede" data-signin-lede>Sign in with your nexttupp account. Films play right here, streamed from your computer over Wi‑Fi, so keep nexttupp open on it.</p>
       <div data-auth></div>
+      <!-- This phone opened a computer before: it can open it again without signing in, on the same Wi-Fi. -->
+      <div class="watch-last" data-last hidden>
+        <p class="watch-last-text" data-last-text></p>
+      </div>
       <noscript><p class="watch-error">This page needs JavaScript to sign in.</p></noscript>
       <p class="join-foot">Use the same account as nexttupp on your computer. Films play from the app on your computer, so you’ll need it there too. <a class="link" href="/join">How it works</a></p>
     </div>
@@ -48,6 +54,10 @@
       <p class="watch-status" role="status" aria-live="polite" data-status></p>
       <p class="join-foot"><span data-who></span><span class="sep" aria-hidden="true"> · </span><button class="link" type="button" data-signout>Sign out on this phone</button></p>
     </div>
+    <!-- Phones only, never inside the installed app: Android offers its install prompt, iOS gets the steps. -->
+    <aside class="watch-install" data-install hidden aria-label="Add to your home screen">
+      <p class="watch-install-text" data-install-text></p>
+    </aside>
   </main>
 
   <footer class="footer">

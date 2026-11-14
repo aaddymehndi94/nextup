@@ -2,7 +2,7 @@
 //  1. www.nexttupp.com redirects to the apex (a host-based rule, which _redirects can't express).
 //  2. /invite, from when sign-up needed an invite, redirects to /join.
 //  3. The addresses people guess, like /login and /signup, redirect to /account (/account#create for sign-up).
-//  4. Security and cache headers on every response.
+//  4. Security and cache headers on every response (worker-src: /watch's offline copy, watch-sw.js).
 // Unknown paths get 404.html with a 404 status from the assets binding (not_found_handling).
 
 const APEX = 'nexttupp.com'
@@ -16,7 +16,7 @@ const SHORTCUTS = {
   '/signin': '/account', '/sign-in': '/account', '/login': '/account', '/log-in': '/account',
   '/signup': '/account#create', '/sign-up': '/account#create', '/register': '/account#create', '/create-account': '/account#create',
 }
-const csp = connect => `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+const csp = connect => `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src ${connect}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 const CSP = csp(API)
 
 const SECURITY = {
@@ -46,6 +46,8 @@ export default {
     out.headers.set('content-security-policy', dev ? csp(`${API} ${dev}`) : CSP)
     // Fonts and images change rarely; pages, CSS and JS revalidate so a deploy shows up at once.
     if (res.ok && /^\/(fonts|img)\//.test(url.pathname)) out.headers.set('cache-control', 'public, max-age=604800')
+    // The phone app's service worker: always checked for a new version.
+    if (url.pathname === '/watch-sw.js') out.headers.set('cache-control', 'no-cache')
     return out
   },
 }

@@ -1,9 +1,9 @@
 // nexttupp desktop: runs the nexttupp server in an Electron utility process on a localhost port and shows it
 // in a window. Decisions and measurements: docs/adr/0005-desktop-app.md.
-import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage, powerSaveBlocker, shell, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, Tray, nativeImage, powerSaveBlocker, shell, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type UtilityProcess } from 'electron'
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type WriteStream } from 'node:fs'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type { DesktopNowPlaying } from '../../shared/desktop.ts'
 import { NowPlayingNotice } from './now-playing.ts'
 import { Updater } from './updates.ts'
@@ -243,6 +243,22 @@ function listenToPage (): void {
   ipcMain.handle('update-status', e => (ours(e) ? updater.current() : null))
   ipcMain.handle('update-check', e => (ours(e) ? updater.check() : null))
   ipcMain.on('update-install', e => { if (ours(e)) void updater.install() })
+  // Folders only (never a file, which the system would open or run), and only absolute paths.
+  ipcMain.handle('open-folder', async (e, path: unknown) => {
+    if (!ours(e) || typeof path !== 'string' || !isAbsolute(path)) return false
+    try { if (!statSync(path).isDirectory()) return false } catch { return false }
+    return (await shell.openPath(path)) === ''
+  })
+  ipcMain.handle('choose-folder', async (e, start: unknown) => {
+    if (!ours(e) || !win) return null
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose where to save downloads',
+      buttonLabel: 'Save downloads here',
+      defaultPath: typeof start === 'string' && isAbsolute(start) ? start : app.getPath('videos'),
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    return r.canceled ? null : r.filePaths[0] ?? null
+  })
 }
 
 function songOf (v: unknown): DesktopNowPlaying | null {

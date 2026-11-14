@@ -84,3 +84,51 @@ describe('Library downloads kept from the source list', () => {
     expect(lib.list()[0]).toMatchObject({ id: `${HASH}-5`, fileIdx: 5 })
   })
 })
+
+describe('Library: pausing a download', () => {
+  it('stops it (and its torrent) keeping what is saved, skips it on restart, and carries on when resumed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lib-'))
+    const f = fakeEngine()
+    const unloaded: string[] = []
+    const unpinned: string[] = []
+    const session = { id: `${HASH}-4`, infoHash: HASH, file: { progress: 0.4, length: 2e9, name: 'Episode 4.mkv' } }
+    Object.assign(f.engine, {
+      get: (id: string) => (id === session.id ? session : undefined),
+      unpin: (s: { id: string }) => { unpinned.push(s.id) },
+      inUse: () => false,
+      unload: async (h: string) => { unloaded.push(h) },
+    })
+    const lib = new Library(dir, f.engine)
+    lib.add({ ...base, id: `${HASH}-4`, fileIdx: 4, fileName: 'Episode 4.mkv' })
+
+    expect(await lib.pause(`${HASH}-4`)).toMatchObject({ paused: true, progress: 0.4, fileSize: 2e9 })
+    expect(unpinned).toEqual([`${HASH}-4`])
+    expect(unloaded).toEqual([HASH])
+
+    // Paused survives a restart: it isn't opened again.
+    const after = fakeEngine()
+    const lib2 = new Library(dir, after.engine)
+    await lib2.resumeAll(() => {})
+    lib2.resumeMissing()
+    expect(after.calls).toEqual([])
+
+    expect(lib2.resume(`${HASH}-4`)?.paused).toBeUndefined()
+    expect(after.calls).toEqual([{ fileIdx: 4, patient: true }])
+    after.release(4)
+    await tick()
+    expect(after.pinned).toEqual([`${HASH}-4`])
+    expect(lib2.list()[0].paused).toBeUndefined()
+  })
+
+  it('leaves the torrent running while something plays it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lib-'))
+    const f = fakeEngine()
+    const unloaded: string[] = []
+    const session = { id: `${HASH}-1`, infoHash: HASH, file: { progress: 0.1, length: 1e9, name: 'Episode 1.mkv' } }
+    Object.assign(f.engine, { get: () => session, unpin: () => {}, inUse: () => true, unload: async (h: string) => { unloaded.push(h) } })
+    const lib = new Library(dir, f.engine)
+    lib.add({ ...base, id: `${HASH}-1`, fileIdx: 1, fileName: 'Episode 1.mkv' })
+    await lib.pause(`${HASH}-1`)
+    expect(unloaded).toEqual([])
+  })
+})

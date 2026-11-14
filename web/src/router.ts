@@ -72,6 +72,18 @@ export function navigate (to: string, opts: { replace?: boolean } = {}) {
   show(() => { window.scrollTo(0, 0); notify() })
 }
 
+/**
+ * Goes to `to` as if from `via`: a history entry for `via` is left beneath it, so Back lands there. Playing
+ * from Continue watching or Downloads goes through the title's page this way, to choose another episode.
+ */
+export function navigateThrough (via: string, to: string) {
+  scrolls.set(pageKey(), window.scrollY)
+  pending = null
+  history.pushState({ depth: depth() + 1, key: newKey() }, '', via)
+  history.pushState({ depth: depth() + 1, key: newKey() }, '', to)
+  show(() => { window.scrollTo(0, 0); notify() })
+}
+
 /** Updates the address for the same page (a search, a filter, a season) without a new history entry. */
 export function replaceUrl (to: string) {
   history.replaceState(history.state, '', to)

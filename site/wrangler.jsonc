@@ -1,5 +1,5 @@
 // nexttupp.com: the public landing page, as one Cloudflare Worker with static assets.
-// Nothing here has been deployed. `wrangler deploy` changes the owner's Cloudflare account and DNS, so it waits for
+// Live since 2026-11. `wrangler deploy` changes the owner's Cloudflare account and DNS, so each deploy waits for
 // the owner (see README.md, "Deploying").
 {
   "name": "nexttupp-site",

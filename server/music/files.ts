@@ -11,6 +11,8 @@ import type { AudioSource } from './source.ts'
 export type FileKind = 'audio' | 'video'
 
 const RETRY_AFTER_MS = 10 * 60_000
+/** A song played (or queued) this recently may still be playing somewhere; clearing leaves it. */
+const IN_USE_MS = 10 * 60_000
 
 export class MusicFileError extends Error {
   readonly status: number
@@ -126,6 +128,23 @@ export class MusicFiles {
       this.o.db.prepare('DELETE FROM music_files WHERE track_id = ? AND kind = ?').run(r.track_id, r.kind)
       over -= Number(r.bytes)
     }
+  }
+
+  /**
+   * Deletes every saved song but those in use: being fetched, or played (or queued next) in the last few minutes,
+   * which a phone or TV may still be reading. Returns the bytes freed.
+   */
+  clear (): number {
+    const recent = this.o.now() - IN_USE_MS
+    const rows = this.o.db.prepare('SELECT track_id, kind, bytes, used_at FROM music_files').all() as Array<{ track_id: string; kind: FileKind; bytes: number; used_at: number }>
+    let freed = 0
+    for (const r of rows) {
+      if (Number(r.used_at) > recent || this.inflight.has(`${r.kind}:${r.track_id}`)) continue
+      try { rmSync(this.path(r.track_id, r.kind), { force: true }) } catch { continue } // open on Windows: next time
+      this.o.db.prepare('DELETE FROM music_files WHERE track_id = ? AND kind = ?').run(r.track_id, r.kind)
+      freed += Number(r.bytes)
+    }
+    return freed
   }
 
   usage (): { bytes: number; songs: number } {

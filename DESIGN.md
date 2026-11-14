@@ -350,14 +350,62 @@ Series tag, the scrubber time tip).
 
 ### Navigation
 - **Masthead:** the wordmark left and search right, floating over the billboard on a soft top scrim. It turns
-  into a blurred Projection Black veil with a hairline once the page scrolls.
+  into a blurred Projection Black veil with a hairline once the page scrolls. Six tabs: Home, Films, Series,
+  Music, My List, Downloads. My List and Downloads have no search, only the profile button. On phones the tabs
+  are their own full-width row at 0.875rem; a narrower screen scrolls the row, with the current tab kept in
+  view.
 - **Title and Watch:** a round back button; the Title page also shows the wordmark.
 - **Profile button and menu:** a 2.75rem avatar (the profile's initial on one of five neutral grey gradients,
   from graphite to silver, never a hue) at the masthead's end. It opens a glass menu: the profiles with a check on the active one,
-  a hairline, then "Your taste" and "Manage profiles". Arrow keys, Home/End and Escape work as in any menu.
+  a hairline, then "Your taste", "AI settings", "Manage profiles", "Account", "Storage" and, on the computer,
+  "Watch on your phone" (to Account's phones section) or, on a phone, "Switch computer" (to nexttupp.com/watch).
+  Arrow keys, Home/End and Escape work as in any menu.
+- **Watch on your phone (Account):** the phones switch, then a QR code for nexttupp.com/watch on a white
+  8.25rem tile beside the address in words. The tile is the one white surface allowed that isn't an action:
+  a camera needs the contrast. Shown only while phones are on.
 - **Who's watching:** large avatar tiles centred on Projection Black, the title in Mona Sans Expanded. Shown
   only when there is more than one profile. Manage mode adds a pencil to each tile and an inline form; delete
   asks again with a red chip, and the last profile can't be deleted.
+
+### Tab pages (My List, Downloads)
+- **Head:** the page name in the account title style (Expanded 700), with one plain line of facts under it
+  ("3 titles · 135 GB free on this computer"). Page-wide actions sit at the head's far end as chips (Pause all
+  / Resume all, Open folder).
+- **My List:** the poster grid. Each card's remove (X) takes the title off the list with Undo, so the list
+  toggle is left off these cards (on Home's My List row too).
+- **Downloads:** one list at a 60rem measure, so a row's actions stay near its title on a TV.
+  - Each row: 16:9 art that plays the download (play disc, inset progress bar), the title, and a status line
+    ("42% of 2.6 GB · 6.1 MB/s · 4 min left", "Paused · 17% of 2.0 GB", "Ready to watch offline").
+  - Actions: a Pause icon button, or a labelled Resume chip on a paused row; Delete asks again in place
+    with a red chip.
+  - A footer line says when downloads go and links to Storage.
+- **Empty states:** a bold line, one sentence naming the real control (drawn as its icon, never a typed
+  glyph), and a secondary pill to go and find something.
+
+### The phone app (nexttupp.com/watch)
+
+- One column, one heading that says the state ("Living room laptop is ready.", "Pick your computer.",
+  "Can’t reach nexttupp right now."), and one white button for what to do next.
+- A second way in sits under a hairline as a secondary button, for example "Open <computer>" under the
+  sign-in form when the phone was signed out.
+- "Add to home screen" is the last thing on the page: a small line in the quietest grey and a small
+  secondary button. It appears on phones only, never inside the installed app.
+
+### Storage page
+- **Shape:** one reading column at 40rem, like Account.
+  - Disk space first: "135 GB free of 641 GB" over a hairline meter, with a legend for nexttupp, other files and
+    free space.
+  - Then "On this computer": one row per kind of content (Downloads, Watched and streamed, Music, Trailers,
+    nexttupp). Each row has a swatch, a name, a size ("Empty" in Ash when there's nothing), one line on what it
+    is and when it goes, and its Clear chip.
+  - A row with items opens (chevron) into a hairline list of titles with their size and a Delete chip.
+  - Then the download folder: the path, and Open / Change chips.
+- **Greys only:** each kind of content has its own white alpha (96, 70, 50, 34 and 22%), the same in the
+  meter and on its swatch. Other files are 13% white; free space is an empty track with a hairline ring.
+- **Deleting:** every Clear or Delete all asks again in place ("Delete 4.9 GB of cache? Downloads stay.") with a
+  red chip and Cancel. A toast says what was freed. "Clear cache" (top of the list) clears everything except
+  downloads.
+- No filled white action: nothing on this page is the screen's main act.
 
 ### Feedback
 - **Snackbar:** one at a time, bottom centre, glass with an optional white text action ("Undo"). It lasts 7 s
@@ -375,6 +423,9 @@ Series tag, the scrubber time tip).
 - **Default view:** the top eight ranked rows, behind "Show all N sources". The recommended row sits on Lifted
   Graphite with a white "Recommended" badge.
 - **Phone:** each row stacks into a card with units spelled out ("32 seeds").
+- **Play and Download:** every row shows its Play disc (a 16% white ring that fills white when the row is
+  pointed at or focused) beside a Download ring. The whole row plays too. On phones Play sits top right and
+  Download under it.
 
 ### Player
 - **Chrome:** the title in title style with the file name in meta beneath, a hairline scrubber that thickens

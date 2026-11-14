@@ -104,3 +104,30 @@ several GB. The owner: "if content is watched it should be removed. not songs, b
   start together and agree within 10 ms.
 - **Music** paused only for the quick view's trailer, so a song left playing went on under a film. Starting a
   film, here or on a TV, now pauses the music on that device.
+
+## Update, 2026-11-14: downloads you can pause, a folder you choose, and a Storage page
+
+- **Pause.** A paused download (`paused` in `library.json`) stops downloading at once. Its torrent stops too
+  (so it stops seeding), unless another kept file of the same torrent isn't paused, or something played it
+  within the engine's idle time (a paused player may carry on). In that case it stops when the idle sweep
+  finds it unused. The library records how far the file had got, and doesn't reopen it on
+  start-up or on its retries until it's resumed. Playing a paused download still streams it.
+- **The download folder** is chosen on the Storage page (`folders.json`, `server/folders.ts`). A new folder
+  applies to what downloads from then on. Torrents already saved stay where they are and are still found
+  there (`DownloadFolders.of`), so nothing is moved and nothing playing stops. An earlier folder is forgotten
+  once it holds no torrent. Only the computer itself may change the folder; a phone sees it read-only.
+  Cleanup and the library look in every folder, and delete only folders named by an info hash.
+- **Storage** (`server/storage.ts`, `/storage`) lists everything nexttupp keeps on the computer and the
+  space it takes, against the disk's free space:
+  - kept downloads;
+  - what streaming left (torrents nobody kept, deleted a day after their last play);
+  - saved songs;
+  - trailers;
+  - nexttupp's own files.
+  Any of these can be deleted one at a time, a group at once, or as "Clear cache" (everything except
+  downloads). Nothing playing is deleted: a torrent streaming here or on a TV, or a song played in the last
+  ten minutes, stays.
+- **Back from a download, or from Continue watching, goes to the title's page.**
+  - Continue watching opens the page at that episode, with Resume. It no longer starts the first-ranked
+    source on its own, so the viewer can choose another source or episode.
+  - Playing a download plays its own file, with the title's page left beneath the player in history.

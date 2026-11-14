@@ -1,6 +1,6 @@
 # 0006: Watch at home (phones and TVs)
 
-Date: 2026-11-11 · Status: accepted (cloud and site changes not yet deployed; casting tested against a fake receiver only)
+Date: 2026-11-11 · Status: accepted (cloud and site live; casting tested on a real Chromecast, see the 0.5.2 update)
 
 ## Context
 
@@ -226,3 +226,48 @@ The fake receiver (`server/cast/cast.test.ts`) covers each of these. The real TV
 - film time and length in converted streams.
 
 Next episode has only been tested against the fake receiver.
+
+## Update, 2026-11-14: the phone app (0.5.3)
+
+Before this, a phone took four steps every time: open nexttupp.com, tap Watch on your phone, sign in, tap
+Connect. Now **nexttupp.com/watch can be added to the home screen** and opens like an app.
+
+- **Only /watch is the app.**
+  - `watch.webmanifest` (scope and start URL `/watch`) is linked from watch.html alone.
+  - `watch-sw.js`, registered with scope `/watch`, keeps the page, its CSS and JS, the font and an icon. It
+    fetches network first, so a deploy shows at once. The cached copy is used only when the network fails.
+    It never touches the API, another origin.
+  - The rest of nexttupp.com stays an ordinary website. The CSP adds `worker-src 'self'`.
+- **The install offer** is one quiet line at the end of /watch, on phones only, never inside the app:
+  - Chrome on Android: `beforeinstallprompt`, shown as an "Add to home screen" button instead of Chrome's banner.
+  - iOS: the Share → Add to Home Screen steps. iOS has no install prompt. Its home-screen apps also keep their
+    own storage, so the app asks to sign in once more there.
+- **Opened as the app** (display-mode standalone, or `navigator.standalone`):
+  - Exactly one of the account's computers is online, on this Wi-Fi, with phones on: it connects by itself.
+    It does this at most once per visit (sessionStorage), never after Back, and never with `?choose`.
+  - More than one: it asks, with the last-used one first ("Last used · On this Wi‑Fi"). Auto-connect is then
+    off for the visit, so one computer going offline can't pick for the person.
+  - In a browser tab nothing connects by itself. The website behaves as before.
+- **The last computer opened** (`nexttupp:last-computer` in localStorage: id, name, LAN URLs) gives a second
+  way in that needs neither the session nor the internet. The phone's cookie on the computer is what lets
+  it in. It is offered:
+  - signed out by the service (session expired or revoked): "Or open <name> without signing in", under the
+    sign-in form;
+  - when the API can't be reached (no internet, or the service is down): "Can’t reach nexttupp right now",
+    with Open <name> as the main button.
+
+  Signing out on the phone on purpose forgets it. If the computer's address has changed, or the phone isn't
+  on its Wi‑Fi, the browser can't open it. The page says so: sign in and connect again. Nothing can be
+  checked first, because an https page can't fetch an http address.
+- **Back to the list:** on a phone, the app's profile menu has "Switch computer"
+  (`https://nexttupp.com/watch?choose`). The Account page has the same link.
+- **The cookie now slides.** Any page load from a connected phone sets it again for 400 days, so a phone
+  used at least once in 400 days stays connected. API calls and video requests don't renew it.
+- **Finding it from the computer:** the profile menu has "Watch on your phone". It goes to Account's phones
+  section, which shows a QR code for nexttupp.com/watch (generated once into `web/public/watch-qr.svg`; the
+  address never changes) next to the address in words. Signed out, the Account page explains that signing
+  in comes first.
+
+Not done (phase 2, not needed yet): an https address for the computer, which would let the app stay in its
+own window instead of opening the computer's http page.
+

@@ -15,17 +15,22 @@ const withoutRepeatedYear = (item: RecItem) => (item.year && item.reason.text.in
  * A recommended title: poster, name, year, the reason it is here, and My List / Like / Dislike under it.
  * `onRemove` adds a button that takes it off the screen ("Not interested", or "Remove from My List" in that row).
  */
-export function RecCard ({ item, onRemove, removeLabel = 'Not interested' }: {
+export function RecCard ({ item, onRemove, removeLabel = 'Not interested', listed }: {
   item: RecItem
   onRemove?: (item: RecItem) => void
   removeLabel?: string
+  /** On My List: the remove button replaces the list toggle. */
+  listed?: boolean
 }) {
-  return <TitleCard title={withoutRepeatedYear(item)} note={item.reason.text} onRemove={onRemove && (() => onRemove(item))} removeLabel={removeLabel} />
+  return <TitleCard title={withoutRepeatedYear(item)} note={item.reason.text} onRemove={onRemove && (() => onRemove(item))} removeLabel={removeLabel} listed={listed} />
 }
 
-/** Where a Continue watching card leads: the title page, which picks the best source and starts playing. */
+/**
+ * Where a Continue watching card leads: the title's page, open at that episode, so the viewer resumes from
+ * there with the source they choose (or another episode).
+ */
 export const resumeHref = (item: RecItem) =>
-  `/title/${item.type}/${item.id}?play=${encodeURIComponent(item.streamId ?? item.id)}`
+  `/title/${item.type}/${item.id}${item.type === 'series' && item.streamId ? `?ep=${encodeURIComponent(item.streamId)}` : ''}`
 
 /** Continue watching: landscape art with how far in you are, the episode, and one click to carry on. */
 export function ContinueCard ({ item, onRemove }: { item: RecItem; onRemove: (item: RecItem) => void }) {

@@ -5,6 +5,7 @@ import type {
   OpenSessionRequest, ProbeResponse, Profile, ProgressRequest, ProgressResponse, Rating, RecItem, RowMoreResponse, SessionStats, SimilarResponse,
   SourcesResponse, TasteSummary, TitleDetail, TitleMarks, TitleState, TitleSummary, UpdateProfileRequest,
 } from '../../shared/types.ts'
+import type { StorageReport } from '../../shared/storage.ts'
 
 export interface Stats extends SessionStats { ranges: Array<[number, number]> }
 export interface SubtitleOption { id: string; lang: string; label: string; release?: string; url: string; match: number }
@@ -15,6 +16,10 @@ export interface LibraryItem {
   stats: Stats | null
   /** Saved from the source list and still waiting for the torrent's metadata from peers. */
   pending?: boolean
+  /** Paused: not downloading until resumed. `progress` and `fileSize` say how far it had got. */
+  paused?: boolean
+  progress?: number
+  fileSize?: number
   swarm?: { peers: number; downloadSpeed: number } | null
 }
 export interface DownloadRequest {
@@ -217,6 +222,18 @@ export const api = {
   /** Keep a source without playing it; the server keeps asking peers until it can start. */
   download: (body: DownloadRequest) => req<LibraryItem>('/api/library', json('POST', body)),
   unkeep: (id: string, deleteFiles: boolean) => req<void>(`/api/library/${id}${deleteFiles ? '?deleteFiles=1' : ''}`, json('DELETE')),
+  pauseDownload: (id: string) => req<LibraryItem>(`/api/library/${id}/pause`, json('POST')),
+  resumeDownload: (id: string) => req<LibraryItem>(`/api/library/${id}/resume`, json('POST')),
+
+  // What's saved on this computer (the Storage page).
+  storage: () => req<StorageReport>('/api/storage'),
+  /** '' goes back to the default folder. */
+  setDownloadFolder: (path: string) => req<StorageReport>('/api/storage/folder', json('PUT', { path })),
+  deleteStreamed: (infoHash: string) => req<{ freed: number }>(`/api/storage/streamed/${infoHash}`, json('DELETE')),
+  clearStreamed: () => req<{ freed: number; skipped: number }>('/api/storage/streamed', json('DELETE')),
+  deleteAllDownloads: () => req<{ freed: number; skipped: number }>('/api/storage/downloads', json('DELETE')),
+  clearMusic: () => req<{ freed: number }>('/api/storage/music', json('DELETE')),
+  clearTrailers: () => req<{ freed: number }>('/api/storage/trailers', json('DELETE')),
   subtitles: (type: MediaType, streamId: string, fileName?: string) =>
     req<SubtitleOption[]>(`/api/subtitles/${type}/${encodeURIComponent(streamId)}${fileName ? `?file=${encodeURIComponent(fileName)}` : ''}`),
   cues: (url: string) => req<Cue[]>(`/api/subtitle-cues?url=${encodeURIComponent(url)}`),

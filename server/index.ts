@@ -17,6 +17,8 @@ import { scrapeHealth } from './sources/scrape.ts'
 import { fetchCues, listSubtitles, toWebVtt } from './subtitles.ts'
 import { Library } from './library.ts'
 import { WatchedCleanup } from './cleanup.ts'
+import { DownloadFolders } from './folders.ts'
+import { registerStorageRoutes } from './storage.ts'
 import { openDb } from './db.ts'
 import { loadCf } from './reco/cf.ts'
 import { SqliteTasteStore } from './store.ts'
@@ -56,9 +58,11 @@ const app = Fastify({
   logController: new LogController({ disableRequestLogging: req => process.env.LOG_REQUESTS !== '1' || isPrivateRequest(req) }),
   exposeHeadRoutes: false,
 })
-const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000)
+// Where films and episodes are saved: the folder chosen on the Storage page, and earlier ones still holding some.
+const folders = new DownloadFolders(config.dataDir)
+const engine = new TorrentEngine(config.dataDir, config.idleMinutes * 60_000, h => folders.of(h))
 const transcodes = new TranscodeRegistry()
-const library = new Library(config.dataDir, engine)
+const library = new Library(config.dataDir, engine, h => folders.of(h))
 const hw = await detectEncoder({ forced: config.encoder, vaapiDevice: config.vaapiDevice, log: msg => app.log.warn(msg) })
 const encoder = hw.device ? `${hw.encoder} (${hw.device})` : hw.encoder
 const db = openDb(join(config.dataDir, 'nexttupp.db'))
@@ -130,6 +134,7 @@ const cast = new CastService({
 // Films and episodes watched to the end are deleted from disk once nothing plays them (server/cleanup.ts).
 const cleanup = new WatchedCleanup({
   dataDir: config.dataDir,
+  folders,
   engine,
   library,
   casting: () => { const c = cast.status(); return c.active ? c.sessionId : undefined },
@@ -417,6 +422,15 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
   reply.code(204).send()
 })
 
+// Pausing keeps what's downloaded; resuming carries on from there.
+app.post<{ Params: { id: string; action: string } }>('/api/library/:id/:action', async req => {
+  const { id, action } = req.params
+  if (!SESSION_ID.test(id) || (action !== 'pause' && action !== 'resume')) throw new HttpError(400, 'Bad request')
+  const e = action === 'pause' ? await library.pause(id) : library.resume(id)
+  if (!e) throw new HttpError(404, 'Not in Downloads')
+  return e
+})
+
 app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
   const s = session(req.params.id)
   await engine.close(s)
@@ -595,6 +609,15 @@ registerTasteRoutes(app, tasteStore, reco, {
 registerAiRoutes(app, ai, tasteStore, { port: () => config.port })
 registerMusicRoutes(app, { music, files: musicFiles, lyrics: musicLyrics, cast: musicCast, tasteStore, ffmpeg: config.ffmpeg, dataDir: config.dataDir })
 registerTrailerRoutes(app, trailers)
+registerStorageRoutes(app, {
+  dataDir: config.dataDir,
+  folders,
+  library,
+  cleanup,
+  music: { files: musicFiles, dir: join(config.dataDir, 'music') },
+  trailers: { cache: trailers, dir: join(config.dataDir, 'trailers') },
+  playing: h => engine.inUse(h) || Boolean(cast.status().active && cast.status().sessionId?.startsWith(`${h}-`)),
+})
 
 // ---- Web app (production build) ----------------------------------------------
 

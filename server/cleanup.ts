@@ -3,6 +3,7 @@ import { readdir, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { TorrentEngine } from './engine/engine.ts'
 import type { Library, LibraryEntry } from './library.ts'
+import { INFO_HASH } from './folders.ts'
 
 // Films and episodes don't stay on this computer longer than they're useful; each is gigabytes. Music
 // (data/music) is never touched. See docs/adr/0001, "Update".
@@ -37,6 +38,22 @@ export interface WatchedFile {
 /** When a torrent was last played; its title, for the log. */
 interface Use { at: number; title?: string }
 
+/** A torrent on disk that nobody kept: what streaming left, deleted a day after it was last played. */
+export interface StreamedTorrent {
+  infoHash: string
+  title: string
+  bytes: number
+  /** When it was last played (0: unknown). */
+  playedAt: number
+  /** When cleanup deletes it if nobody plays it again. */
+  deletesAt: number
+  /** Playing now (here or on a TV): it can't be deleted yet. */
+  inUse: boolean
+}
+
+/** Where torrents are saved (server/folders.ts). */
+export interface Folders { of (infoHash: string): string; all (): string[] }
+
 type Engine = Pick<TorrentEngine, 'list' | 'get' | 'isPrivate' | 'inUse' | 'unload'>
 type Kept = Pick<Library, 'list' | 'remove' | 'resumeMissing'>
 
@@ -47,12 +64,10 @@ const DEFAULT_PIECE = 16 * 2 ** 20
 const STREAMED_KEEP_MS = 24 * 3600_000
 /** A download kept for later and not played for this long is deleted. */
 const KEPT_KEEP_MS = 14 * 24 * 3600_000
-/** A v1 info hash (40 hex) or a v2 one (64 hex). */
-const INFO_HASH = /^[0-9a-f]{40}([0-9a-f]{24})?$/i
 
 export class WatchedCleanup {
   private readonly file: string
-  private readonly downloadsDir: string
+  private readonly folders: Folders
   private readonly torrentsDir: string
   private readonly engine: Engine
   private readonly library: Kept
@@ -70,6 +85,8 @@ export class WatchedCleanup {
 
   constructor (opts: {
     dataDir: string
+    /** Default: <dataDir>/downloads only. */
+    folders?: Folders
     engine: Engine
     library: Kept
     /** The session playing on a TV, if any. */
@@ -77,7 +94,8 @@ export class WatchedCleanup {
     log?: (msg: string) => void
     now?: () => number
   }) {
-    this.downloadsDir = resolve(opts.dataDir, 'downloads')
+    const downloads = resolve(opts.dataDir, 'downloads')
+    this.folders = opts.folders ?? { of: h => join(downloads, h), all: () => [downloads] }
     this.torrentsDir = resolve(opts.dataDir, 'torrents')
     this.file = join(opts.dataDir, 'cleanup.json')
     this.engine = opts.engine
@@ -183,7 +201,7 @@ export class WatchedCleanup {
       return
     }
 
-    const folder = join(this.downloadsDir, infoHash)
+    const folder = resolve(this.folders.of(infoHash))
     const deleted: Array<{ w: WatchedFile; freed: number }> = []
     for (const w of due) {
       try {
@@ -236,37 +254,77 @@ export class WatchedCleanup {
     }
   }
 
+  /** Info hashes with something on disk: a folder in a download folder, or saved metadata. */
+  private async onDisk (): Promise<Set<string>> {
+    const names = new Set<string>()
+    for (const root of this.folders.all()) for (const n of await readdir(root).catch(() => [])) if (INFO_HASH.test(n)) names.add(n)
+    for (const n of await readdir(this.torrentsDir).catch(() => [])) if (n.endsWith('.torrent')) names.add(n.slice(0, -'.torrent'.length))
+    return names
+  }
+
+  private playing (infoHash: string): boolean {
+    return this.engine.inUse(infoHash) || Boolean(this.casting()?.startsWith(`${infoHash}-`))
+  }
+
   /** Torrents nobody kept and nobody has played for a day: their folder and saved metadata go. */
   private async expireStreamed (): Promise<void> {
     const now = this.now()
     const kept = new Set(this.library.list().map(e => e.infoHash))
-    const names = new Set<string>(await readdir(this.downloadsDir).catch(() => []))
-    for (const n of await readdir(this.torrentsDir).catch(() => [])) if (n.endsWith('.torrent')) names.add(n.slice(0, -'.torrent'.length))
+    const names = await this.onDisk()
     for (const h of Object.keys(this.used)) if (!names.has(h) && !kept.has(h)) { delete this.used[h]; this.dirty = true }
-    const tv = this.casting()
     for (const infoHash of names) {
-      if (!INFO_HASH.test(infoHash) || kept.has(infoHash) || this.engine.inUse(infoHash) || tv?.startsWith(`${infoHash}-`)) continue
-      const folder = join(this.downloadsDir, infoHash)
-      const meta = join(this.torrentsDir, `${infoHash}.torrent`)
+      if (!INFO_HASH.test(infoHash) || kept.has(infoHash) || this.playing(infoHash)) continue
       // Streamed before this was recorded: its newest write says when.
       let u = this.used[infoHash]
-      if (!u) { u = this.used[infoHash] = { at: await lastWritten(folder, meta) }; this.dirty = true }
+      if (!u) { u = this.used[infoHash] = { at: await lastWritten(this.folders.of(infoHash), join(this.torrentsDir, `${infoHash}.torrent`)) }; this.dirty = true }
       if (now - u.at < STREAMED_KEEP_MS) continue
-      const files = await filesIn(folder)
-      try {
-        await this.engine.unload(infoHash)
-        await rm(folder, { recursive: true, force: true, maxRetries: 3 })
-        await rm(meta, { force: true })
-      } catch (err) {
-        this.warnOnce(infoHash, `cleanup: could not delete ${u.title ?? infoHash} yet (${(err as Error).message}); will try again`)
-        continue
-      }
-      delete this.used[infoHash]
-      this.forget(w => w.infoHash === infoHash)
-      const bytes = files.reduce((sum, f) => sum + f.bytes, 0)
-      const title = u.title ?? basename([...files].sort((a, b) => b.bytes - a.bytes)[0]?.path ?? infoHash)
-      if (bytes > 0) this.log(`not played for a day, so deleted: ${title} (${size(bytes)} freed)`)
+      const gone = await this.deleteTorrent(infoHash)
+      if (gone && gone.bytes > 0) this.log(`not played for a day, so deleted: ${gone.title} (${size(gone.bytes)} freed)`)
     }
+  }
+
+  /** What streaming left on this computer (torrents nobody kept), largest first. */
+  async streamed (): Promise<StreamedTorrent[]> {
+    const kept = new Set(this.library.list().map(e => e.infoHash))
+    const out: StreamedTorrent[] = []
+    for (const infoHash of await this.onDisk()) {
+      if (kept.has(infoHash)) continue
+      const files = await filesIn(this.folders.of(infoHash))
+      const bytes = files.reduce((sum, f) => sum + f.bytes, 0)
+      const u = this.used[infoHash]
+      const playedAt = u?.at ?? 0
+      out.push({ infoHash, title: u?.title ?? titleOf(files, infoHash), bytes, playedAt, deletesAt: playedAt ? playedAt + STREAMED_KEEP_MS : 0, inUse: this.playing(infoHash) })
+    }
+    return out.sort((a, b) => b.bytes - a.bytes)
+  }
+
+  /**
+   * Deletes a torrent nobody kept, now: its folder and saved metadata. Returns what it freed, or null when it
+   * can't go: it's kept, playing, or its files are still open.
+   */
+  async remove (infoHash: string): Promise<{ title: string; bytes: number } | null> {
+    if (!INFO_HASH.test(infoHash) || this.library.list().some(e => e.infoHash === infoHash) || this.playing(infoHash)) return null
+    const gone = await this.deleteTorrent(infoHash)
+    if (this.dirty) this.save()
+    return gone
+  }
+
+  private async deleteTorrent (infoHash: string): Promise<{ title: string; bytes: number } | null> {
+    const folder = this.folders.of(infoHash)
+    const files = await filesIn(folder)
+    const title = this.used[infoHash]?.title ?? titleOf(files, infoHash)
+    try {
+      await this.engine.unload(infoHash)
+      await rm(folder, { recursive: true, force: true, maxRetries: 3 })
+      await rm(join(this.torrentsDir, `${infoHash}.torrent`), { force: true })
+    } catch (err) {
+      this.warnOnce(infoHash, `cleanup: could not delete ${title} yet (${(err as Error).message}); will try again`)
+      return null
+    }
+    delete this.used[infoHash]
+    this.dirty = true
+    this.forget(w => w.infoHash === infoHash)
+    return { title, bytes: files.reduce((sum, f) => sum + f.bytes, 0) }
   }
 
   /** Deletes one file; returns the bytes it held on disk (0 if it was already gone). */
@@ -306,20 +364,20 @@ export class WatchedCleanup {
 }
 
 /** Where fs-chunk-store (WebTorrent's file store) puts a torrent's file: these characters are dropped from its name. */
-function storedPath (path: string): string {
+export function storedPath (path: string): string {
   // eslint-disable-next-line no-control-regex
   return join(dirname(path), basename(path).replace(/[<>:"/\\|?*\u0000-\u001F]/g, ''))
 }
 
 /** Bytes a file really takes: torrent files are sparse until their pieces arrive. */
-async function bytesOnDisk (path: string): Promise<number> {
+export async function bytesOnDisk (path: string): Promise<number> {
   const st = await stat(path).catch(() => null)
   if (!st?.isFile()) return 0
   return Math.min(st.size, st.blocks > 0 ? st.blocks * 512 : st.size)
 }
 
 /** Every file under a folder, relative to it, with the bytes it takes; none if the folder is gone. */
-async function filesIn (folder: string): Promise<Array<{ path: string; bytes: number }>> {
+export async function filesIn (folder: string): Promise<Array<{ path: string; bytes: number }>> {
   const entries = await readdir(folder, { recursive: true, withFileTypes: true }).catch(() => [])
   return Promise.all(entries.filter(e => e.isFile()).map(async e => {
     const abs = join(e.parentPath, e.name)
@@ -333,6 +391,12 @@ async function lastWritten (folder: string, meta: string): Promise<number> {
   const paths = [folder, meta, ...entries.map(e => join(e.parentPath, e.name))]
   const times = await Promise.all(paths.map(p => stat(p).then(st => st.mtimeMs, () => 0)))
   return Math.max(0, ...times)
+}
+
+/** A torrent's name for people when the player never said: its largest file's, as words ("Show S01E01"). */
+function titleOf (files: Array<{ path: string; bytes: number }>, infoHash: string): string {
+  const largest = [...files].sort((a, b) => b.bytes - a.bytes)[0]
+  return largest ? basename(largest.path).replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[._]+/g, ' ').trim() : `Torrent ${infoHash.slice(0, 8)}`
 }
 
 function size (bytes: number): string {
