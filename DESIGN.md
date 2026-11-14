@@ -376,9 +376,10 @@ Series tag, the scrubber time tip).
 - **Downloads:** one list at a 60rem measure, so a row's actions stay near its title on a TV.
   - Each row: 16:9 art that plays the download (play disc, inset progress bar), the title, and a status line
     ("42% of 2.6 GB · 6.1 MB/s · 4 min left", "Paused · 17% of 2.0 GB", "Ready to watch offline").
-  - Actions: a Pause icon button, or a labelled Resume chip on a paused row; Delete asks again in place
-    with a red chip.
-  - A footer line says when downloads go and links to Storage.
+  - A finished row's status ends with how long it stays: "Kept 23 more days" or "Kept forever".
+  - Actions: a Pause icon button, or a labelled Resume chip on a paused row; a Pin toggle, "Keep forever"
+    (filled and white when on); Delete asks again in place with a red chip.
+  - A footer line says when downloads go, shows the pin, and links to Storage.
 - **Empty states:** a bold line, one sentence naming the real control (drawn as its icon, never a typed
   glyph), and a secondary pill to go and find something.
 
@@ -423,9 +424,21 @@ Series tag, the scrubber time tip).
 - **Default view:** the top eight ranked rows, behind "Show all N sources". The recommended row sits on Lifted
   Graphite with a white "Recommended" badge.
 - **Phone:** each row stacks into a card with units spelled out ("32 seeds").
-- **Play and Download:** every row shows its Play disc (a 16% white ring that fills white when the row is
-  pointed at or focused) beside a Download ring. The whole row plays too. On phones Play sits top right and
-  Download under it.
+- **Play, Download and Preview:** every row shows its Play disc (a 16% white ring that fills white when the row
+  is pointed at or focused), then Download and Preview (an eye) rings to its left. The whole row plays too. On
+  phones Play sits top right, Download under it, and Preview bottom left, under the quality badge.
+
+### Source quick look (Preview)
+- **Purpose:** judge a file in seconds, before playing it. It uses the Quick view's dialog and card, at 60rem.
+- **Stage:** one large still at the film's own shape, on black. "Play 20 seconds" (Stop, with a filled square,
+  while it plays) and the time sit bottom left on dark 72% pills, so they stay readable over bright frames. The
+  stage stops at half the window's height, so Play this stays in view on a laptop. While the clip plays, a 3px white line along the
+  bottom fills over its 20 seconds.
+- **Strip:** six 16:9 stills from 10% to 80% of the film, at 62% opacity, full on hover. The picked still gets a
+  2px white ring. They pulse while loading. On phones they sit three to a row.
+- **Facts:** a two-column definition list (Picture, Bitrate, Sound, Subtitles). Labels are Text 3, values Text.
+  Warnings use the amber note style. One quiet hint says to pick a still with people talking. Then the white
+  Play this button and the secondary Download.
 
 ### Player
 - **Chrome:** the title in title style with the file name in meta beneath, a hairline scrubber that thickens

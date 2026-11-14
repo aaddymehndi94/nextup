@@ -160,6 +160,9 @@ export interface FfmpegArgsInput {
 
 const KEYFRAME_EVERY_SEC = 2
 
+/** HDR (PQ/HLG) to SDR BT.709, so a picture looks as it should on an ordinary screen rather than washed out. */
+export const HDR_TONEMAP = ['zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv']
+
 export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevice, filmClock }: FfmpegArgsInput): string[] {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin']
   const enc = encoderArgs({ encoder, device: hwDevice })
@@ -191,7 +194,7 @@ export function buildFfmpegArgs ({ input, startSec, probe, plan, encoder, hwDevi
     const v = probe.video!
     const filters: string[] = []
     if (v.width > 1920 || v.height > 1080) filters.push('scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2')
-    if (v.hdr) filters.push('zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv')
+    if (v.hdr) filters.push(...HDR_TONEMAP)
     filters.push(...enc.filters)
     args.push('-vf', filters.join(','), ...enc.codec)
     args.push('-force_key_frames', `expr:gte(t,n_forced*${KEYFRAME_EVERY_SEC})`)

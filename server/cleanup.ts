@@ -4,14 +4,16 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { TorrentEngine } from './engine/engine.ts'
 import type { Library, LibraryEntry } from './library.ts'
 import { INFO_HASH } from './folders.ts'
+import { KEPT_DAYS } from '../shared/storage.ts'
 
 // Films and episodes don't stay on this computer longer than they're useful; each is gigabytes. Music
 // (data/music) is never touched. See docs/adr/0001, "Update".
 // - Watched to the end: deleted, both what the engine keeps after streaming (downloads/<info hash>/) and
 //   titles kept with "Download to watch later". Nobody watches them again soon.
 // - Streamed and not played for a day: the whole torrent goes (its folder and saved metadata).
-// - Kept with "Download to watch later" and not played for 14 days (counted from when it was kept, or last
-//   played): it leaves the Downloads list and its file is deleted.
+// - Kept with "Download to watch later" and not played for 30 days (KEPT_DAYS; counted from when it was kept,
+//   last played, or last let go after being kept forever): it leaves the Downloads list and its file is deleted.
+// - Kept forever: none of the above. It stays until deleted by hand.
 //
 // A file to delete is queued (in cleanup.json, so a restart or a failed delete doesn't lose it) and deleted
 // once nothing can still read its torrent: no stream open on it for the engine's idle time, and not playing on
@@ -31,7 +33,7 @@ export interface WatchedFile {
   pieceLength?: number
   /** When it was watched (or found unplayed). */
   at: number
-  /** Not played for 14 days, rather than watched. */
+  /** Not played for KEPT_DAYS days, rather than watched. */
   reason?: 'unplayed'
 }
 
@@ -63,7 +65,7 @@ const DEFAULT_PIECE = 16 * 2 ** 20
 /** Streamed data not played for this long is deleted. */
 const STREAMED_KEEP_MS = 24 * 3600_000
 /** A download kept for later and not played for this long is deleted. */
-const KEPT_KEEP_MS = 14 * 24 * 3600_000
+const KEPT_KEEP_MS = KEPT_DAYS * 24 * 3600_000
 
 export class WatchedCleanup {
   private readonly file: string
@@ -130,10 +132,12 @@ export class WatchedCleanup {
   async finished (streamId: string): Promise<void> {
     if (!streamId) return // a session without one must never match another without one
     const before = this.queue.length
-    // A kept download stops downloading the rest; its file goes when nothing reads it any more.
-    for (const e of this.library.list()) if (e.streamId === streamId) await this.drop(e)
+    // A kept download stops downloading the rest; its file goes when nothing reads it any more. One kept
+    // forever stays, and so does its file when it was streamed from here.
+    const forever = new Set(this.library.list().filter(e => e.forever).map(e => e.id))
+    for (const e of this.library.list()) if (e.streamId === streamId && !e.forever) await this.drop(e)
     for (const s of this.engine.list()) {
-      if (s.streamId !== streamId || this.engine.isPrivate(s.id)) continue
+      if (s.streamId !== streamId || this.engine.isPrivate(s.id) || forever.has(s.id)) continue
       this.add({ id: s.id, infoHash: s.infoHash, path: s.file.path, fileName: s.file.name, title: s.title ?? s.file.name, pieceLength: s.torrent.pieceLength })
     }
     if (this.queue.length > before) this.save()
@@ -236,22 +240,28 @@ export class WatchedCleanup {
     deleted.forEach(({ w, freed }, i) => {
       const last = i === deleted.length - 1
       const bytes = freed + (last ? rest : 0)
-      if (bytes > 0) this.log(`${w.reason === 'unplayed' ? 'not played for 14 days' : 'watched'}, so deleted: ${w.title} (${size(bytes)} freed${last && torrentGone ? ', torrent removed' : ''})`)
+      if (bytes > 0) this.log(`${w.reason === 'unplayed' ? `not played for ${KEPT_DAYS} days` : 'watched'}, so deleted: ${w.title} (${size(bytes)} freed${last && torrentGone ? ', torrent removed' : ''})`)
     })
 
     // Kept downloads beside it (other episodes of a season pack) were stopped with the torrent: carry on.
     if (keptHere && !this.closed) this.library.resumeMissing()
   }
 
-  /** Downloads kept for later and not played for 14 days leave the list; their files are queued. */
+  /** Downloads kept for later and not played for KEPT_DAYS days leave the list; their files are queued. */
   private async expireKept (): Promise<void> {
     const now = this.now()
     for (const e of this.library.list()) {
-      const u = this.used[e.infoHash]
-      // A download from before this was recorded gets its 14 days from now.
-      if (!u) { this.used[e.infoHash] = { at: now, title: e.title }; this.dirty = true; continue }
-      if (now - Math.max(e.addedAt, u.at) >= KEPT_KEEP_MS) await this.drop(e, 'unplayed')
+      if (e.forever) continue
+      // A download from before this was recorded gets its days from now.
+      if (!this.used[e.infoHash]) { this.used[e.infoHash] = { at: now, title: e.title }; this.dirty = true; continue }
+      if (now >= this.expiresAt(e)!) await this.drop(e, 'unplayed')
     }
+  }
+
+  /** When a kept download goes if it isn't played before then; null when it's kept forever. */
+  expiresAt (e: LibraryEntry): number | null {
+    if (e.forever) return null
+    return Math.max(e.addedAt, e.renewedAt ?? 0, this.used[e.infoHash]?.at ?? this.now()) + KEPT_KEEP_MS
   }
 
   /** Info hashes with something on disk: a folder in a download folder, or saved metadata. */

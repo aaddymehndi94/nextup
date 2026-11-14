@@ -13,6 +13,7 @@ import { RecCard } from '../components/RecCard.tsx'
 import { PosterSkeleton } from '../components/PosterCard.tsx'
 import { Row } from '../components/Row.tsx'
 import { SourceList } from '../components/SourceList.tsx'
+import { SourcePeek, warmPeek } from '../components/SourcePeek.tsx'
 import { DismissLine, TasteButtons } from '../components/TitleActions.tsx'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { TopBar } from '../components/TopBar.tsx'
@@ -187,6 +188,7 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
   const chosenFor = useRef<string | null>(null)
   // Sources kept from this page (infoHash:fileIdx), so their buttons show they're on the way.
   const [saved, setSaved] = useState<ReadonlySet<string>>(new Set())
+  const [peeking, setPeeking] = useState<Source | null>(null)
 
   useEffect(() => {
     api.title(type, id)
@@ -315,7 +317,7 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
                     <p className="notice">It may be too new or too obscure for the public indexes.</p>
                   </div>
                   )
-                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} onDownload={download} isSaved={s => saved.has(keyOf(s))} />}
+                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} onDownload={download} onPeek={setPeeking} onPeekSoon={s => { warmPeek(s, ctx).catch(() => {}) }} isSaved={s => saved.has(keyOf(s))} />}
               {Object.keys(load.data.errors).length > 0 && (
                 <p className="fine-print">Some indexes didn’t answer: {Object.entries(load.data.errors).map(([k, v]) => `${k} (${v})`).join(', ')}</p>
               )}
@@ -325,6 +327,13 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
       </div>
 
       <MoreLikeThis type={type} id={id} />
+      {peeking && (
+        <SourcePeek
+          source={peeking} ctx={ctx} saved={saved.has(keyOf(peeking))}
+          onPlay={() => { setPeeking(null); watchSource(peeking, ctx) }}
+          onDownload={() => download(peeking)} onClose={() => setPeeking(null)}
+        />
+      )}
     </main>
   )
 }

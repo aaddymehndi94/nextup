@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { AlertTriangle, Check, ChevronDown, Download, Play } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Check, ChevronDown, Download, Eye, Play } from 'lucide-react'
 import type { HealthResponse, Source } from '../../../shared/types.ts'
 import { bytes, languageName, RES_LABEL } from '../format.ts'
 
@@ -35,13 +35,20 @@ function tags (s: Source): string[] {
   return out
 }
 
-export function SourceList ({ sources, health, onPick, onDownload, isSaved }: {
+export function SourceList ({ sources, health, onPick, onDownload, onPeek, onPeekSoon, isSaved }: {
   sources: Source[]
   health: HealthResponse
   onPick: (s: Source) => void
   onDownload: (s: Source) => void
+  /** Opens the quick look at a source (SourcePeek). */
+  onPeek: (s: Source) => void
+  /** A pointer resting on Preview: start reading the file so the look is ready on click. */
+  onPeekSoon: (s: Source) => void
   isSaved: (s: Source) => boolean
 }) {
+  const warm = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const warmSoon = (s: Source) => { clearTimeout(warm.current); warm.current = setTimeout(() => onPeekSoon(s), 200) }
+  const cancelWarm = () => clearTimeout(warm.current)
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all')
   const [sort, setSort] = useState<Sort>('best')
   const [showAll, setShowAll] = useState(false)
@@ -136,7 +143,14 @@ export function SourceList ({ sources, health, onPick, onDownload, isSaved }: {
                 </span>
                 <span className="source-go" aria-hidden><Play fill="currentColor" /></span>
               </button>
-              {/* A sibling, not inside the row's button: buttons can't nest. */}
+              {/* Siblings, not inside the row's button: buttons can't nest. */}
+              <button
+                type="button" className="source-peek" onClick={() => { cancelWarm(); onPeek(s) }}
+                onPointerEnter={() => warmSoon(s)} onPointerLeave={cancelWarm} onFocus={() => warmSoon(s)} onBlur={cancelWarm}
+                aria-label={`Preview ${s.title}: stills, sound and what the file really is`} data-tip="Preview"
+              >
+                <Eye aria-hidden />
+              </button>
               <button type="button" className={`source-save${kept ? ' is-saved' : ''}`} onClick={() => onDownload(s)} aria-label={kept ? `Downloading ${s.title}` : `Download ${s.title} to watch later`} data-tip={kept ? 'Downloading' : 'Download'}>
                 {kept ? <Check aria-hidden /> : <Download aria-hidden />}
               </button>

@@ -45,3 +45,6 @@ export interface StorageReport {
   /** nexttupp itself: profiles, the recommendation model, helpers. Not removable here. */
   app: { bytes: number }
 }
+
+/** A download kept for later goes after this many days without playing, unless it's kept forever. */
+export const KEPT_DAYS = 30

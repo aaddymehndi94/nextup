@@ -21,6 +21,8 @@ const HIGH = 2
 const LOW = 0
 /** Bytes ahead of the read position that are fetched urgently. */
 const WINDOW_BYTES = 48 * 1024 * 1024
+/** A glance (one still for the quick look) needs one keyframe: a few MB, not a stream's worth. */
+const GLANCE_BYTES = 4 * 1024 * 1024
 /** Pieces marked critical (may steal in-flight blocks from slow peers). */
 const CRITICAL_PIECES = 3
 
@@ -31,6 +33,7 @@ export class StreamReader {
   private readonly startPiece: number
   private readonly endPiece: number
   private readonly windowPieces: number
+  private readonly glance: boolean
   private piece: number
   private offsetInPiece: number
   private remaining: number
@@ -40,7 +43,8 @@ export class StreamReader {
   private wake: (() => void) | null = null
   private readonly onVerified = (i: number) => { if (i === this.piece) this.wake?.() }
 
-  constructor (torrent: Torrent, file: TorrentFile, start: number, end: number) {
+  /** `glance`: a short look (a still), so a small urgent window and no background tail. */
+  constructor (torrent: Torrent, file: TorrentFile, start: number, end: number, opts: { glance?: boolean } = {}) {
     this.torrent = torrent as InternalTorrent
     const pl = torrent.pieceLength
     this.startPiece = Math.floor((file.offset + start) / pl)
@@ -48,7 +52,8 @@ export class StreamReader {
     this.piece = this.startPiece
     this.offsetInPiece = (file.offset + start) - this.startPiece * pl
     this.remaining = end - start + 1
-    this.windowPieces = Math.max(8, Math.ceil(WINDOW_BYTES / pl))
+    this.glance = Boolean(opts.glance)
+    this.windowPieces = this.glance ? Math.max(2, Math.ceil(GLANCE_BYTES / pl)) : Math.max(8, Math.ceil(WINDOW_BYTES / pl))
     this.torrent.on('verified', this.onVerified)
     this.reselect()
   }
@@ -66,7 +71,7 @@ export class StreamReader {
     const windowEnd = Math.min(this.piece + this.windowPieces - 1, this.endPiece)
     next.push({ from: this.piece, to: windowEnd, priority: this.active ? HIGH : LOW })
     // Only the active reader keeps a background tail; an abandoned reader shouldn't pull the whole file.
-    if (this.active && windowEnd < this.endPiece) next.push({ from: windowEnd + 1, to: this.endPiece, priority: LOW })
+    if (this.active && !this.glance && windowEnd < this.endPiece) next.push({ from: windowEnd + 1, to: this.endPiece, priority: LOW })
     for (const s of next) this.torrent._select(s.from, s.to, s.priority, null, true)
     for (const s of this.selections) this.torrent._deselect(s.from, s.to, true)
     this.selections = next

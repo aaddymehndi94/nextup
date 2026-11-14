@@ -14,6 +14,10 @@ export interface LibraryItem {
   id: string; infoHash: string; fileIdx: number; fileName: string; title: string
   type: MediaType; imdbId: string; streamId: string; addedAt: number
   stats: Stats | null
+  /** Kept forever: never deleted for not being played, or for being watched. */
+  forever?: boolean
+  /** When it goes if it isn't played before then; null when kept forever. */
+  expiresAt?: number | null
   /** Saved from the source list and still waiting for the torrent's metadata from peers. */
   pending?: boolean
   /** Paused: not downloading until resumed. `progress` and `fileSize` say how far it had got. */
@@ -223,6 +227,7 @@ export const api = {
   download: (body: DownloadRequest) => req<LibraryItem>('/api/library', json('POST', body)),
   unkeep: (id: string, deleteFiles: boolean) => req<void>(`/api/library/${id}${deleteFiles ? '?deleteFiles=1' : ''}`, json('DELETE')),
   pauseDownload: (id: string) => req<LibraryItem>(`/api/library/${id}/pause`, json('POST')),
+  keepForever: (id: string, forever: boolean) => req<LibraryItem>(`/api/library/${id}`, json('PATCH', { forever })),
   resumeDownload: (id: string) => req<LibraryItem>(`/api/library/${id}/resume`, json('POST')),
 
   // What's saved on this computer (the Storage page).

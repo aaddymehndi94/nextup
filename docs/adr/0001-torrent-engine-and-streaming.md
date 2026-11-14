@@ -84,6 +84,10 @@ several GB. The owner: "if content is watched it should be removed. not songs, b
   (streamed before this was recorded) goes by its newest file time. A kept download not played for 14 days,
   counted from when it was kept or last played, leaves the Downloads list and goes like a watched file; one
   kept before this rule got its 14 days from the update. Nothing in use or on a TV is touched.
+  *2026-11-14: 30 days now (`KEPT_DAYS` in `shared/storage.ts`, which the app's wording reads too), and a
+  download can be kept forever (the pin on the Downloads page): then neither not playing it nor watching it
+  to the end deletes it. Letting it go again starts its 30 days from then (`renewedAt`). Each finished
+  download says how long it stays ("Kept 23 more days", from `expiresAt` in `GET /api/library`).*
 - Not covered: titles finished on another computer (sync brings the progress, but deletion follows playback on
   this one). Music is separate (`data/music`, 0010) and never touched.
 
@@ -131,3 +135,27 @@ several GB. The owner: "if content is watched it should be removed. not songs, b
   - Continue watching opens the page at that episode, with Resume. It no longer starts the first-ranked
     source on its own, so the viewer can choose another source or episode.
   - Playing a download plays its own file, with the title's page left beneath the player in history.
+
+## Update, 2026-11-14: a quick look at a source before playing it
+
+The owner wanted to check a source's quality before committing to it, "optimized for speed of checking":
+playing the whole thing works, but it's slow. Preview (the eye on each source row, `SourcePeek.tsx`) answers
+it in three tiers, each costing more than the last:
+
+- **The file's facts, from its header** (the probe the player already runs): real picture size, codec, HDR,
+  bitrate as size over running time, soundtracks and subtitles by language. It warns when the picture is smaller
+  than the listing claims, or the bitrate is low for the picture (`web/src/peek.ts`). This takes about as long as
+  finding peers, and hovering the eye starts it.
+- **Six stills from 10% to 80% of the film** (`GET /api/sessions/:id/frame?t=`, `server/playback/frame.ts`):
+  ffmpeg seeks to the keyframe at or before each moment and decodes only that one picture, 1280 wide, tone-mapped
+  if HDR. Each still reads its file as a **glance** (`/stream/:id/raw?glance=1`): a 4 MB urgent window, no
+  background tail, and it neither demotes nor is demoted by other readers. Before glances, each still took a
+  stream's 48 MB window and demoted the one before it, so six stills queued one after another (51 s on a cold
+  Dune). With glances they load side by side: 19 s for all six on a cold Interstellar, the first 3 s after the
+  facts. Stills are kept in memory (96), so opening the same preview again is instant.
+- **20 seconds with sound from a picked still**, through the player's own path (raw in direct mode, else
+  `play.mp4?t=`). Picking a still with people talking is how you hear the dialogue. 20 seconds is long enough
+  to hear a few lines and see motion, and short enough to stay a look, not a watch.
+
+The preview opens the same session that playing does, so Play this starts on an already-open torrent with its
+header read.

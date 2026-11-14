@@ -11,6 +11,7 @@ import { contentType, parseRange } from './engine/range.ts'
 import { fetchJson, HttpError, UpstreamError } from './http.ts'
 import { detectEncoder, findKeyframe, probe, TranscodeRegistry } from './playback/ffmpeg.ts'
 import { buildFfmpegArgs, castPlan, choosePlan } from './playback/plan.ts'
+import { frameArgs, grabFrame } from './playback/frame.ts'
 import { declareLength } from './playback/fmp4.ts'
 import { findSources } from './sources/index.ts'
 import { scrapeHealth } from './sources/scrape.ts'
@@ -342,7 +343,7 @@ app.post<{ Body: OpenSessionRequest }>('/api/sessions', async req => {
     title: typeof body.title === 'string' ? body.title.slice(0, 200) : undefined,
     streamId: typeof body.streamId === 'string' && STREAM_ID.test(body.streamId) ? body.streamId : undefined,
   }, { private: hasPrivateHeader(req) })
-  // Played now: streamed data stays a day from here, a kept download 14 days (server/cleanup.ts).
+  // Played now: streamed data stays a day from here, a kept download KEPT_DAYS days (server/cleanup.ts).
   if (!s.private) cleanup.touch(s.infoHash, s.title)
   return engine.stats(s)
 })
@@ -358,12 +359,44 @@ app.get<{ Params: { id: string }; Querystring: { caps?: string; audio?: string }
   return { probe: result, plan: choosePlan(result, parseCaps(req.query.caps), config.preferredLanguages, audio) }
 })
 
+// A still from film time t, for the quick look at a source (server/playback/frame.ts). Kept a while in memory:
+// opening the same preview again shows them at once.
+const stills = new Map<string, Promise<Buffer>>()
+app.get<{ Params: { id: string }; Querystring: { t?: string } }>('/api/sessions/:id/frame', async (req, reply) => {
+  const s = session(req.params.id)
+  const result = await getProbe(s)
+  const t = Number(req.query.t)
+  if (!Number.isFinite(t) || t < 0 || t > result.durationSec) throw new HttpError(400, 'Pick a moment within the film')
+  const key = `${s.id}@${Math.round(t)}`
+  let jpeg = stills.get(key)
+  if (!jpeg) {
+    const release = engine.hold(s)
+    jpeg = grabFrame(frameArgs({ input: `${rawUrl(s.id)}?glance=1`, t: Math.round(t), probe: result })).finally(release)
+    jpeg.catch(() => stills.delete(key))
+    stills.set(key, jpeg)
+    if (stills.size > 96) stills.delete(stills.keys().next().value!)
+  }
+  try {
+    return reply.type('image/jpeg').header('cache-control', 'private, max-age=3600').send(await jpeg)
+  } catch (err) {
+    throw new HttpError(504, (err as Error).message)
+  }
+})
+
 // ---- Library (downloads kept for offline viewing) -----------------------------
 
 app.get('/api/library', async () => Promise.all(library.list().map(async e => {
   const s = e.pending ? undefined : engine.get(e.id)
-  return { ...e, stats: s ? engine.stats(s) : null, swarm: e.pending || !s ? await engine.swarm(e.infoHash) : null }
+  return { ...e, expiresAt: cleanup.expiresAt(e), stats: s ? engine.stats(s) : null, swarm: e.pending || !s ? await engine.swarm(e.infoHash) : null }
 })))
+
+// Keep forever (never deleted for not being played or for being watched), or let it go again.
+app.patch<{ Params: { id: string }; Body: { forever?: unknown } }>('/api/library/:id', async req => {
+  if (!SESSION_ID.test(req.params.id) || typeof req.body?.forever !== 'boolean') throw new HttpError(400, 'Send { forever: true | false }')
+  const e = library.setForever(req.params.id, req.body.forever)
+  if (!e) throw new HttpError(404, 'Not in Downloads')
+  return { ...e, expiresAt: cleanup.expiresAt(e) }
+})
 
 interface KeepBody {
   /** Keep the file of an open session (the Download button in the player)… */
@@ -441,7 +474,7 @@ app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) =
 // ---- Streaming --------------------------------------------------------------
 
 /** Raw bytes of the file with HTTP Range support. Used for direct play and as ffmpeg's input. */
-async function serveRaw (id: string, rangeHeader: string | undefined, head: boolean, reply: FastifyReply, extraHeaders: Record<string, string> = {}) {
+async function serveRaw (id: string, rangeHeader: string | undefined, head: boolean, reply: FastifyReply, extraHeaders: Record<string, string> = {}, glance = false) {
   const s = session(id)
   const size = s.file.length
   const range = parseRange(rangeHeader, size)
@@ -473,7 +506,7 @@ async function serveRaw (id: string, rangeHeader: string | undefined, head: bool
   let firstByteMs = -1
   let sent = 0
   async function * timed () {
-    for await (const chunk of engine.read(s, start, end, aborter.signal)) {
+    for await (const chunk of engine.read(s, start, end, aborter.signal, { glance })) {
       if (firstByteMs < 0) firstByteMs = Date.now() - began
       sent += chunk.length
       yield chunk
@@ -485,7 +518,8 @@ async function serveRaw (id: string, rangeHeader: string | undefined, head: bool
   })
 }
 
-app.get<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, false, reply))
+// ?glance=1: the reader is taking one still (the frame route below), not streaming. See TorrentEngine.read.
+app.get<{ Params: { id: string }; Querystring: { glance?: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, false, reply, {}, req.query.glance === '1'))
 app.head<{ Params: { id: string } }>('/stream/:id/raw', (req, reply) => serveRaw(req.params.id, req.headers.range, true, reply))
 
 /** Remuxed / transcoded fragmented MP4 from `startSec`. Seeking is a new request with a new `t`. */

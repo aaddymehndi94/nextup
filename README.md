@@ -4,7 +4,7 @@ Search any film or series, see it like a streaming service shows it, pick a torr
 peers), and watch it in the browser within seconds. Files the browser can't play (MKV, HEVC, AC3/DTS, HDR)
 are converted on the fly, on the GPU when there is one. Anything can be kept for offline viewing. Films and
 episodes are deleted from the computer once they've been watched to the end, streamed data after a day
-without playing, and kept downloads after 14 days without playing.
+without playing, and kept downloads after 30 days without playing, unless they're kept forever.
 
 ## Run it
 

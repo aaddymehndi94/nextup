@@ -201,17 +201,23 @@ export class TorrentEngine {
     })
   }
 
-  /** Reads bytes [start, end] of the session's file, prioritising those pieces in the swarm. */
   /**
    * Streams bytes [start, end] of the file. Pass the response's AbortSignal: an async generator that is
    * waiting for a piece cannot be cancelled from outside, so without it an abandoned request would keep
    * its urgent priority (and starve the next seek) until its piece happened to arrive.
+   * `glance`: a still for the quick look. It fetches only a few pieces, and stands beside the other readers
+   * rather than taking over from them, so several stills load at once and a playing stream keeps its place.
    */
-  read (session: Session, start: number, end: number, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+  read (session: Session, start: number, end: number, signal?: AbortSignal, opts: { glance?: boolean } = {}): AsyncGenerator<Uint8Array> {
+    const reader = new StreamReader(session.torrent, session.file, start, end, opts)
+    signal?.addEventListener('abort', () => reader.destroy(), { once: true })
+    if (opts.glance) {
+      return (async function * () {
+        try { yield * reader } finally { reader.destroy() }
+      })()
+    }
     // The newest request is what the viewer is waiting on (a seek, or ffmpeg's jump to the seek point);
     // older readers on this file drop behind it until it finishes.
-    const reader = new StreamReader(session.torrent, session.file, start, end)
-    signal?.addEventListener('abort', () => reader.destroy(), { once: true })
     for (const r of session.readers) r.setActive(false)
     session.readers.push(reader)
     return (async function * () {

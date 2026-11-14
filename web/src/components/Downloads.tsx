@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, ChevronRight, Play, Trash2 } from 'lucide-react'
+import { KEPT_DAYS } from '../../../shared/storage.ts'
 import { api, type LibraryItem, imageUrl } from '../api.ts'
 import { bytes, speed } from '../format.ts'
 import { useLoaded, usePageActive } from '../hooks.ts'
@@ -50,6 +51,14 @@ export function deleteDownload (it: LibraryItem): Promise<boolean> {
 
 export const isDone = (it: LibraryItem) => (it.stats?.progress ?? 0) >= 1
 
+/** How long a finished download stays: "Kept forever", or "Kept 12 more days" (unless it's played). */
+export function keptFor (it: LibraryItem, now = Date.now()): string | null {
+  if (it.forever) return 'Kept forever'
+  if (!it.expiresAt) return null
+  const days = Math.max(1, Math.ceil((it.expiresAt - now) / 86_400_000))
+  return `Kept ${days} more ${days === 1 ? 'day' : 'days'}`
+}
+
 /** Where a download is, in a few words. */
 export function downloadStatus (it: LibraryItem): { text: string; done: boolean; progress: number } {
   const s = it.stats
@@ -96,7 +105,7 @@ export function Downloads () {
     <Row
       title="Downloads"
       variant="landscape"
-      caption="Removed once you’ve watched them, or after 14 days without playing"
+      caption={`Removed once you’ve watched them, or after ${KEPT_DAYS} days without playing, unless kept forever`}
       aside={<a className="row-link" href="/downloads" onClick={onLinkClick}>See all<ChevronRight aria-hidden /></a>}
     >
       {items.map(it => {

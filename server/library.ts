@@ -33,6 +33,10 @@ export interface LibraryEntry {
   progress?: number
   /** The file's size, once known. */
   fileSize?: number
+  /** Kept forever: never deleted for not being played, or for being watched. */
+  forever?: boolean
+  /** When "keep forever" was last turned off: its days without playing count from here. */
+  renewedAt?: number
 }
 
 const RETRY_MS = 3 * 60_000
@@ -113,6 +117,18 @@ export class Library {
       else if (!this.engine.inUse(e.infoHash)) await this.engine.unload(e.infoHash).catch(() => {})
     }
     return this.get(id)
+  }
+
+  /** Keeps it forever, or lets it go like any other download (its days start again from `at`). */
+  setForever (id: string, forever: boolean, at = Date.now()): LibraryEntry | undefined {
+    const e = this.get(id)
+    if (!e || Boolean(e.forever) === forever) return e
+    const next: LibraryEntry = { ...e }
+    if (forever) next.forever = true
+    else { delete next.forever; next.renewedAt = at }
+    this.entries = this.entries.map(x => (x.id === id ? next : x))
+    this.save()
+    return next
   }
 
   /** Downloads it again from where it stopped. */

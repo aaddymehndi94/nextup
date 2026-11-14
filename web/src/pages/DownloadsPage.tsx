@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Check, Download, FolderOpen, HardDrive, Pause, Play, RotateCw, Trash2 } from 'lucide-react'
-import type { StorageReport } from '../../../shared/storage.ts'
+import { Check, Download, FolderOpen, HardDrive, Pause, Pin, Play, RotateCw, Trash2 } from 'lucide-react'
+import { KEPT_DAYS, type StorageReport } from '../../../shared/storage.ts'
 import { api, type LibraryItem } from '../api.ts'
 import { desktop } from '../desktop.ts'
 import { bytes } from '../format.ts'
 import { useDocumentTitle, usePageActive } from '../hooks.ts'
 import { onLinkClick } from '../router.ts'
 import { toast } from '../toast.ts'
-import { DownloadArt, deleteDownload, downloadStatus, isDone, playDownload, useDownloads } from '../components/Downloads.tsx'
+import { DownloadArt, deleteDownload, downloadStatus, isDone, keptFor, playDownload, useDownloads } from '../components/Downloads.tsx'
 import { TabMasthead } from '../components/TabMasthead.tsx'
 
 /** Everything kept to watch later: play, pause or delete each, and see how much room is left. */
@@ -29,6 +29,13 @@ export function DownloadsPage () {
         .then(next => patch(it.id, { ...next, stats: it.stats }))
         .catch(err => { toast(`Couldn’t ${pause ? 'pause' : 'resume'} ${it.title}. ${(err as Error).message}`); reload() })
     }
+  }
+
+  const setForever = (it: LibraryItem, forever: boolean) => {
+    patch(it.id, { ...it, forever })
+    api.keepForever(it.id, forever)
+      .then(next => { patch(it.id, { ...next, stats: it.stats }); toast(forever ? `${it.title} is kept forever.` : `${it.title} goes after ${KEPT_DAYS} days without playing.`) })
+      .catch(err => { toast(`Couldn’t change that. ${(err as Error).message}`); reload() })
   }
 
   const summary = [
@@ -65,12 +72,13 @@ export function DownloadsPage () {
         )}
         {items && items.length > 0 && (
           <ul className="dl-list">
-            {items.map(it => <DownloadItem key={it.id} it={it} onPause={p => setPaused([it], p)} onDeleted={() => patch(it.id, null)} />)}
+            {items.map(it => <DownloadItem key={it.id} it={it} onPause={p => setPaused([it], p)} onForever={f => setForever(it, f)} onDeleted={() => patch(it.id, null)} />)}
           </ul>
         )}
 
         <p className="tab-foot">
-          Downloads go once you’ve watched them, or after 14 days without playing.{' '}
+          Downloads go once you’ve watched them, or after {KEPT_DAYS} days without playing.
+          Press <Pin className="inline-icon" aria-label="Keep forever" /> to keep one forever.{' '}
           <a className="text-button inline" href="/storage" onClick={onLinkClick}><HardDrive className="inline-icon" aria-hidden />Manage storage</a>
         </p>
       </div>
@@ -78,9 +86,11 @@ export function DownloadsPage () {
   )
 }
 
-function DownloadItem ({ it, onPause, onDeleted }: { it: LibraryItem; onPause: (pause: boolean) => void; onDeleted: () => void }) {
+function DownloadItem ({ it, onPause, onForever, onDeleted }: { it: LibraryItem; onPause: (pause: boolean) => void; onForever: (forever: boolean) => void; onDeleted: () => void }) {
   const [confirming, setConfirming] = useState(false)
   const st = downloadStatus(it)
+  // How long it stays, once there's nothing more to say about the download itself.
+  const kept = st.done || it.forever ? keptFor(it) : null
   return (
     <li className={`dl-item${it.paused ? ' is-paused' : ''}`}>
       <button type="button" className="dl-art download-art" onClick={() => playDownload(it)} aria-label={`Play ${it.title}`}>
@@ -90,7 +100,7 @@ function DownloadItem ({ it, onPause, onDeleted }: { it: LibraryItem; onPause: (
       </button>
       <div className="dl-text">
         <span className="dl-title">{it.title}</span>
-        <span className="dl-status">{st.done && <Check aria-hidden />}{st.text}</span>
+        <span className="dl-status">{st.done && <Check aria-hidden />}{st.text}{kept && <span className="dl-kept"> · {kept}</span>}</span>
       </div>
       <div className="dl-actions">
         {confirming
@@ -109,6 +119,10 @@ function DownloadItem ({ it, onPause, onDeleted }: { it: LibraryItem; onPause: (
                     <Pause aria-hidden />
                   </button>
                   ))}
+              <button type="button" className="icon-button dl-forever" aria-pressed={Boolean(it.forever)} data-tip={it.forever ? 'Kept forever' : 'Keep forever'}
+                aria-label={`Keep ${it.title} forever`} onClick={() => onForever(!it.forever)}>
+                <Pin aria-hidden fill={it.forever ? 'currentColor' : 'none'} />
+              </button>
               <button type="button" className="icon-button" data-tip="Delete" aria-label={`Delete ${it.title}`} onClick={() => setConfirming(true)}>
                 <Trash2 aria-hidden />
               </button>

@@ -68,7 +68,7 @@ function setup () {
   }
   /** Moves the cleanup's clock on. */
   const later = (hours: number) => { offset += hours * HOUR }
-  return { dir, f, library, logs, make, put, saved, later, cast: (id: string | undefined) => { tv = id } }
+  return { dir, f, library, logs, make, put, saved, later, now: () => Date.now() + offset, cast: (id: string | undefined) => { tv = id } }
 }
 
 describe('WatchedCleanup: watched films and episodes are deleted', () => {
@@ -259,17 +259,17 @@ describe('WatchedCleanup: what is not played goes too', () => {
     expect(existsSync(playing)).toBe(true)
   })
 
-  it('a download kept for later goes after 14 days not played; playing it starts the 14 days again', async () => {
+  it('a download kept for later goes after 30 days not played; playing it starts the 30 days again', async () => {
     const t = setup()
     const cleanup = t.make()
     t.library.add({ id: `${KEPT}-0`, infoHash: KEPT, fileIdx: 0, fileName: 'Alien.1979.mkv', title: 'Alien', type: 'movie', imdbId: 'tt0078748', streamId: 'tt0078748', addedAt: 1 })
     const file = t.put(KEPT, 'Alien.1979.mkv', 50_000)
     t.saved(KEPT)
 
-    await cleanup.sweep() // kept before this rule: its 14 days start now
-    t.later(13 * 24)
+    await cleanup.sweep() // kept before this rule: its 30 days start now
+    t.later(29 * 24)
     cleanup.touch(KEPT) // watched a bit
-    t.later(13 * 24)
+    t.later(29 * 24)
     await cleanup.sweep()
     expect(t.library.list()).toHaveLength(1)
     expect(existsSync(file)).toBe(true)
@@ -279,7 +279,35 @@ describe('WatchedCleanup: what is not played goes too', () => {
     expect(t.library.list()).toEqual([])
     expect(existsSync(file)).toBe(false)
     expect(existsSync(join(t.dir, 'downloads', KEPT))).toBe(false)
-    expect(t.logs).toContain('not played for 14 days, so deleted: Alien (1 MB freed, torrent removed)')
+    expect(t.logs).toContain('not played for 30 days, so deleted: Alien (1 MB freed, torrent removed)')
+  })
+
+  it('kept forever: stays unplayed and after watching; letting it go gives it 30 days from then', async () => {
+    const t = setup()
+    const cleanup = t.make()
+    const id = `${KEPT}-0`
+    t.library.add({ id, infoHash: KEPT, fileIdx: 0, fileName: 'Alien.1979.mkv', title: 'Alien', type: 'movie', imdbId: 'tt0078748', streamId: 'tt0078748', addedAt: 1 })
+    const file = t.put(KEPT, 'Alien.1979.mkv', 50_000)
+    t.f.open(KEPT, 0, 'Alien.1979.mkv', 'tt0078748', 'Alien')
+    await cleanup.sweep()
+    expect(cleanup.expiresAt(t.library.get(id)!)! - t.now()).toBeCloseTo(30 * 24 * HOUR, -2)
+
+    t.library.setForever(id, true)
+    expect(cleanup.expiresAt(t.library.get(id)!)).toBeNull()
+    t.later(30 * 24)
+    await cleanup.finished('tt0078748') // watched to the end
+    await cleanup.sweep()
+    expect(cleanup.pending()).toEqual([])
+    expect(t.library.list()).toHaveLength(1)
+    expect(existsSync(file)).toBe(true)
+
+    t.library.setForever(id, false, t.now())
+    await cleanup.sweep()
+    expect(t.library.list()).toHaveLength(1) // not straight away: 30 days from now
+    expect(cleanup.expiresAt(t.library.get(id)!)! - t.now()).toBeCloseTo(30 * 24 * HOUR, -2)
+    t.later(30 * 24)
+    await cleanup.sweep()
+    expect(t.library.list()).toEqual([])
   })
 
   it('a kept download that is playing is not taken away', async () => {
