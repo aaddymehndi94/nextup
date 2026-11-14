@@ -46,8 +46,12 @@ export default {
     out.headers.set('content-security-policy', dev ? csp(`${API} ${dev}`) : CSP)
     // Fonts and images change rarely; pages, CSS and JS revalidate so a deploy shows up at once.
     if (res.ok && /^\/(fonts|img)\//.test(url.pathname)) out.headers.set('cache-control', 'public, max-age=604800')
-    // The phone app's service worker: always checked for a new version.
-    if (url.pathname === '/watch-sw.js') out.headers.set('cache-control', 'no-cache')
+    // The phone app's service worker: always checked for a new version. A worker's own fetches follow the CSP
+    // sent with its script, so it gets one that lets it fetch this site's files (to keep /watch for offline).
+    if (url.pathname === '/watch-sw.js') {
+      out.headers.set('cache-control', 'no-cache')
+      out.headers.set('content-security-policy', "default-src 'none'; connect-src 'self'")
+    }
     return out
   },
 }
