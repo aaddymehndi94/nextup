@@ -6,6 +6,7 @@ import { emptyBatch } from './local.ts'
 import { openDb } from '../db.ts'
 import { SqliteTasteStore } from '../store.ts'
 import { SyncService } from './service.ts'
+import { signIn } from './sign-in.testing.ts'
 
 // When a computer calls the cloud: only on an event (a change here, the app opened or left, a new home address,
 // "Sync now", quitting), never on a timer. The cloud only keeps likes, lists and the like, so a computer that
@@ -22,7 +23,7 @@ function fakeCloud () {
     const u = new URL(String(url))
     calls.push(`${init?.method ?? 'GET'} ${u.pathname.replace(/^\/v1\/devices\/.+$/, '/v1/devices/:id')}`)
     switch (u.pathname) {
-      case '/v1/auth/code/verify': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e10, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
+      case '/v1/auth/ticket': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e10, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
       case '/v1/sync/push': seq++; return Response.json({ applied: {}, serverTime: Date.now() })
       case '/v1/sync/pull': return Response.json({ cursor: String(seq), more: false, serverTime: Date.now(), ...emptyBatch() })
     }
@@ -52,7 +53,7 @@ describe('how often a computer calls the cloud', () => {
       device: () => ({ id: 'dev-1', name: 'Laptop (Linux)', platform: 'linux', lan: true, lanUrls }),
     })
     sync.start()
-    await sync.verifyCode('me@example.com', '123456')
+    await signIn(sync)
     await vi.advanceTimersByTimeAsync(10_000)
     cloud.calls.length = 0
   })

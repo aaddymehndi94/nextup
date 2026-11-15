@@ -1209,13 +1209,23 @@ html.has-mini .update-banner { bottom: calc(env(safe-area-inset-bottom, 0px) + 6
 .account-notice { color: var(--text); font-weight: 560; }
 /* Sign-in step 2: where the code went, and the code itself, spaced so six digits read at a glance. */
 .account-sent { margin: 0; font-size: 1rem; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.account-form .actions:has(.inline-link) { align-items: center; column-gap: 1.25rem; }
+/* "Continue with Google": Google's light button (white, its "G", dark text), whatever the action colour. */
+.google-button { background: #fff; color: #1f1f1f; }
+.google-button:hover:not(:disabled) { background: #f0f0f0; }
+.google-button:active:not(:disabled) { transform: scale(0.97); }
+.button .google-mark { width: 1.125rem; height: 1.125rem; }
+/* Back from Google, in the computer's browser (pages/AuthGoogle.tsx). */
+.auth-done { display: grid; gap: 1rem; align-content: start; max-width: 32rem; margin: 0 auto; padding: 16vh var(--gutter) 3rem; }
+.auth-done .wordmark { margin-bottom: 1.5rem; }
+.auth-done-title { display: flex; align-items: center; gap: 0.75rem; font-size: clamp(1.75rem, 3vw, 2.25rem); font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.025em; line-height: 1.15; }
+.auth-done-text { font-size: 1.0625rem; line-height: 1.55; color: var(--text-2); text-wrap: pretty; overflow-wrap: anywhere; }
+.auth-done-text strong { color: var(--text); font-weight: 620; }
 .account-sent strong { color: var(--text); font-weight: 620; }
-.field input.code-input { font-size: 1.5rem; font-weight: 620; letter-spacing: 0.3em; }
 .account-form .fine-print { margin-top: 0; }
 button.inline-link { font: inherit; color: var(--text); padding: 0; background: none; border: 0; cursor: pointer; }
 .account-form { display: flex; flex-direction: column; gap: 1.125rem; }
 .account-form .actions { margin-top: 0.25rem; }
-.field-hint { font-weight: 440; color: var(--text-3); }
 .field input::placeholder { color: var(--text-3); opacity: 1; font-weight: 440; }
 .account-who { display: flex; flex-direction: column; gap: 0.375rem; margin-top: -0.75rem; }
 .account-email { font-size: 1.125rem; font-weight: 600; overflow-wrap: anywhere; }

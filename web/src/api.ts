@@ -278,8 +278,10 @@ export const api = {
   // Account and sync. Every write sends a JSON body (the server requires one).
   account: () => req<AccountStatus>('/api/account'),
   /** Emails a sign-in code; the same for a new account (the code creates it). */
-  sendCode: (email: string) => req<void>('/api/account/code', json('POST', { email })),
-  verifyCode: (body: { email: string; code: string; displayName?: string }) => req<AccountStatus>('/api/account/verify', json('POST', body)),
+  /** "Continue with Google": the link to open in the browser (on the computer itself only). */
+  googleLink: () => req<{ url: string }>('/api/account/google', json('POST', {})),
+  /** The browser came back from Google to /auth/google with this ticket. */
+  finishGoogle: (ticket: string) => req<AccountStatus>('/api/account/google/finish', json('POST', { ticket })),
   logout: () => req<AccountStatus>('/api/account/logout', json('POST', {})),
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
   /** The app came into view or was left: the events sync works from (it never polls the cloud). Survives unload. */

@@ -77,16 +77,14 @@ export class CloudClient {
     return body as T
   }
 
-  /** Emails a 6-digit sign-in code. Answers the same whether or not the email has an account. */
-  sendCode (email: string) {
-    return this.request<{ sent: true; expiresAt: number }>('POST', '/v1/auth/code', { body: { email } })
+  /** Where "Continue with Google" starts for this app: Google sends the browser back to 127.0.0.1:`port`. */
+  googleLink (port: number, challenge: string): string {
+    return `${this.baseUrl}/v1/auth/google?${new URLSearchParams({ to: 'app', port: String(port), challenge })}`
   }
 
-  /** Trades the emailed code for a session, creating the account (with `displayName`) the first time. */
-  verifyCode (email: string, code: string, displayName?: string) {
-    const body: Record<string, unknown> = { email, code }
-    if (displayName) body.displayName = displayName
-    return this.request<{ token: string; expiresAt: number; account: CloudAccount; created: boolean }>('POST', '/v1/auth/code/verify', { body })
+  /** Turns the ticket Google's round trip ended with into a session, with the secret behind the link's challenge. */
+  redeemTicket (ticket: string, secret: string) {
+    return this.request<{ token: string; expiresAt: number; account: CloudAccount; created: boolean }>('POST', '/v1/auth/ticket', { body: { ticket, secret } })
   }
 
   logout (token: string) { return this.request<void>('POST', '/v1/auth/logout', { token, timeoutMs: 5000 }) }

@@ -12,6 +12,15 @@ export interface Env {
   MIN_APP_VERSION?: string
   /** One line every app shows until it's cleared (index.ts). */
   APP_NOTICE?: string
+  /** "Continue with Google" (google.ts): the OAuth client's ID (public, wrangler.jsonc vars) and secret (a secret). */
+  GOOGLE_CLIENT_ID?: string
+  GOOGLE_CLIENT_SECRET?: string
+  /** Where the website is, for sending the browser back after Google. Default https://nexttupp.com. */
+  SITE_URL?: string
+  /** A local test cloud only: "on" lets a stand-in answer for Google, on localhost (google.ts). */
+  DEV_FAKE_GOOGLE?: string
+  /** Tests only: stands in for Google's token endpoint. */
+  GOOGLE?: import('./google.ts').GoogleSignIn
 }
 
 /** One message for Cloudflare Email Service's `send`. */

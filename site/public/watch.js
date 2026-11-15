@@ -50,10 +50,9 @@ function lastComputer () {
 const SIGNIN_LEDE = $('[data-signin-lede]').textContent
 const auth = mountAuth($('[data-auth]'), {
   onSignedIn: () => showDevices(),
-  onStep: step => { $('[data-signin-lede]').hidden = step === 'code' },
   onMode: mode => {
     $('[data-signin-lede]').textContent = mode === 'create'
-      ? 'Create your free account. Then get nexttupp on your computer and sign in there too, and films play here, streamed from it.'
+      ? 'Create your free account with Google. Then get nexttupp on your computer and sign in there too, and films play here, streamed from it.'
       : SIGNIN_LEDE
   },
 })
@@ -61,7 +60,7 @@ const auth = mountAuth($('[data-auth]'), {
 function showSignIn (message) {
   views.devices.hidden = true
   views.signin.hidden = false
-  auth.setError(message)
+  if (message !== undefined) auth.setError(message) // keep what came back from Google
   // Signed out by the service (expired, or removed elsewhere), this phone can still open the computer it used last.
   const last = lastComputer()
   const box = $('[data-last]')

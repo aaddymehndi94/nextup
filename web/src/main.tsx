@@ -11,6 +11,7 @@ import { Account } from './pages/Account.tsx'
 import { DownloadsPage } from './pages/DownloadsPage.tsx'
 import { MyList } from './pages/MyList.tsx'
 import { Storage } from './pages/Storage.tsx'
+import { AuthGoogle } from './pages/AuthGoogle.tsx'
 import { Appearance } from './pages/Appearance.tsx'
 import { applyProfileTheme } from './theme.ts'
 import { Ai } from './pages/Ai.tsx'
@@ -112,11 +113,15 @@ const onFocusChange = () => {
   focused = now
   api.focus(now)
 }
-window.addEventListener('focus', onFocusChange)
-window.addEventListener('blur', onFocusChange)
-document.addEventListener('visibilitychange', onFocusChange)
-onFocusChange()
-
 // The last profile's look before the first paint, so nothing flashes from the default.
 applyProfileTheme()
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
+if (location.pathname === '/auth/google') {
+  // Back from Google, in the computer's browser: just finish signing in (no profiles, no syncing on focus).
+  createRoot(document.getElementById('root')!).render(<StrictMode><AuthGoogle /></StrictMode>)
+} else {
+  window.addEventListener('focus', onFocusChange)
+  window.addEventListener('blur', onFocusChange)
+  document.addEventListener('visibilitychange', onFocusChange)
+  onFocusChange()
+  createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
+}

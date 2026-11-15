@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { openDb } from '../db.ts'
 import { SqliteTasteStore } from '../store.ts'
 import { SyncService } from './service.ts'
+import { signIn } from './sign-in.testing.ts'
 
 describe('offline', () => {
   it('keeps changes queued, reports offline and backs off, without throwing', async () => {
@@ -14,7 +15,7 @@ describe('offline', () => {
     let calls = 0
     const fetchImpl = (async (url: string) => {
       calls++
-      if (String(url).endsWith('/v1/auth/code/verify')) {
+      if (String(url).endsWith('/v1/auth/ticket')) {
         return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e9, account: { id: '11111111-1111-4111-8111-111111111111', email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
       }
       throw new TypeError('fetch failed')
@@ -23,7 +24,7 @@ describe('offline', () => {
     try {
       const p = store.defaultProfile()
       store.setRating(p.id, { id: 'tt0112471', type: 'movie' }, 1)
-      const status = await sync.verifyCode('me@example.com', '123456')
+      const status = await signIn(sync)
       expect(status.signedIn).toBe(true)
       expect(status.sync).toMatchObject({ state: 'offline', lastSyncAt: null })
       expect(status.sync!.pending).toBeGreaterThan(0)

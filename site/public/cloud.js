@@ -1,5 +1,5 @@
 // Signing in to the nexttupp API from the website (/account and /watch), which also creates the account the
-// first time: type an email, get a 6-digit code by email, type it in. No password.
+// first time: "Continue with Google". No password.
 //
 // The pages talk only to the nexttupp API (CORS, bearer token kept in this site's localStorage, so signing
 // in on one page signs in on the others). An account made here is the same as one made in the app.
@@ -56,15 +56,13 @@ export async function api (method, path, body) {
   return data
 }
 
-/** Emails a code to `email`. Answers the same whether or not the email has an account. */
-const sendCode = email => api('POST', '/v1/auth/code', { email })
-
-/** Trades the code for a session; creates the account (with `displayName`) if there wasn't one. */
-async function verifyCode (email, code, displayName) {
+/**
+ * Google sends the browser back with a one-time ticket, which only the secret this tab kept can turn into a
+ * session (the cloud got only its SHA-256, the challenge).
+ */
+async function redeem (ticket, secret) {
   session = null
-  const body = { email, code }
-  if (displayName) body.displayName = displayName
-  const r = await api('POST', '/v1/auth/code/verify', body)
+  const r = await api('POST', '/v1/auth/ticket', { ticket, secret })
   session = { api: API, token: r.token, expiresAt: r.expiresAt, email: r.account.email }
   saveSession(session)
   return r
@@ -75,179 +73,91 @@ export async function signOut () {
   forgetSession()
 }
 
-// ---- The sign-in form: email, then the code ------------------------------------------------
+// ---- The sign-in button: Continue with Google ----------------------------------------------
+
+const GOOGLE_MARK = `<svg class="google-mark" viewBox="0 0 48 48" aria-hidden="true">
+  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+</svg>`
 
 const FORM = `
-  <form class="watch-form" data-step="email" novalidate>
-    <label class="watch-field">
-      <span>Email</span>
-      <input type="email" name="email" autocomplete="email" inputmode="email" spellcheck="false" autocapitalize="off" required>
-    </label>
-    <label class="watch-field" data-name-field hidden>
-      <span>Your name <em>(optional)</em></span>
-      <input name="displayName" autocomplete="nickname" maxlength="40">
-    </label>
+  <div class="watch-form">
     <p class="watch-error" role="alert" data-error></p>
-    <button class="button primary large" type="submit" data-submit>Email me a code</button>
+    <button class="button google large" type="button" data-google>${GOOGLE_MARK}<span data-label>Continue with Google</span></button>
     <p class="auth-terms">By continuing, you agree to the <a class="link" href="/terms">terms</a>.</p>
-  </form>
-  <form class="watch-form" data-step="code" novalidate hidden>
-    <p class="auth-sent" data-sent></p>
-    <label class="watch-field">
-      <span>Code</span>
-      <input class="code-input" name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" spellcheck="false" required>
-    </label>
-    <p class="watch-error" role="alert" data-error></p>
-    <button class="button primary large" type="submit" data-submit>Continue</button>
-    <p class="auth-switch" data-resend-line>Nothing yet? Check your spam folder, or <button type="button" class="link" data-resend>send a new code</button>.</p>
-  </form>
-  <p class="auth-switch" data-switch></p>`
+  </div>`
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const SECRET = 'nexttupp:google-secret'
+/** The pages that sign in; Google brings the browser back to the one it left from. */
+const PAGES = ['/account', '/watch']
 
-/** The API's messages, in plain words where its own are written for developers. */
-function friendly (err) {
-  if (err.status === 400 && /^email/.test(err.message)) return 'That email doesn’t look right. Check it and try again.'
-  if (err.status === 400 && /^code/.test(err.message)) return 'The code is the 6 digits in the email.'
-  if (err.status === 400 && /^displayName/.test(err.message)) return 'That name can’t be used. Try a plain first name, or leave it empty.'
-  return err.message
+/** What went wrong, in plain words: the #error Google's round trip came back with, or the API's error. */
+const WHY = {
+  cancelled: 'Sign-in was cancelled. Nothing changed.',
+  expired: 'That sign-in took too long. Try again.',
+  unverified_email: 'Google hasn’t confirmed that email yet. Use a Google account whose email is confirmed.',
+  account_disabled: 'This account has been disabled.',
+  too_many_attempts: 'Too many new accounts from this network. Try again in an hour.',
+  google_failed: 'Google didn’t sign you in. Try again.',
+  invalid_ticket: 'That sign-in didn’t finish. Try again.',
+  google_unavailable: 'Signing in with Google isn’t available right now. Try again later.',
 }
+const friendly = err => WHY[err.code] ?? err.message
+
+const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
 /**
- * Puts the sign-in form into `root`: an email, then the code sent to it. The same form signs in and creates
- * an account; 'create' mode only adds the optional name, and `onMode(mode)` lets the page change its heading.
- * `onStep('email' | 'code')` says which step shows, so the page can drop an intro that no longer fits. Calls
- * `onSignedIn()` once signed in. Returns `{ setError, setMode }`.
+ * Puts "Continue with Google" into `root`. The same button signs in and creates an account; `mode` ('signin' or
+ * 'create') only lets the page word its heading (`onMode(mode)`). Coming back from Google, it finishes signing
+ * in by itself and calls `onSignedIn()`. Returns `{ setError, setMode }`.
  */
-export function mountAuth (root, { onSignedIn, onMode = () => {}, onStep = () => {}, mode: start = 'signin' }) {
+export function mountAuth (root, { onSignedIn, onMode = () => {}, mode = 'signin' }) {
   root.innerHTML = FORM
-  const emailForm = root.querySelector('[data-step="email"]')
-  const codeForm = root.querySelector('[data-step="code"]')
-  const nameField = root.querySelector('[data-name-field]')
-  const switchLine = root.querySelector('[data-switch]')
-  const sentLine = root.querySelector('[data-sent]')
-  const resend = root.querySelector('[data-resend]')
-  const errorOf = form => form.querySelector('[data-error]')
-  const submitOf = form => form.querySelector('[data-submit]')
-  let mode = start
-  let email = ''
-  let busy = false
-
-  function setMode (next) {
-    mode = next
-    nameField.hidden = mode !== 'create'
-    switchLine.replaceChildren()
-    if (!codeForm.hidden) { onMode(mode); return }
-    const other = document.createElement('button')
-    other.type = 'button'
-    other.className = 'link'
-    other.textContent = mode === 'create' ? 'Sign in' : 'Create a free account'
-    other.addEventListener('click', () => { setMode(mode === 'create' ? 'signin' : 'create'); emailForm.email.focus() })
-    switchLine.append(mode === 'create' ? 'Already have an account? ' : 'New to nexttupp? ', other)
-    onMode(mode)
+  const error = root.querySelector('[data-error]')
+  const button = root.querySelector('[data-google]')
+  const label = root.querySelector('[data-label]')
+  const mark = root.querySelector('.google-mark')
+  const spinner = Object.assign(document.createElement('span'), { className: 'spinner' })
+  spinner.setAttribute('aria-hidden', 'true')
+  const busy = text => {
+    button.disabled = Boolean(text)
+    label.textContent = text || 'Continue with Google'
+    if (text) mark.replaceWith(spinner); else spinner.replaceWith(mark) // each a no-op when already so
   }
+  // Back from Google with the browser's Back button, the page may come back as it was left: busy.
+  addEventListener('pageshow', e => { if (e.persisted) busy('') })
 
-  function showEmail () {
-    codeForm.hidden = true
-    emailForm.hidden = false
-    codeForm.reset()
-    errorOf(codeForm).textContent = ''
-    onStep('email')
-    setMode(mode)
-    emailForm.email.focus()
-  }
+  button.addEventListener('click', async () => {
+    busy('Opening Google…')
+    error.textContent = ''
+    const secret = b64url(crypto.getRandomValues(new Uint8Array(32)))
+    const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret))))
+    try { sessionStorage.setItem(SECRET, secret) } catch { /* the ticket can't be used without it: say so below */ }
+    const back = PAGES.includes(location.pathname) ? location.pathname : '/account'
+    location.assign(`${API}/v1/auth/google?${new URLSearchParams({ to: 'site', back, challenge })}`)
+  })
 
-  function showCode () {
-    emailForm.hidden = true
-    codeForm.hidden = false
-    switchLine.replaceChildren()
-    const other = document.createElement('button')
-    other.type = 'button'
-    other.className = 'link'
-    other.textContent = 'Use a different email'
-    other.addEventListener('click', showEmail)
-    sentLine.replaceChildren('We sent a code to ', Object.assign(document.createElement('strong'), { textContent: email }), '. It works for 10 minutes.')
-    switchLine.append(other)
-    onStep('code')
-    codeForm.code.focus()
-  }
-
-  async function run (form, busyLabel, work) {
-    if (busy) return
-    const submit = submitOf(form)
-    const label = submit.textContent
-    busy = true
-    submit.disabled = true
-    submit.textContent = busyLabel
-    errorOf(form).textContent = ''
-    try { await work() } catch (err) {
-      errorOf(form).textContent = friendly(err)
-      // A wrong code stays selected, so typing the right one replaces it.
-      if (form === codeForm) codeForm.code.select()
-    } finally {
-      busy = false
-      submit.disabled = false
-      submit.textContent = label
+  // Back from Google: #ticket=… (or #error=…), used once and cleared from the address bar straight away.
+  const hash = new URLSearchParams(location.hash.slice(1))
+  if (hash.has('ticket') || hash.has('error')) {
+    history.replaceState(null, '', location.pathname + location.search)
+    let secret = null
+    try { secret = sessionStorage.getItem(SECRET); sessionStorage.removeItem(SECRET) } catch { /* below */ }
+    if (hash.has('error')) error.textContent = WHY[hash.get('error')] ?? WHY.google_failed
+    else if (!secret) error.textContent = 'That sign-in started in another tab or browser. Try again here.'
+    else {
+      busy('Signing you in…')
+      redeem(hash.get('ticket'), secret)
+        .then(() => onSignedIn(), err => { error.textContent = friendly(err) })
+        .finally(() => busy(''))
     }
   }
 
-  // An old error goes away as soon as the visitor starts fixing it.
-  for (const form of [emailForm, codeForm]) form.addEventListener('input', () => { if (!busy) errorOf(form).textContent = '' })
-
-  emailForm.addEventListener('submit', e => {
-    e.preventDefault()
-    const typed = emailForm.email.value.trim()
-    if (!typed) { errorOf(emailForm).textContent = 'Enter your email.'; return }
-    if (!EMAIL.test(typed)) { errorOf(emailForm).textContent = 'That email doesn’t look right. Check it and try again.'; return }
-    void run(emailForm, 'Sending your code…', async () => {
-      await sendCode(typed)
-      email = typed
-      showCode()
-    })
-  })
-
-  const digits = () => codeForm.code.value.replace(/\D/g, '')
-  const verify = () => run(codeForm, 'Signing in…', async () => {
-    await verifyCode(email, digits(), mode === 'create' ? emailForm.displayName.value.trim() : '')
-    emailForm.reset()
-    codeForm.reset()
-    onSignedIn()
-  })
-  codeForm.addEventListener('submit', e => {
-    e.preventDefault()
-    if (digits().length !== 6) { errorOf(codeForm).textContent = 'The code is the 6 digits in the email.'; return }
-    void verify()
-  })
-  // Digits only, six at most ("123 456" pastes as 123456). Six typed or pasted, or filled in from the email by the
-  // phone: sign in straight away.
-  codeForm.code.addEventListener('input', () => {
-    const d = digits().slice(0, 6)
-    if (codeForm.code.value !== d) codeForm.code.value = d
-    if (d.length === 6 && !busy) void verify()
-  })
-
-  // Busy on the link itself, so Continue keeps its label. It stays: a code that ran out of tries needs another.
-  resend.addEventListener('click', async () => {
-    if (busy) return
-    busy = true
-    resend.disabled = true
-    resend.textContent = 'sending…'
-    errorOf(codeForm).textContent = ''
-    try {
-      await sendCode(email)
-      codeForm.reset()
-      sentLine.replaceChildren('We sent a new code to ', Object.assign(document.createElement('strong'), { textContent: email }), '. Use the newest one.')
-      codeForm.code.focus()
-    } catch (err) { errorOf(codeForm).textContent = friendly(err) } finally {
-      busy = false
-      resend.disabled = false
-      resend.textContent = 'send a new code'
-    }
-  })
-
-  setMode(start)
+  onMode(mode)
   return {
-    setError: message => { errorOf(codeForm.hidden ? emailForm : codeForm).textContent = message || '' },
-    setMode: next => { if (!codeForm.hidden) showEmail(); setMode(next) },
+    setError: message => { error.textContent = message || '' },
+    setMode: next => { onMode(next) },
   }
 }

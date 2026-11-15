@@ -6,6 +6,7 @@ import { emptyBatch } from './local.ts'
 import { openDb } from '../db.ts'
 import { SqliteTasteStore } from '../store.ts'
 import { SyncService } from './service.ts'
+import { signIn } from './sign-in.testing.ts'
 
 // The cloud's owner can turn away apps that are too old ("Update needed") and put one line in front of every
 // app, through answers to calls the app makes anyway (cloud/src/index.ts). So the app says its version on every
@@ -22,7 +23,7 @@ function cloud () {
     const headers: Record<string, string> = answer.notice ? { 'x-nexttupp-notice': encodeURIComponent(answer.notice) } : {}
     if (answer.tooOld) return Response.json({ error: 'update_required', message: 'This version of nexttupp is too old to sync. Update to 0.6.0 or later.' }, { status: 426, headers })
     switch (path) {
-      case '/v1/auth/code/verify': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e10, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } }, { headers })
+      case '/v1/auth/ticket': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e10, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } }, { headers })
       case '/v1/sync/push': return Response.json({ applied: {}, serverTime: Date.now() }, { headers })
       case '/v1/sync/pull': return Response.json({ cursor: '1', more: false, serverTime: Date.now(), ...emptyBatch() }, { headers })
     }
@@ -46,7 +47,7 @@ describe('app versions and notices from the cloud', () => {
     fake = cloud()
     sync = new SyncService({ db, store, dataDir: dir, cloudUrl: 'https://cloud.invalid', fetch: fake.fetchImpl, appVersion: '0.5.5' })
     sync.start()
-    await sync.verifyCode('me@example.com', '123456')
+    await signIn(sync)
     await vi.advanceTimersByTimeAsync(10_000)
   })
 

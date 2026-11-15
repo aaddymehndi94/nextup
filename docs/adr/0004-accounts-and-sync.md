@@ -161,3 +161,30 @@ none (`password_hash` is empty, which no key matches).
 
 **Guessing** is bounded by limits rather than code length; see `cloud/README.md`, "Auth and account".
 
+
+## Update, 2026-11-15: sign in with Google instead
+
+**Decision.** "Continue with Google" replaces the emailed code, on nexttupp.com, the phone page and the app.
+The account is still the email: Google's verified email finds the account that has it, so every existing
+account (made with a password or a code) keeps its profiles, likes and lists, and a new email makes a new
+account (first name from Google, nothing else). Reverses the code decision above.
+
+**Why.** The Workers Paid plan was taken only to send codes; the owner would rather not pay $5 a month for a
+service shared with friends. Google sign-in costs nothing and everyone has a Google account. Someone whose
+email isn't Gmail (the friend on Yahoo) can make a Google account with their own address, and it matches.
+Accepted: Google takes part in every sign-in and knows the person uses nexttupp (the terms say so), and Google
+could in principle turn the client off.
+
+**How.** The cloud runs the OAuth code flow itself (`cloud/src/google.ts`), with PKCE, a signed short-lived
+state cookie, and the client secret as a Worker secret. Google's ID token comes straight from Google over TLS,
+so its signature isn't checked; its issuer, audience, expiry and `email_verified` are. The browser comes back
+with a one-time ticket (`nxt_`, two minutes, one use), not a session: only whoever started holds the secret
+whose hash went out as `challenge`, so a ticket seen in a URL is worth nothing.
+- nexttupp.com keeps the secret in `sessionStorage` and comes back to `/account` or `/watch`.
+- The app's server keeps it in memory; the system browser comes back to `http://127.0.0.1:<port>/auth/google`,
+  which hands the ticket to this computer's server. The account token still never reaches a browser. Only a
+  request from this computer can start or finish (`isLoopback`); the app's window looks every 2 s at this
+  computer, not the cloud, until it's signed in.
+
+**Order.** Apps before 0.5.6 only know codes, so codes stay until `MIN_APP_VERSION` is 0.5.6; then the code
+routes, the email binding and the paid plan go.

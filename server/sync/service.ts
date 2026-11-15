@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -83,6 +84,8 @@ export class SyncService {
   private readonly now: () => number
   private readonly debounceMs: number
   private session: Session | null = null
+  /** The secret behind the Google sign-in this computer last started (googleLink), for 10 minutes. */
+  private google: { secret: string; until: number } | null = null
   private notice: string | null = null
   private state: SyncState = 'idle'
   private lastSyncAt: number | null = null
@@ -209,14 +212,24 @@ export class SyncService {
 
   // ---- Account -----------------------------------------------------------------------
 
-  /** Emails a sign-in code to `email`. The same for a new account: the code creates it. */
-  async sendCode (email: string): Promise<void> {
-    await this.cloud.sendCode(email.trim())
+  /**
+   * "Continue with Google": the link to open in the browser. It carries only a hash of a secret kept here, so
+   * the ticket the browser comes back with works only for this computer's own, latest sign-in.
+   */
+  googleLink (port: number): string {
+    const secret = randomBytes(32).toString('base64url')
+    this.google = { secret, until: this.now() + 10 * 60_000 }
+    return this.cloud.googleLink(port, createHash('sha256').update(secret).digest('base64url'))
   }
 
-  /** Signs in with the emailed code, creating the account (with `displayName`) the first time. */
-  async verifyCode (email: string, code: string, displayName?: string): Promise<AccountStatus> {
-    return this.begin(await this.cloud.verifyCode(email.trim(), code, displayName?.trim() || undefined))
+  /** The browser came back to this computer with a ticket: sign in with it, once. */
+  async finishGoogle (ticket: string): Promise<AccountStatus> {
+    const started = this.google
+    this.google = null
+    if (!started || this.now() > started.until) {
+      throw new CloudError(401, 'invalid_ticket', 'That sign-in wasn’t started in this app, or it took too long. Try again.')
+    }
+    return this.begin(await this.cloud.redeemTicket(ticket, started.secret))
   }
 
   private async begin (r: { token: string; expiresAt: number; account: CloudAccount }): Promise<AccountStatus> {

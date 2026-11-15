@@ -14,17 +14,14 @@ const wait = $('[data-wait]')
 // ---- Signed out -----------------------------------------------------------------------------
 
 const auth = mountAuth($('[data-auth]'), {
-  path: '/account',
-  // /account#create (and /signup) opens on "Create account".
+  // /account#create (and /signup) opens as "Join nexttupp."; the same button makes the account.
   mode: location.hash === '#create' ? 'create' : 'signin',
   onSignedIn: () => showAccount(),
-  // "We'll email you a code" stops fitting once it has.
-  onStep: step => { $('[data-signin-lede]').hidden = step === 'code' },
   onMode: mode => {
     $('[data-signin-heading]').textContent = mode === 'create' ? 'Join nexttupp.' : 'Welcome back.'
     $('[data-signin-lede]').textContent = mode === 'create'
-      ? 'Free, and anyone can make one. We’ll email you a code, so there’s no password to remember.'
-      : 'We’ll email you a code to sign in. No password needed.'
+      ? 'Free, and anyone can make one. Continue with your Google account: there’s no password to remember.'
+      : 'Sign in with your Google account. New here? The same button makes your free account.'
     history.replaceState(null, '', mode === 'create' ? '#create' : location.pathname)
   },
 })
@@ -32,7 +29,7 @@ const auth = mountAuth($('[data-auth]'), {
 function showSignIn (message) {
   views.account.hidden = true
   views.signin.hidden = false
-  auth.setError(message)
+  if (message !== undefined) auth.setError(message) // keep what came back from Google
 }
 
 $('[data-signout]').addEventListener('click', async () => {

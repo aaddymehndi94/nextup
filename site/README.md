@@ -32,9 +32,10 @@ one-week cache for `/fonts` and `/img`.
 
 **Signing in and creating an account (`cloud.js`).** `/account` and `/watch` are the only pages that talk to
 anything: they call `https://api.nexttupp.com` (CSP `connect-src` allows exactly that origin). Both show the same
-form: an email (and, from /account#create, an optional name), then the 6-digit code sent to it
-(`/v1/auth/code`, then `/v1/auth/code/verify`, which creates the account the first time). Six digits typed or
-pasted sign in straight away; a wrong code stays selected so the next one replaces it. The session token is kept in this site's `localStorage` (`nexttupp:cloud`), so signing in on one
+form: one “Continue with Google” button. It sends the tab to the cloud (`/v1/auth/google?to=site&back=…`),
+which sends it to Google and back to the same page with a one-time ticket in the fragment; the page turns that
+into a session with `/v1/auth/ticket` and a secret it kept in `sessionStorage`, so a ticket on its own is worth
+nothing. The same button signs in or makes the account. The session token is kept in this site's `localStorage` (`nexttupp:cloud`), so signing in on one
 page signs in on the others. The cloud allows 5 sign-ups an hour from one network.
 
 **Your account (`/account`).** Once signed in, the page lists the account's computers (`/v1/devices`). None yet:

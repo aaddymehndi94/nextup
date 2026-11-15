@@ -67,10 +67,30 @@ All times are integer milliseconds since the Unix epoch.
 
 ### Auth and account
 
-**Sign-in codes (since 2026-11-15; `src/codes.ts`).** Everyone signs in, and new people sign up, with a 6-digit
-code sent by email. There are no passwords for new accounts. The password endpoints below the first two rows
-stay only for apps before 0.5.5 and accounts made before codes; those accounts keep their verifier, and a
-code works for them too.
+**Continue with Google (since 0.5.6; `src/google.ts`).** Everyone signs in, and new people sign up, with Google.
+The account is the email: Google's verified email finds the account that has it, or makes one (first name from
+Google). See ADR 0004, "sign in with Google instead".
+
+| Method and path | Auth | Request | Response |
+|---|---|---|---|
+| `GET /v1/auth/google` | – | `?to=site&back=/account\|/watch&challenge=` or `?to=app&port=1024–65535&challenge=` | `302` to Google, with a signed `nx_google` cookie (10 minutes) holding the state, PKCE verifier and where to land · `400 invalid_request` · `503 google_unavailable` (no `GOOGLE_CLIENT_ID`) |
+| `GET /v1/auth/google/callback` | cookie | Google's `?code&state` (or `?error`) | `302` to `SITE_URL` + `back`, or `http://127.0.0.1:<port>/auth/google`, with `#ticket=nxt_…`, or `#error=` `expired` · `cancelled` · `google_failed` · `unverified_email` · `account_disabled` · `too_many_attempts` |
+| `POST /v1/auth/ticket` | – | `{ ticket, secret }` | `200 { token, expiresAt, account: Account, created }` · `401 invalid_ticket` (unknown, used, two minutes old, or `secret` doesn't hash to the `challenge`) |
+
+- `challenge` is base64url SHA-256 of a secret that only the starter keeps: the page in `sessionStorage`, the
+  app's server in memory. A ticket works once, so the wrong secret uses it up.
+- `sign_in_tickets` (migration 0007) keeps the ticket's hash, the account and the challenge.
+- New accounts count against the 5-sign-ups-an-hour-per-network limit (`too_many_attempts`).
+- Config: `GOOGLE_CLIENT_ID` in `wrangler.jsonc` `vars` (public); `GOOGLE_CLIENT_SECRET` with
+  `wrangler secret put`; `SITE_URL` (default `https://nexttupp.com`). Google's console has
+  `https://api.nexttupp.com/v1/auth/google/callback` as the redirect URI.
+- Locally, `--var DEV_FAKE_GOOGLE:on` stands in for Google on `http://localhost` or `127.0.0.1` only: the
+  callback's `code` is the email, or `email|First name`. `wrangler dev` needs `--local-upstream 127.0.0.1:<port>`
+  for that, or the Worker sees the `api.nexttupp.com` route as its host (see `scripts/sync-e2e.mjs`).
+
+**Sign-in codes (2026-11-15, apps 0.5.5 only; `src/codes.ts`).** A 6-digit code sent by email. These routes and
+the `EMAIL` binding go once `MIN_APP_VERSION` is 0.5.6. The password endpoints below the first two rows stay
+only for apps before 0.5.5.
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|

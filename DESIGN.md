@@ -198,6 +198,9 @@ A neutral near-black world with one action colour; hue appears only in artwork, 
   In Appearance a profile can swap it for one of five soft tints: Sun #ffd166, Peach #ffb48a, Mint #7ee2b8,
   Sky #8ecbff, Lilac #c8b4ff, or any colour they pick. A pick too dark for Ink on Light text is lightened towards
   white until its luminance reaches 0.3 (`web/src/colour.ts`), with a note saying so. The focus ring stays white.
+- **The one exception: "Continue with Google"** is Google's own button whatever the accent: white (#ffffff,
+  #f0f0f0 on hover), text #1f1f1f, and the four-colour G (`GoogleMark`, `GOOGLE_MARK`). Google's sign-in branding
+  guidelines ask for it; don't turn it into an accent button.
 
 ### Neutral
 - **Projection Black** (#0a0a0b): the page ground and the base of every scrim and gradient.
@@ -408,19 +411,20 @@ Series tag, the scrubber time tip).
   secondary button. It appears on phones only, never inside the installed app.
 
 ### Sign-in (nexttupp.com/account, /watch, and the app's Account)
-- **One form for signing in and creating an account:** an email, then the 6-digit code sent to it. No
-  password, no Sign in / Create account tabs. The website's create mode (/account#create) only adds an optional
-  name.
-- **Step 1:** the Email field and one white "Email me a code".
-- **Step 2:** "We sent a code to <email>. It works for 10 minutes." (the address in Screen White at 620), the
-  Code field (1.5rem, 620, 0.3em tracking, proportional figures), and a white Continue. Six digits typed or
-  pasted sign in at once. A wrong code stays selected under "That code isn’t right. 4 tries left.", so the
-  next one replaces it.
-- **Quiet ways out, as text links, never pills:** "Nothing yet? Check your spam folder, or send a new code."
-  (busy text on the link itself), then "Use a different email". The page's intro ("We’ll email you a code…")
-  hides on step 2.
+- **One button for signing in and creating an account:** "Continue with Google" (the exception under Colors),
+  full width and large on the website, content width in the app. No email field, no tabs. The website's create
+  mode (/account#create) only changes the heading ("Join nexttupp." instead of "Welcome back.").
+- **Busy:** a spinner where the G was and a label saying what's happening ("Opening your browser…" in the app,
+  "Signing you in…" on the website on the way back); the website's button dims to 70% while it waits.
+- **The app's waiting state:** the browser does the signing in, so the page says "Finish signing in with Google in
+  your browser. This page carries on by itself once you have." with "Open the browser again" as a secondary
+  button and Cancel as an inline link beside it.
+- **Where the browser lands (the app's /auth/google):** a bare page in the computer's browser, outside the app's
+  shell: the wordmark, one Expanded title ("You're signed in." / "Sign-in cancelled." / "That sign-in took too
+  long."), and one `--text-2` line saying what to do next. 32rem column, nothing else.
+- **Fine print** under the button: who already has an account picks the Google account with the same email.
 - **Errors** are Screen White at 560–620 on both surfaces, never red: red is only for destructive actions.
-- **Terms:** a fine-print line under the first step's button, "By continuing, you agree to the terms" (inline
+- **Terms:** a fine-print line under the button, "By continuing, you agree to the terms" (inline
   link). The app's Account page ends with a hairline footer: "nexttupp hosts no films or music: what you play
   is your call. Terms of use".
 

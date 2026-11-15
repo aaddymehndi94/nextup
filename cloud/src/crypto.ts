@@ -103,7 +103,7 @@ export function timingSafeEqual (a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /** An opaque bearer secret: a type prefix plus 256 random bits. Only its SHA-256 is ever stored. */
-export function randomToken (prefix: 'nxs_' | 'nxi_' | 'nxr_' | 'nxh_'): string {
+export function randomToken (prefix: 'nxs_' | 'nxi_' | 'nxr_' | 'nxh_' | 'nxt_'): string {
   return prefix + b64url(crypto.getRandomValues(new Uint8Array(32)))
 }
 

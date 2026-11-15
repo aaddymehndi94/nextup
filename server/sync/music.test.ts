@@ -12,6 +12,7 @@ import { SqliteTasteStore } from '../store.ts'
 import { ackPush, applyPull, collectPush, emptyBatch, linkProfiles, pendingCount } from './local.ts'
 import { ackMusicPush, applyMusicPull, collectMusicPush, emptyMusicBatch, musicPendingCount, trackWire } from './music.ts'
 import { SyncService } from './service.ts'
+import { signIn } from './sign-in.testing.ts'
 
 const ACCOUNT = '11111111-1111-4111-8111-111111111111'
 const DZ = `https://cdn-images.dzcdn.net/images/artist/${'0123456789abcdef'.repeat(2)}/500x500-000000-80-0-0.jpg`
@@ -333,7 +334,7 @@ function fakeCloud (opts: { music: boolean; musicFails?: boolean }) {
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
     const count = () => Object.values(body).reduce((n: number, v) => n + (Array.isArray(v) ? v.length : 0), 0)
     switch (u.pathname) {
-      case '/v1/auth/code/verify': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e9, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
+      case '/v1/auth/ticket': return Response.json({ token: `nxs_${'a'.repeat(43)}`, expiresAt: Date.now() + 1e9, account: { id: ACCOUNT, email: 'me@example.com', displayName: null, role: 'member', createdAt: 0 } })
       case '/v1/sync/push': parseBatch(body, Date.now()); seq += count(); return Response.json({ applied: {}, serverTime: Date.now() })
       case '/v1/sync/pull': return Response.json({ cursor: String(seq), more: false, serverTime: Date.now(), ...emptyBatch(), ...(opts.music ? { musicHead: String(musicSeq) } : {}) })
     }
@@ -377,7 +378,7 @@ describe('the sync service', () => {
     const sync = service(cloud.fetchImpl)
     try {
       tasteAndMusic()
-      const status = await sync.verifyCode('me@example.com', '123456')
+      const status = await signIn(sync)
       await sync.syncNow()
       expect(status.sync).toMatchObject({ state: 'synced', error: null, pending: 0 })
       expect(sync.status().sync).toMatchObject({ state: 'synced', error: null, pending: 0 })
@@ -393,7 +394,7 @@ describe('the sync service', () => {
     const sync = service(cloud.fetchImpl)
     try {
       const me = tasteAndMusic()
-      await sync.verifyCode('me@example.com', '123456')
+      await signIn(sync)
       const sequence = cloud.calls.filter(c => c.includes('/v1/sync/'))
       expect(sequence.indexOf('POST /v1/sync/music/push')).toBeGreaterThan(sequence.lastIndexOf('POST /v1/sync/push'))
       expect(sequence).toContain('GET /v1/sync/music/pull')
@@ -418,7 +419,7 @@ describe('the sync service', () => {
     const sync = service(cloud.fetchImpl)
     try {
       tasteAndMusic()
-      await sync.verifyCode('me@example.com', '123456')
+      await signIn(sync)
       await sync.syncNow()
       expect(sync.status().sync).toMatchObject({ state: 'synced', error: null })
       expect(sync.status().sync!.pending).toBeGreaterThan(0) // the music rows, still waiting

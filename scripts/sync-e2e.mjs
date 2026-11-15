@@ -1,10 +1,13 @@
-// Sign-in and sync, end to end, on this machine only: a local Worker (`cd cloud && npm run dev`, or
-// `wrangler dev --local`) and two nexttupp servers with their own data dirs, standing in for two laptops.
+// Sign-in and sync, end to end, on this machine only: a local Worker and two nexttupp servers with their own
+// data dirs, standing in for two laptops. The Worker stands in for Google, which it does only on localhost:
 //
+//   cd cloud && npx wrangler d1 migrations apply nexttupp --local --persist-to <dir>
+//   cd cloud && npx wrangler dev --local --port 8799 --local-upstream 127.0.0.1:8799 --persist-to <dir> \
+//     --var GOOGLE_CLIENT_ID:dev --var DEV_FAKE_GOOGLE:on
+//   (--local-upstream keeps the Worker on 127.0.0.1: without it, it sees the api.nexttupp.com route as its
+//   host, and the stand-in for Google, which only runs on localhost, says no)
 //   node scripts/sync-e2e.mjs
 //   A=http://127.0.0.1:4550 B=http://127.0.0.1:4551 CLOUD=http://127.0.0.1:8799   (the defaults)
-//   CLOUD_LOG=<the local Worker's output, e.g. `wrangler dev --local > cloud.log`>: sign-in codes are read from
-//   it, since a local Worker only logs the emails it would send.
 //
 // Start each server with NEXTTUPP_DATA=<its own scratch dir> NEXTTUPP_CLOUD_URL=$CLOUD PORT=…, never the
 // real data dir, and pass those dirs as A_DATA and B_DATA (defaults /tmp/nx-a, /tmp/nx-b): the script puts a
@@ -14,7 +17,6 @@
 // removals reach the cloud as tombstones. Private mode sends nothing. Phase 2: a friend creates their own
 // account on B; the friend's account sees none of the owner's data.
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -26,26 +28,27 @@ const B_DATA = process.env.B_DATA ?? '/tmp/nx-b'
 
 const OWNER = { email: `owner-${Date.now().toString(36)}@example.test` }
 const FRIEND = { email: `friend-${Date.now().toString(36)}@example.test` }
-const CLOUD_LOG = process.env.CLOUD_LOG
-if (!CLOUD_LOG) throw new Error('Set CLOUD_LOG to the local Worker’s output file (sign-in codes are read from it)')
-
-/** Asks `send` for a code, then finds it in the local Worker's log: the newest one after the ask. */
-async function emailedCode (send) {
-  const from = readFileSync(CLOUD_LOG, 'utf8').length
-  await send()
-  for (let i = 0; i < 50; i++) {
-    const m = [...readFileSync(CLOUD_LOG, 'utf8').slice(from).matchAll(/(\d{6}) is your nexttupp code/g)].at(-1)
-    if (m) return m[1]
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error('no sign-in code in CLOUD_LOG')
+/**
+ * "Continue with Google" against the local Worker: open `link` (the cloud's Google link), let the stand-in for
+ * Google say yes as `who`, and return where the browser lands (its fragment holds the ticket).
+ */
+async function googleRoundTrip (link, who, displayName) {
+  const start = await fetch(link, { redirect: 'manual' })
+  const state = new URL(start.headers.get('location')).searchParams.get('state')
+  const cookie = start.headers.get('set-cookie').split(';')[0]
+  const code = displayName ? `${who.email}|${displayName}` : who.email
+  const back = await fetch(`${CLOUD}/v1/auth/google/callback?${new URLSearchParams({ code, state })}`, { redirect: 'manual', headers: { cookie } })
+  const hash = new URLSearchParams(new URL(back.headers.get('location')).hash.slice(1))
+  if (!hash.get('ticket')) throw new Error(`Google sign-in for ${who.email}: ${hash.get('error')}`)
+  return hash.get('ticket')
 }
 
-/** Signs a nexttupp server in (or up) the way the app does: email, then the code. */
+/** Signs a nexttupp server in (or up) the way the app does: its Google link, then the ticket back to it. */
 async function signIn (server, who, displayName) {
-  const code = await emailedCode(() => fetch(`${server}/api/account/code`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: who.email }) }))
-  return api(server, 'POST', '/api/account/verify', { email: who.email, code, ...(displayName ? { displayName } : {}) })
+  const { url } = await api(server, 'POST', '/api/account/google', {})
+  return api(server, 'POST', '/api/account/google/finish', { ticket: await googleRoundTrip(url, who, displayName) })
 }
+
 const GODFATHER = 'tt0068646'
 const MATRIX = 'tt0133093'
 const SHAWSHANK = 'tt0111161'
@@ -98,11 +101,13 @@ const listen = (base, profile, trackId, headers = {}) => fetch(`${base}/api/musi
 const songState = (base, profile, id) => api(base, 'GET', `/api/music/track/${id}`, undefined, profile)
 const count = (dir, sql, ...p) => local(dir, db => Number(db.prepare(sql).get(...p).n))
 
-/** Reads the account straight from the cloud, as a client would: a code by email, then pull everything. */
+/** Reads the account straight from the cloud, as the website would: sign in with Google, then pull everything. */
 async function cloudPull (who) {
   const post = (path, body, token) => fetch(CLOUD + path, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }).then(r => r.json())
-  const code = await emailedCode(() => post('/v1/auth/code', { email: who.email }))
-  const { token } = await post('/v1/auth/code/verify', { email: who.email, code })
+  const secret = createHash('sha256').update(String(Math.random())).digest('base64url')
+  const challenge = createHash('sha256').update(secret).digest('base64url')
+  const ticket = await googleRoundTrip(`${CLOUD}/v1/auth/google?to=site&challenge=${challenge}`, who)
+  const { token } = await post('/v1/auth/ticket', { ticket, secret })
   const all = async (path, out) => {
     for (let since = '0'; ;) {
       const page = await fetch(`${CLOUD}${path}?since=${since}`, { headers: { authorization: `Bearer ${token}` } }).then(r => r.json())
@@ -131,7 +136,7 @@ local(B_DATA, db => db.prepare("INSERT INTO music_mixes (id, profile_id, kind, t
   .run(AI_MIX, bMe.id, JSON.stringify([{ id: BROWN.id, why: 'You love his flow' }, { id: KESARIYA.id }]), Date.now()))
 
 const joinedA = await signIn(A, OWNER, 'Owner')
-check('A creates an account with a code by email, no invite or password', joinedA.signedIn && joinedA.account.role === 'member' && joinedA.sync.state === 'synced', joinedA.sync?.state)
+check('A creates an account with Google, no invite or password', joinedA.signedIn && joinedA.account.role === 'member' && joinedA.sync.state === 'synced', joinedA.sync?.state)
 check('the session token never reaches the browser', !JSON.stringify(joinedA).includes('nxs_'))
 const kid = await api(A, 'POST', '/api/profiles', { name: 'Kid' })
 await api(A, 'PUT', `/api/me/rating/movie/${MATRIX}`, { value: 1, source: 'title' }, aMe.id)
@@ -210,9 +215,10 @@ check('the friend’s account holds only the friend’s profile', friendCloud.pr
 check('the friend’s account holds none of the owner’s music', Object.values(friendCloud.music).every(rows => rows.length === 0))
 await sync(A)
 check('the owner never sees the friend’s profile', !(await profiles(A)).some(p => p.id === fp.id))
-const cloudPost = (path, body) => fetch(CLOUD + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
-const again = await cloudPost('/v1/auth/code/verify', { email: FRIEND.email, code: await emailedCode(() => cloudPost('/v1/auth/code', { email: FRIEND.email })) })
-check('an email has one account: a second code signs in to it, not a new one', again.created === false && again.account?.email === FRIEND.email)
+const secret = createHash('sha256').update('again').digest('base64url')
+const ticket = await googleRoundTrip(`${CLOUD}/v1/auth/google?to=site&challenge=${createHash('sha256').update(secret).digest('base64url')}`, FRIEND)
+const again = await fetch(`${CLOUD}/v1/auth/ticket`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ticket, secret }) }).then(r => r.json())
+check('an email has one account: signing in with Google again finds it, not a new one', again.created === false && again.account?.email === FRIEND.email)
 const csrf = await fetch(`${A}/api/account/logout`, { method: 'POST' })
 check('account writes need a JSON body (no cross-site sign-out)', csrf.status === 415)
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { HttpError } from '../http.ts'
+import { isLoopback } from '../lan/net.ts'
 import { CloudError } from './cloud.ts'
 import type { SyncService } from './service.ts'
 
@@ -7,8 +8,8 @@ import type { SyncService } from './service.ts'
 // sees the account's email and the sync status.
 //
 //   GET  /api/account            status: { signedIn, account?, sync?, notice? }
-//   POST /api/account/code       { email }                                  → 204, a code is emailed
-//   POST /api/account/verify     { email, code, displayName? }              → status + { merged }
+//   POST /api/account/google     {}                                         → { url } to open in the browser
+//   POST /api/account/google/finish { ticket }                              → status + { merged }
 //   POST /api/account/focus      { focused }                                → 204 (sync's events)
 //   POST /api/account/logout     {}                                         → status
 //   POST /api/account/sync       {}                                         → status after one sync
@@ -23,7 +24,6 @@ function toHttp (err: unknown): Error {
   if (!(err instanceof CloudError)) return err as Error
   if (err.status === 0) return new HttpError(503, 'Can’t reach nexttupp’s sync service. Check your connection and try again.')
   if (err.code === 'too_many_attempts') return new HttpError(429, err.message)
-  if (err.status === 400 && /^email/.test(err.message)) return new HttpError(400, 'That email doesn’t look right. Check it and try again.')
   return new HttpError(err.status >= 400 && err.status < 500 ? err.status : 502, err.message)
 }
 
@@ -37,31 +37,32 @@ export function registerAccountRoutes (app: FastifyInstance, sync: SyncService):
   const body = (req: FastifyRequest) => (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>
   const withMerged = (status: object) => ({ ...status, merged: sync.lastMerge })
 
-  app.get('/api/account', async () => sync.status())
-
-  // Signing in, which also creates the account the first time: an email, then the 6-digit code sent to it.
-  app.post('/api/account/code', async (req, reply) => {
-    guard(req)
-    try {
-      await sync.sendCode(text(body(req).email, 'Email', 254))
-    } catch (err) { throw toHttp(err) }
-    return reply.code(204).send()
-  })
-
-  app.post('/api/account/verify', async req => {
-    guard(req)
-    const b = body(req)
-    const name = typeof b.displayName === 'string' && b.displayName.trim() ? b.displayName.trim().slice(0, 40) : undefined
-    const code = text(b.code, 'Code', 12).replace(/\D/g, '')
-    if (code.length !== 6) throw new HttpError(400, 'The code is the 6 digits in the email')
-    try {
-      return withMerged(await sync.verifyCode(text(b.email, 'Email', 254), code, name))
-    } catch (err) { throw toHttp(err) }
-  })
+  // `merged`: how the last sign-in matched this computer's profiles to the account's (the app follows it).
+  app.get('/api/account', async () => withMerged(sync.status()))
 
   app.post('/api/account/logout', async req => {
     guard(req)
     return sync.logout()
+  })
+
+  // "Continue with Google", on this computer only (a phone's browser can't come back to 127.0.0.1 here): the
+  // link opens in the browser, and Google's round trip ends at this server's /auth/google page with a ticket,
+  // which that page posts back here. The port is the one this request came in on.
+  const here = (req: FastifyRequest) => {
+    if (!isLoopback(req.socket.remoteAddress)) throw new HttpError(403, 'Sign in on the computer that runs nexttupp.')
+  }
+  app.post('/api/account/google', async req => {
+    guard(req)
+    here(req)
+    return { url: sync.googleLink(req.socket.localPort ?? 4545) }
+  })
+  app.post('/api/account/google/finish', async req => {
+    guard(req)
+    here(req)
+    const ticket = text(body(req).ticket, 'Ticket', 100)
+    try {
+      return withMerged(await sync.finishGoogle(ticket))
+    } catch (err) { throw toHttp(err) }
   })
 
   // The app was opened or came back into view (fetch the other computers' changes, now and then), or was left

@@ -133,6 +133,14 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .button.secondary:hover { background: rgb(255 255 255 / 0.2); }
 .button.small { height: 2.25rem; padding-inline: 1rem; font-size: 0.875rem; }
 .button.large { height: 3.5rem; padding: 0 2rem 0 1.625rem; font-size: 1.0625rem; }
+/* "Continue with Google": Google's light button, its "G" in its own colours (cloud.js). */
+.button.google { background: #fff; color: #1f1f1f; gap: 0.75rem; }
+.button.google:hover { background: #f0f0f0; }
+.button.google:disabled { opacity: 0.7; cursor: progress; }
+.button .google-mark { width: 1.25rem; height: 1.25rem; }
+/* While it opens Google or finishes signing in, a spinner stands where the G was. */
+.button.google .spinner { display: inline-block; flex: none; width: 1.125rem; height: 1.125rem; border-radius: 50%; border: 2px solid rgb(31 31 31 / 0.2); border-top-color: #1f1f1f; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* The OS-aware download button and the line of other platforms beneath it. */
 .get { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
@@ -431,14 +439,6 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 
 /* ---------- Sign in / create account (cloud.js) ---------- */
 .watch-field em { font-style: normal; font-weight: 480; color: var(--text-3); }
-/* Sign-in step 2: where the code went, and the code itself, spaced so six digits read at a glance. */
-.auth-sent { margin: 0; font-size: 1rem; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
-.auth-sent strong { color: var(--text); font-weight: 620; }
-.watch-field .code-input { font-size: 1.5rem; font-weight: 620; letter-spacing: 0.3em; }
-.watch-field .code-input::placeholder { letter-spacing: normal; }
-.watch-form .auth-switch { margin-top: 0; }
-.auth-switch { margin-top: 1.25rem; font-size: 0.9375rem; color: var(--text-3); }
-.auth-switch .link { font-weight: 600; }
 .ready-note { margin-top: 1.25rem; color: var(--text-2); line-height: 1.6; }
 .watch-list + .watch-primary { margin-top: 2rem; }
 .join-foot .sep { margin-inline: 0.25rem; opacity: 0.6; }

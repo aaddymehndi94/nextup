@@ -18,6 +18,11 @@
   // MIN_APP_VERSION and APP_NOTICE (src/index.ts) are set in the dashboard, Settings, Variables, so the owner
   // can change them without a deploy; keep_vars stops a deploy from wiping them.
   "keep_vars": true,
+  "vars": {
+    // "Continue with Google" (src/google.ts). The client ID is public; its secret is set with
+    // `wrangler secret put GOOGLE_CLIENT_SECRET`, never here.
+    "GOOGLE_CLIENT_ID": "490895467902-hc2340bocsar0str2isfj6ruikbn8doj.apps.googleusercontent.com"
+  },
   "d1_databases": [
     {
       "binding": "DB",

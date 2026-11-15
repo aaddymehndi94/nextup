@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { desktop } from '../desktop.ts'
 import { AlertTriangle, LogOut, RefreshCw, X } from 'lucide-react'
 import { vpnAdvice } from '../components/UpdateBanner.tsx'
 import { type AccountStatus, api, type FirewallState, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
@@ -68,129 +69,105 @@ async function adoptProfiles (status: AccountStatus) {
   if (target) chooseProfile(target)
 }
 
-/** Signing in, which also creates the account the first time: an email, then the 6-digit code sent to it. */
+/**
+ * Signing in, which also makes the account the first time: with Google, in the computer's own browser (Google
+ * doesn't allow sign-in inside an app's window). The browser comes back to this computer, which signs in; this
+ * page notices within a couple of seconds and carries on.
+ */
 function SignedOut ({ status, onStatus }: { status: AccountStatus; onStatus: (s: AccountStatus) => void }) {
-  const [email, setEmail] = useState('')
-  const [sentTo, setSentTo] = useState<string | null>(null)
-  const [resent, setResent] = useState(false)
-  const [code, setCode] = useState('')
-  const [busy, setBusy] = useState<'send' | 'verify' | 'resend' | null>(null)
+  const [waiting, setWaiting] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const codeInput = useRef<HTMLInputElement>(null)
-  const emailInput = useRef<HTMLInputElement>(null)
-  const started = useRef(false)
 
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const open = async () => {
     if (busy) return
-    if (!email.trim()) { setError('Enter your email.'); return }
-    setBusy('send')
+    setBusy(true)
     setError(null)
+    // In a plain browser tab, a window opened after a fetch gets blocked: open it now, point it at Google next.
+    // The desktop app sends any outside link to the system browser instead.
+    const tab = desktop ? null : window.open('about:blank', '_blank')
+    if (tab) tab.opener = null // the pages it goes to can't reach back into this one
     try {
-      await api.sendCode(email.trim())
-      setSentTo(email.trim())
-      setResent(false)
-      setCode('')
-    } catch (err) { setError((err as Error).message) }
-    setBusy(null)
+      const { url } = await api.googleLink()
+      if (tab) tab.location.href = url
+      else window.open(url, '_blank', 'noopener')
+      setWaiting(true)
+    } catch (err) {
+      tab?.close()
+      setError((err as Error).message)
+    }
+    setBusy(false)
   }
 
-  const verify = async (digits: string) => {
-    if (busy || !sentTo) return
-    if (digits.length !== 6) { setError('The code is the 6 digits in the email.'); return }
-    setBusy('verify')
-    setError(null)
-    try {
-      const next = await api.verifyCode({ email: sentTo, code: digits })
+  // While the browser is out at Google, look every 2 s (this computer, not the cloud) and on coming back here.
+  useEffect(() => {
+    if (!waiting) return
+    let done = false
+    let seen = 0
+    const look = async () => {
+      const next = await api.account().catch(() => null)
+      if (done || !next?.signedIn) return
+      // The first sync matches this computer's profiles to the account's: let it finish (20 s at most).
+      seen ||= Date.now()
+      if (next.sync?.state === 'syncing' && Date.now() - seen < 20_000) return
+      done = true
       await adoptProfiles(next)
       toast('You’re signed in')
       onStatus(next)
-    } catch (err) {
-      setError((err as Error).message)
-      setBusy(null)
-      // A wrong code stays selected, so typing the right one replaces it.
-      requestAnimationFrame(() => codeInput.current?.select())
     }
-  }
-
-  const resend = async () => {
-    if (!sentTo || busy) return
-    setBusy('resend')
-    setError(null)
-    try {
-      await api.sendCode(sentTo)
-      setResent(true)
-      setCode('')
-      codeInput.current?.focus()
-    } catch (err) { setError((err as Error).message) }
-    setBusy(null)
-  }
-
-  // Digits only, six at most ("123 456" pastes as 123456); the sixth signs in straight away.
-  const onCode = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const digits = e.target.value.replace(/\D/g, '').slice(0, 6)
-    setCode(digits)
-    setError(null)
-    if (digits.length === 6) void verify(digits)
-  }
-
-  // Each step's field takes the focus when it shows (not on first load: the page itself has it then).
-  useEffect(() => {
-    if (sentTo) codeInput.current?.focus()
-    else if (started.current) emailInput.current?.focus()
-    started.current = true
-  }, [sentTo])
+    const t = setInterval(() => { void look() }, 2000)
+    window.addEventListener('focus', look)
+    return () => { done = true; clearInterval(t); window.removeEventListener('focus', look) }
+  }, [waiting, onStatus])
 
   return (
     <>
       {status.notice && <p className="account-notice" role="status">{status.notice}</p>}
-      {!sentTo
-        ? (
-          <form className="account-form" onSubmit={send} aria-label="Sign in" noValidate>
-            <label className="field">
-              <span className="field-label">Email</span>
-              <input ref={emailInput} type="email" value={email} onChange={e => { setEmail(e.target.value); setError(null) }} autoComplete="email" spellCheck={false} required />
-            </label>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <div className="actions">
-              <button type="submit" className="button primary" disabled={busy !== null}>
-                {busy && <span className="spinner" aria-hidden />}
-                {busy ? 'Sending your code…' : 'Email me a code'}
+      <div className="account-form" aria-label="Sign in" role="group">
+        {waiting && (
+          <p className="account-sent" role="status">
+            Finish signing in with Google in your browser. This page carries on by itself once you have.
+          </p>
+        )}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="actions">
+          {!waiting
+            ? (
+              <button type="button" className="button google-button" disabled={busy} onClick={() => { void open() }}>
+                {busy ? <span className="spinner" aria-hidden /> : <GoogleMark />}
+                {busy ? 'Opening your browser…' : 'Continue with Google'}
               </button>
-            </div>
-            <p className="fine-print">By continuing, you agree to the <a className="inline-link" href="https://nexttupp.com/terms" target="_blank" rel="noreferrer">terms</a>.</p>
-          </form>
-          )
-        : (
-          <form className="account-form" onSubmit={e => { e.preventDefault(); void verify(code) }} aria-label="Enter your code" noValidate>
-            <p className="account-sent">
-              {resent ? 'We sent a new code to ' : 'We sent a code to '}<strong>{sentTo}</strong>{resent ? '. Use the newest one.' : '. It works for 10 minutes.'}
-            </p>
-            <label className="field">
-              <span className="field-label">Code</span>
-              <input ref={codeInput} className="code-input" value={code} onChange={onCode} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]*" spellCheck={false} required />
-            </label>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <div className="actions">
-              <button type="submit" className="button primary" disabled={busy !== null}>
-                {busy === 'verify' && <span className="spinner" aria-hidden />}
-                {busy === 'verify' ? 'Signing in…' : 'Continue'}
-              </button>
-            </div>
-            <p className="fine-print account-fine">
-              Nothing yet? Check your spam folder, or{' '}
-              <button type="button" className="inline-link" disabled={busy !== null} onClick={() => { void resend() }}>{busy === 'resend' ? 'sending…' : 'send a new code'}</button>.
-            </p>
-            <p className="fine-print account-fine">
-              <button type="button" className="inline-link" disabled={busy !== null} onClick={() => { setSentTo(null); setCode(''); setError(null) }}>Use a different email</button>
-            </p>
-          </form>
-          )}
+              )
+            : (
+              <>
+                <button type="button" className="button secondary" disabled={busy} onClick={() => { void open() }}>
+                  {busy && <span className="spinner" aria-hidden />}
+                  {busy ? 'Opening your browser…' : 'Open the browser again'}
+                </button>
+                <button type="button" className="inline-link" onClick={() => setWaiting(false)}>Cancel</button>
+              </>
+              )}
+        </div>
+        <p className="fine-print">By continuing, you agree to the <a className="inline-link" href="https://nexttupp.com/terms" target="_blank" rel="noreferrer">terms</a>.</p>
+      </div>
       <p className="fine-print account-fine">
-        Made your account on nexttupp.com? Use the same email. New to nexttupp? The code makes your free account.
-        {' '}Only profiles, ratings, My List, watch progress and taste settings sync, by title id. What you search for and stream stays on this computer.
+        Already have an account? Pick the Google account with the same email, and it’s all there. New to nexttupp? This
+        makes your free account. Only profiles, ratings, My List, watch progress and taste settings sync, by title id.
+        What you search for and stream stays on this computer.
       </p>
     </>
+  )
+}
+
+/** Google's "G", in its own colours: the one mark Google asks sign-in buttons to carry. */
+export function GoogleMark () {
+  return (
+    <svg className="google-mark" viewBox="0 0 48 48" aria-hidden>
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
   )
 }
 
