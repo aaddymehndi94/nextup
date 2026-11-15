@@ -91,10 +91,14 @@ describe('lyrics', () => {
     const ass = lyricsAss({ lines, title: 'Song', artist: 'Singer', duration: 60, from: 15 })
     expect(ass).toContain('PlayResX: 1280')
     expect(ass).toContain('one (x)')
-    // "one" (10–20 s) shows from 0 to 0:05 after a seek to 15 s; "three" starts at 0:15.
-    expect(ass).toMatch(/Dialogue: 0,0:00:00\.00,0:00:05\.00,Words.*\\fs50\\alpha&H00&\\b1\}one \(x\)/)
-    expect(ass).toMatch(/Dialogue: 0,0:00:15\.00,0:00:45\.00,Words/)
-    expect(lyricsAss({ lines: null, title: 'Song', artist: 'Singer', duration: 60, from: 0 })).toMatch(/\\fs60\}Song/)
+    // "one" (10–20 s) is sung from 0 to 0:05 after a seek to 15 s, bright, with "two" and "three" after it, faded
+    // but the same size, so nothing reflows when the next line comes; "three" starts at 0:15.
+    expect(ass).toMatch(/Dialogue: 0,0:00:00\.00,0:00:05\.00,Words.*\\fs46\\alpha&H00&\}one \(x\).*\\fs46\\alpha&H9C&\}two.*\\fs46\\alpha&H9C&\}three/)
+    expect(ass).toMatch(/Dialogue: 0,0:00:15\.00,0:00:45\.00,Words.*\\alpha&H00&\}three/)
+    // The line just sung stays above, fainter.
+    expect(ass).toMatch(/Dialogue: 0,0:00:05\.00,0:00:15\.00,Words.*\\an1.*\\alpha&HC8&\}one \(x\)/)
+    expect(ass).toContain('Mona Sans')
+    expect(lyricsAss({ lines: null, title: 'Song', artist: 'Singer', duration: 60, from: 0 })).toMatch(/\\fs56\}Song/)
   })
 })
 

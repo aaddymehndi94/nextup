@@ -6,7 +6,6 @@
 import { api, currentSession, forgetSession, mountAuth, signedOutError, signOut } from './cloud.js'
 import './site.js'
 
-const POLL_MS = 5000
 const $ = sel => document.querySelector(sel)
 const views = { signin: $('[data-view="signin"]'), account: $('[data-view="account"]') }
 const next = { setup: $('[data-next="setup"]'), ready: $('[data-next="ready"]') }
@@ -19,17 +18,18 @@ const auth = mountAuth($('[data-auth]'), {
   // /account#create (and /signup) opens on "Create account".
   mode: location.hash === '#create' ? 'create' : 'signin',
   onSignedIn: () => showAccount(),
+  // "We'll email you a code" stops fitting once it has.
+  onStep: step => { $('[data-signin-lede]').hidden = step === 'code' },
   onMode: mode => {
     $('[data-signin-heading]').textContent = mode === 'create' ? 'Join nexttupp.' : 'Welcome back.'
     $('[data-signin-lede]').textContent = mode === 'create'
-      ? 'Create your free account. It takes a few seconds, and anyone can make one.'
-      : 'Sign in to your nexttupp account.'
+      ? 'Free, and anyone can make one. We’ll email you a code, so there’s no password to remember.'
+      : 'We’ll email you a code to sign in. No password needed.'
     history.replaceState(null, '', mode === 'create' ? '#create' : location.pathname)
   },
 })
 
 function showSignIn (message) {
-  clearTimeout(pollTimer)
   views.account.hidden = true
   views.signin.hidden = false
   auth.setError(message)
@@ -43,7 +43,6 @@ $('[data-signout]').addEventListener('click', async () => {
 
 // ---- Signed in ------------------------------------------------------------------------------
 
-let pollTimer
 let account = null
 
 function showAccount () {
@@ -66,7 +65,6 @@ function showWho (email, name) {
 }
 
 async function refresh () {
-  clearTimeout(pollTimer)
   if (!currentSession()) return
   try {
     const [a, d] = await Promise.all([account ? null : api('GET', '/v1/account'), api('GET', '/v1/devices')])
@@ -76,11 +74,12 @@ async function refresh () {
     if (signedOutError(err)) { forgetSession(); showSignIn('Sign in again to continue.'); return }
     $('[data-lede]').textContent = err.message
   }
-  // Until a computer signs in, keep looking, so the page moves on by itself once the app is signed in.
-  if (!document.hidden && !next.setup.hidden) pollTimer = setTimeout(refresh, POLL_MS)
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden && currentSession() && !views.account.hidden) void refresh() })
+// No polling: the page looks again when someone comes back to it (from the app, say, once it's signed in).
+const again = () => { if (!document.hidden && currentSession() && !views.account.hidden) void refresh() }
+document.addEventListener('visibilitychange', again)
+window.addEventListener('focus', again)
 
 function ago (ms, now) {
   const m = Math.round(Math.max(0, now - ms) / 60000)
@@ -108,10 +107,7 @@ function render (devices, now = Date.now()) {
   next.ready.hidden = false
   wait.hidden = true
   heading.textContent = 'You’re all set.'
-  const open = devices.filter(d => d.online)
-  lede.textContent = open.length
-    ? `nexttupp is open on ${names(open.map(d => d.name))}. Search and watch there.`
-    : `nexttupp is set up on ${names(devices.map(d => d.name))}. Open it there to search and watch.`
+  lede.textContent = `nexttupp is set up on ${names(devices.map(d => d.name))}. Open it there to search and watch.`
   const list = $('[data-list]')
   list.replaceChildren()
   for (const d of devices) {
@@ -124,7 +120,8 @@ function render (devices, now = Date.now()) {
     name.textContent = d.name
     const meta = document.createElement('span')
     meta.className = 'watch-row-meta'
-    meta.textContent = d.online ? 'Open now' : `Last open ${ago(d.lastSeenAt, now)}`
+    // Computers only call the cloud on events, so this is when it last did: roughly when it was last used.
+    meta.textContent = `Last seen ${ago(d.lastSeenAt, now)}`
     text.append(name, meta)
     li.append(text)
     list.append(li)

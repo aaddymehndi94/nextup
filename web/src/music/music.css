@@ -41,13 +41,13 @@
 .m-card-artist .m-card-link[aria-pressed='true'] .m-art img { opacity: 0.55; }
 .m-picked {
   position: absolute; right: 6%; top: 6%; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%;
-  background: #fff; color: var(--on-light); box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / 0.5);
+  background: var(--accent); color: var(--on-light); box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / 0.5);
 }
 .m-picked svg { width: 1rem; height: 1rem; }
 .m-card-play {
   position: absolute; right: 0.625rem; top: calc(100% - 3.375rem); /* placed by the rule below on hover devices */
   display: none; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 50%;
-  background: #fff; color: var(--on-light); box-shadow: 0 0.5rem 1.25rem -0.25rem rgb(0 0 0 / 0.7);
+  background: var(--accent); color: var(--on-light); box-shadow: 0 0.5rem 1.25rem -0.25rem rgb(0 0 0 / 0.7);
   opacity: 0; transform: translateY(0.375rem); transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 .m-card-play svg { width: 1.125rem; height: 1.125rem; margin-left: 0.125rem; }
@@ -85,7 +85,7 @@
 
 /* Three bars that move with the music. */
 .m-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 0.875rem; }
-.m-bars i { width: 3px; height: 35%; border-radius: 1px; background: #fff; }
+.m-bars i { width: 3px; height: 35%; border-radius: 1px; background: var(--accent); }
 .m-bars.live i { animation: m-bar 900ms ease-in-out infinite alternate; }
 .m-bars.live i:nth-child(2) { animation-duration: 700ms; animation-delay: -300ms; }
 .m-bars.live i:nth-child(3) { animation-duration: 1100ms; animation-delay: -600ms; }
@@ -155,7 +155,7 @@
 .m-ask-form input::placeholder { color: var(--text-3); }
 .m-ask-go {
   display: grid; place-items: center; flex: none; width: 2.875rem; height: 2.875rem; margin-right: 0.4375rem; border-radius: 50%;
-  background: #fff; color: var(--on-light); transition: transform 160ms var(--ease), opacity 160ms;
+  background: var(--accent); color: var(--on-light); transition: transform 160ms var(--ease), opacity 160ms;
 }
 .m-ask-go svg { width: 1.25rem; height: 1.25rem; }
 .m-ask-go:disabled { opacity: 0.35; }
@@ -177,7 +177,7 @@
 .m-setup .notice { margin: 0; }
 .m-setup-problem { margin: 0; color: var(--fair); font-size: 0.875rem; }
 .m-setup-bar { align-self: stretch; height: 0.375rem; border-radius: 1rem; background: rgb(255 255 255 / 0.1); overflow: hidden; }
-.m-setup-bar span { display: block; height: 100%; border-radius: inherit; background: #fff; transition: width 600ms var(--ease); }
+.m-setup-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 600ms var(--ease); }
 .m-setup-bar span.waiting { width: 30% !important; animation: m-setup-wait 1.4s ease-in-out infinite alternate; }
 @keyframes m-setup-wait { from { transform: translateX(-30%); } to { transform: translateX(260%); } }
 @media (prefers-reduced-motion: reduce) { .m-setup-bar span.waiting { animation: none; } }
@@ -236,7 +236,7 @@ html.has-mini .snackbar-region { bottom: calc(env(safe-area-inset-bottom, 0px) +
 .mini-close { color: var(--text-3); }
 .mini-close:hover { color: var(--text); }
 .mini-play {
-  display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 50%; background: #fff; color: var(--on-light);
+  display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 50%; background: var(--accent); color: var(--on-light);
   transition: transform 160ms var(--ease);
 }
 .mini-play svg { width: 1.125rem; height: 1.125rem; }
@@ -302,7 +302,7 @@ html.np-open, html.np-open body { overflow: hidden; }
 .np-tools .m-icon { color: rgb(255 255 255 / 0.75); }
 .np-tools .m-icon[aria-pressed='true'], .np-tools .m-icon.on { color: #fff; background: rgb(255 255 255 / 0.16); }
 .np-play {
-  display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: 50%; background: #fff; color: var(--on-light);
+  display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: 50%; background: var(--accent); color: var(--on-light);
   box-shadow: 0 1rem 2.5rem -1rem rgb(0 0 0 / 0.8); transition: transform 160ms var(--ease);
 }
 .np-play svg { width: 1.75rem; height: 1.75rem; }
@@ -315,8 +315,8 @@ html.np-open, html.np-open body { overflow: hidden; }
 }
 .np-scrub input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #fff var(--p), rgb(255 255 255 / 0.24) var(--p)); }
 .np-scrub input::-moz-range-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #fff var(--p), rgb(255 255 255 / 0.24) var(--p)); }
-.np-scrub input::-webkit-slider-thumb { -webkit-appearance: none; width: 0.875rem; height: 0.875rem; margin-top: -5px; border-radius: 50%; background: #fff; opacity: 0; transition: opacity 160ms; }
-.np-scrub input::-moz-range-thumb { width: 0.875rem; height: 0.875rem; border: 0; border-radius: 50%; background: #fff; opacity: 0; }
+.np-scrub input::-webkit-slider-thumb { -webkit-appearance: none; width: 0.875rem; height: 0.875rem; margin-top: -5px; border-radius: 50%; background: var(--accent); opacity: 0; transition: opacity 160ms; }
+.np-scrub input::-moz-range-thumb { width: 0.875rem; height: 0.875rem; border: 0; border-radius: 50%; background: var(--accent); opacity: 0; }
 .np-scrub input:hover::-webkit-slider-thumb, .np-scrub input:active::-webkit-slider-thumb, .np-scrub input:focus-visible::-webkit-slider-thumb { opacity: 1; }
 .np-scrub input:hover::-moz-range-thumb, .np-scrub input:active::-moz-range-thumb { opacity: 1; }
 .np-times { display: flex; justify-content: space-between; margin-top: -0.125rem; font-size: 0.75rem; font-weight: 600; color: rgb(255 255 255 / 0.6); font-variant-numeric: tabular-nums; }
@@ -367,7 +367,7 @@ button.np-line:hover { color: rgb(255 255 255 / 0.6); }
   color: rgb(255 255 255 / 0.78); transition: background 160ms, color 160ms;
 }
 .np-fade-option:hover { background: rgb(255 255 255 / 0.1); color: #fff; }
-.np-fade-option.on { background: #fff; color: #111; }
+.np-fade-option.on { background: var(--accent); color: #111; }
 
 .np-cast-note {
   position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 4.25rem); transform: translateX(-50%); max-width: min(32rem, 90vw);
@@ -397,7 +397,7 @@ button.np-line:hover { color: rgb(255 255 255 / 0.6); }
 .np-mode span, .np-device span { display: flex; flex-direction: column; min-width: 0; }
 .np-mode strong, .np-device strong { font-size: 0.9375rem; font-weight: 640; }
 .np-mode small, .np-device small { font-size: 0.75rem; color: var(--text-3); }
-.np-mode.on { background: #fff; color: var(--on-light); box-shadow: none; }
+.np-mode.on { background: var(--accent); color: var(--on-light); box-shadow: none; }
 .np-mode.on svg, .np-mode.on small { color: rgb(10 10 11 / 0.65); }
 .np-devices { display: flex; flex-direction: column; gap: 0.5rem; }
 .np-volume { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; font-size: 0.875rem; color: var(--text-2); }

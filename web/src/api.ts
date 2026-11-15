@@ -42,13 +42,21 @@ export interface AccountStatus {
   notice?: string
   /** After sign-in: local profile → the account's profile it was merged into. */
   merged?: Record<string, string>
+  /** The cloud owner's one-line notice to every app, until they clear it. */
+  announcement?: string
+  /** This version is too old for the cloud: syncing stopped until the app is updated. */
+  updateRequired?: string
 }
 // Phones and TVs on the home Wi-Fi (server/lan). Settings change only on the computer itself (`local`).
 export interface LanClient { id: string; label: string; createdAt: number; lastUsedAt: number; current: boolean }
 export interface LanStatus {
   local: boolean; signedIn: boolean; enabled: boolean; phonesEnabled: boolean; listening: boolean
-  name: string; defaultName: string; urls: string[]; clients: LanClient[]
+  name: string; defaultName: string; platform: 'linux' | 'mac' | 'windows' | 'other'; urls: string[]; clients: LanClient[]
+  /** The VPN that's on, on this computer ("NordVPN", "a VPN"): most keep phones out. */
+  vpn: string | null
 }
+/** Whether Windows Firewall lets phones reach this computer (server/lan/firewall.ts). */
+export type FirewallState = 'open' | 'blocked' | 'unknown' | 'n/a'
 
 // Casting to a TV (server/cast). The computer talks to the TV; any page of the app can follow and control it.
 export interface CastDevice { id: string; name: string; model: string }
@@ -179,7 +187,7 @@ function sendProgressOnExit (body: ProgressRequest): void {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (activeProfile) headers['x-nexttupp-profile'] = activeProfile
   try {
-    fetch('/api/me/progress', { method: 'POST', headers, body: JSON.stringify(body), keepalive: true }).catch(() => {})
+    fetch('/api/me/progress', { method: 'POST', headers, body: JSON.stringify({ ...body, final: true }), keepalive: true }).catch(() => {})
   } catch { /* keepalive quota exceeded or fetch unavailable */ }
 }
 
@@ -269,10 +277,17 @@ export const api = {
 
   // Account and sync. Every write sends a JSON body (the server requires one).
   account: () => req<AccountStatus>('/api/account'),
-  login: (email: string, password: string) => req<AccountStatus>('/api/account/login', json('POST', { email, password })),
-  signup: (body: { email: string; password: string; displayName?: string }) => req<AccountStatus>('/api/account/signup', json('POST', body)),
+  /** Emails a sign-in code; the same for a new account (the code creates it). */
+  sendCode: (email: string) => req<void>('/api/account/code', json('POST', { email })),
+  verifyCode: (body: { email: string; code: string; displayName?: string }) => req<AccountStatus>('/api/account/verify', json('POST', body)),
   logout: () => req<AccountStatus>('/api/account/logout', json('POST', {})),
   syncNow: () => req<AccountStatus>('/api/account/sync', json('POST', {})),
+  /** The app came into view or was left: the events sync works from (it never polls the cloud). Survives unload. */
+  focus: (focused: boolean) => {
+    try {
+      fetch('/api/account/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ focused }), keepalive: true }).catch(() => {})
+    } catch { /* keepalive quota exceeded or fetch unavailable */ }
+  },
   castDevices: (refresh = false) => req<{ devices: CastDevice[] }>(`/api/cast/devices${refresh ? '?refresh=1' : ''}`),
   cast: () => req<CastStatus>('/api/cast'),
   castStart: (body: CastStartRequest) => req<CastStatus>('/api/cast', json('POST', body)),
@@ -280,6 +295,8 @@ export const api = {
   castStop: () => req<CastStatus>('/api/cast/stop', json('POST', {})),
   lan: () => req<LanStatus>('/api/lan'),
   setLan: (body: { enabled?: boolean; name?: string }) => req<LanStatus>('/api/lan', json('PATCH', body)),
+  firewall: () => req<{ state: FirewallState }>('/api/lan/firewall'),
+  letPhonesIn: () => req<{ state: FirewallState | 'declined' }>('/api/lan/firewall', json('POST', {})),
   removeLanClient: (id: string) => req<void>(`/api/lan/clients/${id}`, json('DELETE')),
 
   // Recommendations.

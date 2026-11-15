@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Readable, pipeline } from 'node:stream'
 import type { ClientCaps, MediaType, OpenSessionRequest, PlaybackPlan, ProbeResponse, ProbeResult } from '../shared/types.ts'
 import * as cinemeta from './catalog/cinemeta.ts'
+import { withRatings } from './catalog/ratings.ts'
 import { config } from './config.ts'
 import { EngineError, TorrentEngine, type Session } from './engine/engine.ts'
 import { contentType, parseRange } from './engine/range.ts'
@@ -79,8 +80,10 @@ const sync = new SyncService({
   db, store: tasteStore, dataDir: config.dataDir, cloudUrl: config.cloudUrl, log: msg => app.log.info(msg),
   device: () => lan!.deviceInfo(),
   onSignInChange: () => { void lan?.refresh() },
+  // The desktop app passes its version; `npm run dev` gets package.json's from npm.
+  appVersion: process.env.NEXTTUPP_VERSION || process.env.npm_package_version || undefined,
 })
-lan = new LanService({ dataDir: config.dataDir, port: config.port, host: config.host, signedIn: () => sync.signedIn, log: msg => app.log.info(msg) })
+lan = new LanService({ dataDir: config.dataDir, port: config.port, host: config.host, signedIn: () => sync.signedIn, log: msg => app.log.info(msg), onRefresh: () => sync.deviceChanged() })
 // NEXTTUPP_CAST_DEVICES=Name@host:port replaces mDNS discovery with a fixed list (tests use a fake receiver).
 const castDiscovery = new CastDiscovery({ staticDevices: parseStaticDevices(process.env.NEXTTUPP_CAST_DEVICES), log: msg => app.log.warn(msg) })
 const cast = new CastService({
@@ -293,12 +296,12 @@ app.get<{ Querystring: { q?: string } }>('/api/search', async req => {
   const q = (req.query.q ?? '').trim()
   if (q.length < 1) return []
   if (q.length > 100) throw new HttpError(400, 'Query too long')
-  return cinemeta.search(q)
+  return withRatings(await cinemeta.search(q), itemCache)
 })
 
 app.get<{ Params: { type: string } }>('/api/popular/:type', async req => {
   if (!isType(req.params.type)) throw new HttpError(400, 'Bad type')
-  return cinemeta.popular(req.params.type)
+  return withRatings(await cinemeta.popular(req.params.type), itemCache)
 })
 
 app.get<{ Params: { type: string; id: string } }>('/api/title/:type/:id', async req => {
@@ -641,7 +644,10 @@ registerTasteRoutes(app, tasteStore, reco, {
   onFinished: t => { cleanup.finished(t.streamId).catch(err => app.log.warn(`cleanup: ${(err as Error).message}`)) },
 })
 registerAiRoutes(app, ai, tasteStore, { port: () => config.port })
-registerMusicRoutes(app, { music, files: musicFiles, lyrics: musicLyrics, cast: musicCast, tasteStore, ffmpeg: config.ffmpeg, dataDir: config.dataDir })
+registerMusicRoutes(app, {
+  music, files: musicFiles, lyrics: musicLyrics, cast: musicCast, tasteStore, ffmpeg: config.ffmpeg, dataDir: config.dataDir,
+  font: [join(config.webDist, 'fonts', 'MonaSansVF.woff2'), join(import.meta.dirname, '..', 'web', 'public', 'fonts', 'MonaSansVF.woff2')].find(f => existsSync(f)),
+})
 registerTrailerRoutes(app, trailers)
 registerStorageRoutes(app, {
   dataDir: config.dataDir,
@@ -664,6 +670,7 @@ if (existsSync(config.webDist)) {
 }
 
 const shutdown = async () => {
+  await sync.flush()
   sync.stop()
   cast.shutdown()
   musicCast.shutdown()

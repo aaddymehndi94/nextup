@@ -67,8 +67,26 @@ All times are integer milliseconds since the Unix epoch.
 
 ### Auth and account
 
+**Sign-in codes (since 2026-11-15; `src/codes.ts`).** Everyone signs in, and new people sign up, with a 6-digit
+code sent by email. There are no passwords for new accounts. The password endpoints below the first two rows
+stay only for apps before 0.5.5 and accounts made before codes; those accounts keep their verifier, and a
+code works for them too.
+
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
+| `POST /v1/auth/code` | – | `{ email }` | `200 { sent: true, expiresAt }`, the same whether or not the email has an account · `429 too_many_attempts` · `503 email_unavailable` · `422 email_undeliverable` |
+| `POST /v1/auth/code/verify` | – | `{ email, code, displayName? }` | `200 { token, expiresAt, account: Account, created }`; `created` is true when this made the account, and `displayName` is only used then · `401 invalid_code` (wrong, expired, used, or out of tries) · `403 account_disabled` · `429 too_many_attempts` |
+
+- A code lasts 10 minutes, works once, and takes 5 tries. Asking again replaces it.
+- An email gets at most 5 codes an hour and 10 a day; a network, 20 codes an hour. Wrong tries share login's
+  per-network budget. So a stranger gets at most 50 guesses a day at a million codes, and the inbox's owner
+  sees every code arrive.
+- `email_codes` (migration 0006) keeps HMACs of the email and the code, so it holds no address of someone
+  who asked and never signed in.
+- Mail goes out through Cloudflare Email Service: the `EMAIL` binding (`send_email` in `wrangler.jsonc`) from
+  `sign-in@nexttupp.com`, which needs the Workers Paid plan and nexttupp.com onboarded under Email Service,
+  Email Sending. `wrangler dev` and the tests send nothing: the local Worker logs the message.
+
 | `POST /v1/auth/prelogin` | – | `{ email }` | `200 { kdf: "pbkdf2-sha256", iterations: 600000, salt }` (see [Passwords](#passwords-stretched-by-the-client)) |
 | `POST /v1/auth/login` | – | `{ email, key }` | `200 { token: "nxs_…", expiresAt, account: Account }` · `401 invalid_credentials` · `403 account_disabled` · `429 too_many_attempts` |
 | `POST /v1/auth/logout` | bearer | none, or `{ all: true }` to end every session | `204` |
@@ -165,8 +183,9 @@ A computer running nexttupp registers itself while signed in, so a phone signed 
 `Device` = `{ id, name, platform, lan, lanUrls, lastSeenAt, online, sameNetwork }`.
 
 - `:id` is a random UUID the app picks once per install. Devices are keyed by `(account, id)`, so the same
-  install signed in to another account is a separate row. The app calls `PUT` about once a minute (riding
-  the sync loop) and `DELETE` when it signs out. An account keeps its 20 most recently seen devices; a
+  install signed in to another account is a separate row. The app calls `PUT` with a sync when its name or
+  addresses change and at most once a day (apps before 0.5.5: about once a minute), and `DELETE` when it
+  signs out. So `online` (called in the last 2 minutes) only means something for those older apps. An account keeps its 20 most recently seen devices; a
   device not seen for 90 days is deleted.
 - `lanUrls` (at most 4) must each be `http://<private IPv4>:<port>` (10/8, 172.16/12, 192.168/16), so a phone
   is only ever sent to an address on a home network. `lan: false` (the person turned "Watch on phones and
@@ -182,6 +201,22 @@ A computer running nexttupp registers itself while signed in, so a phone signed 
   `DELETE … RETURNING`), so a code can be tried once. The computer redeems with its own session: a code
   only works on a computer signed in to the same account, so an impostor at the same LAN address can't
   use it.
+
+### Asking apps to update, and notices
+
+Two Worker variables, set in the Cloudflare dashboard (Workers, nexttupp-cloud, Settings, Variables and
+secrets, as plain text) and live within seconds, no deploy. `keep_vars` in `wrangler.jsonc` keeps them across
+deploys.
+
+- `MIN_APP_VERSION`, e.g. `0.5.7`: apps older than this get `426 update_required` on every call. They show
+  "Update needed" and stop calling until they're updated; what changed meanwhile stays on the computer and
+  goes up after the update.
+- `APP_NOTICE`: one line (200 characters at most) every app shows until the person dismisses it. Clear the
+  variable to stop sending it.
+
+Both ride on answers to calls the apps make anyway, so they cost no requests. Apps say their version in
+`x-nexttupp-app` from 0.5.5; the website and older apps send none and are never turned away. An app sees a
+new notice the next time it syncs: after a change, or when someone comes back to it.
 
 ### Health
 
@@ -438,6 +473,9 @@ The expensive part, PBKDF2 at 600,000 iterations, runs on the client (see
 iterations (the most Workers' WebCrypto allows) and measured 13–26 ms per login, over the free plan's
 limit. A flood of login attempts now costs the Worker microseconds each; the per-email and per-IP locks
 still limit online guessing.
+
+**Sign-in codes** need the Workers Paid plan ($5 a month) for Cloudflare Email Service: 3,000 emails a
+month are included, then $0.35 per 1,000.
 
 **Other limits:** a push is one D1 batch (one transaction) plus one ownership read. A pull is one batch.
 D1 counts a batch as one query against the 50-queries-per-request free limit, and no request here makes

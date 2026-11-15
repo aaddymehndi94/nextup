@@ -20,8 +20,8 @@ way for a phone to find "my computer at home" and prove it belongs to the same p
 ### Phones: a handoff through the account
 
 ```
-phone ── nexttupp.com/watch: sign in (PBKDF2 in the browser) ──► cloud: GET /v1/devices
-      ◄── "Watch on Laptop (Linux)" (seen < 2 min ago, same network) ──
+phone ── nexttupp.com/watch: sign in (a code by email) ──► cloud: GET /v1/devices
+      ◄── "Watch on Laptop (Linux)" (has a home address, same network) ──
       ── POST /v1/devices/:id/handoff ──► { code: nxh_…, lanUrls }  (60 s, single use)
       ── top-level navigation to http://192.168.1.20:4545/handoff?code=nxh_… ──► computer
                                   computer ── POST /v1/handoff/redeem { code, deviceId } (its own session) ──► cloud
@@ -29,7 +29,8 @@ phone ── nexttupp.com/watch: sign in (PBKDF2 in the browser) ──► cloud
 ```
 
 **The computer registers itself as a device** (cloud migration `0003_devices.sql`), riding the sync loop:
-at sign-in, then about every minute after each push/pull, never failing the sync. A device is a random id
+at sign-in, then when its name or addresses change and at most once a day with a sync, never failing the
+sync (until 2026-11-15, about every minute; see the update below). A device is a random id
 (kept in `<data>/lan.json`), a name ("Laptop (Linux)", "Computer (Windows)", "Mac"; renamable, never
 the hostname, which often contains a person's name), the OS family, whether phones are on, and up to four
 LAN URLs (the default-route address first, from a UDP `connect` to a public address that sends nothing;
@@ -69,9 +70,10 @@ gate behave identically. It rebinds when addresses change (checked every minute)
 turned off or the account signs out, and is held open while casting. With `HOST=0.0.0.0` there is no second
 listener, but the same gate applies, so other devices now need the cookie there too.
 
-**The phone page is nexttupp.com/watch** (`site/public/watch.html`, `watch.js`): the same prelogin, PBKDF2
-(600,000 rounds, WebCrypto) and login as the app, then a poll of `/v1/devices` every 5 seconds. With exactly
-one same-network device online, it shows one big "Watch on <name>" button. The cloud session is kept in
+**The phone page is nexttupp.com/watch** (`site/public/watch.html`, `watch.js`): the same sign-in as the app
+(a code by email since 2026-11-15; PBKDF2 and a password before), then `/v1/devices` when the page opens or comes back into
+view (it polled every 5 seconds until 2026-11-15). With exactly one same-network device, it shows one big
+"Connect to <name>" button. The cloud session is kept in
 `localStorage` on nexttupp.com. This is the one place a browser holds a session token (0004 kept it on the
 computer); it is the site's own origin, and "Sign out on this phone" ends it. The page navigates the whole
 window to the LAN address. A fetch from an https page to a private http address would be blocked as mixed
@@ -155,7 +157,26 @@ music is cast.
   different routes, shows the computer as "Not confirmed on this Wi-Fi"; tapping it still works if the LAN
   address is reachable. Guest Wi-Fi and "AP isolation" block phones from reaching the computer at all.
 - **Firewalls:** Windows and macOS ask the first time the server listens on the home address. Linux
-  distributions with a firewall (ufw, firewalld) need the port opened. Windows and macOS binding is untested.
+  distributions with a firewall (ufw, firewalld) need the port opened.
+  *2026-11-15:* a Windows user's phone waited forever on Connect.
+  - **Why:** Windows' prompt allows only "Private networks" by default, and Windows 11 calls a newly joined
+    Wi-Fi "Public". A dismissed prompt leaves block rules. Either way the phone's connection is dropped without a
+    reply, so its browser just keeps loading.
+  - **On Windows, the Phones settings check the firewall** for nexttupp's program on the network it listens on
+    (`server/lan/firewall.ts`, read-only PowerShell). When phones are kept out, "Let phones in" asks Windows (UAC)
+    to remove nexttupp's block rules and allow TCP from the local subnet on any profile.
+  - **The phone page gives each address 8 s, then tries the next.** When none answers, it says the phone couldn't
+    reach the computer and names the likely cause for that computer's platform. A top-level navigation can't be
+    watched, but the page keeps running while it waits, so a timer can stop it (`window.stop()`).
+  - **Addresses phones are given now skip VPN, VM and hotspot adapters.** These include Windows names
+    (NordLynx, CloudflareWARP, VirtualBox, VMware, "Local Area Connection*") and any /32. A VPN holding the
+    default route used to put its own address first.
+  - **A VPN that's on is named** (`activeVpn` in `server/lan/net.ts`): a known VPN adapter with an IPv4 address,
+    or a /32 default-route address on a non-virtual adapter. Mesh networks (Tailscale, ZeroTier, Hamachi) are
+    left alone: they don't stop the Wi-Fi path. The Phones settings and a dismissible notice on Home say which
+    VPN may keep phones out and to allow local network access in it, or turn it off while watching. On
+    Windows the same notice offers "Let phones in" when the firewall blocks them. Nothing works around a
+    firewall or VPN without the owner's say-so: streaming stays on the home network.
 - **Chrome on Android** shows "Not secure" for the http LAN address, as for any router page.
 - **Casting** needs the TV to load http media from a private address, as VLC, catt and others rely on.
   It has been tested only against a fake receiver (protocol, LOAD/SEEK/PAUSE/SET_VOLUME/STOP flow, and the
@@ -273,3 +294,11 @@ Connect. Now **nexttupp.com/watch can be added to the home screen** and opens li
 Not done (phase 2, not needed yet): an https address for the computer, which would let the app stay in its
 own window instead of opening the computer's http page.
 
+## Update 2026-11-15: no presence
+
+Computers stopped calling the cloud every minute (ADR 0004, "When it syncs"), so the cloud can no longer say
+whether a computer is on. It doesn't try: `/watch` lists every computer with an address on a home network,
+a handoff code is issued whatever the device's last call, and Connect finds out (each address gets 8 s; then
+the page asks whether nexttupp is open there, and names the firewall). `online` stays in the device JSON for
+apps before 0.5.5, which still call every minute; the pages no longer read it. The phone and account pages
+don't poll either: they look again when they come back into view, or on "Try again".

@@ -18,6 +18,8 @@ export interface LanOptions {
   log?: (msg: string) => void
   /** For tests: the addresses to bind instead of the machine's. */
   addresses?: () => Promise<LanAddress[]>
+  /** After each look at the settings and addresses: deviceInfo() may have changed (the cloud is told if it did). */
+  onRefresh?: () => void
 }
 
 export class LanService {
@@ -110,6 +112,7 @@ export class LanService {
   /** Re-reads the settings and the machine's addresses, then binds or unbinds to match. Serialised. */
   refresh (): Promise<void> {
     this.refreshing = this.refreshing.then(() => this.apply()).catch(err => this.log(`lan: ${(err as Error).message}`))
+      .then(() => this.opts.onRefresh?.())
     return this.refreshing
   }
 

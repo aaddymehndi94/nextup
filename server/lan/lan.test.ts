@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CloudError } from '../sync/cloud.ts'
-import { addressFacing, clientLabel, defaultDeviceName, isLoopback, isLoopbackHost, lanAddresses } from './net.ts'
+import { activeVpn, addressFacing, clientLabel, defaultDeviceName, isLoopback, isLoopbackHost, lanAddresses } from './net.ts'
 import { registerLanGate, registerLanRoutes } from './routes.ts'
 import { LanService } from './service.ts'
 import { COOKIE, readCookie } from './store.ts'
@@ -267,6 +267,47 @@ describe('network helpers', () => {
     expect(addressFacing('10.0.0.77', list)?.address).toBe('10.0.0.5')
     expect(addressFacing('192.168.1.99', list)?.address).toBe('192.168.1.20')
     expect(addressFacing('172.16.0.1', list)?.address).toBe('192.168.1.20')
+  })
+
+  it('on Windows, skips VPN, VM and hotspot adapters, even when a VPN holds the default route', () => {
+    const v4 = (address: string, netmask = '255.255.255.0') => [{ address, netmask, family: 'IPv4', internal: false }]
+    const ifaces = {
+      'Wi-Fi': v4('192.168.1.42'),
+      'vEthernet (WSL)': v4('172.20.112.1', '255.255.240.0'),
+      'VirtualBox Host-Only Network': v4('192.168.56.1'),
+      'VMware Network Adapter VMnet8': v4('192.168.153.1'),
+      'Local Area Connection* 10': v4('192.168.137.1'),
+      NordLynx: v4('10.5.0.2', '255.255.255.255'),
+      CloudflareWARP: v4('172.16.0.2', '255.255.255.255'),
+      'OpenVPN Data Channel Offload': v4('10.8.0.6'),
+      'ProtonVPN TUN': v4('10.2.0.2'),
+    } as unknown as ReturnType<typeof import('node:os').networkInterfaces>
+    expect(lanAddresses('10.5.0.2', ifaces).map(a => a.address)).toEqual(['192.168.1.42'])
+  })
+
+  it('names the VPN that’s on, which can keep phones out (most block the home network)', () => {
+    type Ifaces = ReturnType<typeof import('node:os').networkInterfaces>
+    const v4 = (address: string, netmask = '255.255.255.0') => [{ address, netmask, family: 'IPv4', internal: false }]
+    const v6 = (address: string) => [{ address, netmask: 'ffff:ffff:ffff:ffff::', family: 'IPv6', internal: false }]
+    const wifi = { 'Wi-Fi': v4('192.168.1.42') }
+    expect(activeVpn('10.5.0.2', { ...wifi, NordLynx: v4('10.5.0.2', '255.255.255.255') } as unknown as Ifaces)).toBe('NordVPN')
+    expect(activeVpn('192.168.1.42', { ...wifi, CloudflareWARP: v4('172.16.0.2', '255.255.255.255') } as unknown as Ifaces)).toBe('Cloudflare WARP')
+    expect(activeVpn('10.8.0.6', { ...wifi, 'OpenVPN Data Channel Offload': v4('10.8.0.6') } as unknown as Ifaces)).toBe('OpenVPN')
+    expect(activeVpn('10.2.0.2', { en0: v4('192.168.1.42'), utun4: v4('10.2.0.2', '255.255.255.255') } as unknown as Ifaces)).toBe('a VPN')
+    // A Mac's own utun adapters carry only IPv6 link addresses: no VPN.
+    expect(activeVpn('192.168.1.42', { en0: v4('192.168.1.42'), utun0: v6('fe80::1'), utun1: v6('fe80::2') } as unknown as Ifaces)).toBeNull()
+    // The internet through an adapter that isn't home Wi-Fi and has the address to itself: a VPN by any name.
+    expect(activeVpn('10.64.0.9', { ...wifi, 'Ethernet 3': v4('10.64.0.9', '255.255.255.255') } as unknown as Ifaces)).toBe('a VPN')
+    // VMs, containers and mesh networks (Tailscale, ZeroTier) don't keep phones out.
+    expect(activeVpn('192.168.1.42', { ...wifi, 'vEthernet (WSL)': v4('172.20.112.1'), docker0: v4('172.17.0.1'), tailscale0: v4('100.64.0.3', '255.255.255.255') } as unknown as Ifaces)).toBeNull()
+  })
+
+  it('skips a point-to-point address, whatever its adapter is called', () => {
+    const ifaces = {
+      'Ethernet 3': [{ address: '10.64.0.9', netmask: '255.255.255.255', family: 'IPv4', internal: false }],
+      Ethernet: [{ address: '192.168.0.10', netmask: '255.255.255.0', family: 'IPv4', internal: false }],
+    } as unknown as ReturnType<typeof import('node:os').networkInterfaces>
+    expect(lanAddresses(null, ifaces).map(a => a.address)).toEqual(['192.168.0.10'])
   })
 
   it('names devices without the hostname', () => {

@@ -29,7 +29,7 @@ song, and nothing goes through the cloud.
   within 15 s of the song's length, that isn't a version the song isn't (live, cover, remix, slowed…). It
   favours the artist's own or "- Topic" channel and, after that, the search order. It downloads the m4a stream once into an LRU cache (`data/music`, 3 GB by default,
   `NEXTTUPP_MUSIC_CACHE_MB`), at most two at a time, and remembers failures for 10 minutes. The cached file
-  is then served with Range support. Video for TV casting works the same way, cached separately.
+  is then served with Range support.
   - yt-dlp is found at `NEXTTUPP_YTDLP`, then `data/bin`, then PATH. **Set up music** downloads the official
     release from GitHub and checks it against the release's SHA2-256SUMS before using it. When a fetch
     fails, it updates itself, at most once a day.
@@ -71,14 +71,18 @@ song, and nothing goes through the cloud.
     play/pause and next/previous. The queue is saved locally and the next two songs are fetched ahead.
   - **Casting:** the TV gets a private, short-lived link per song, bound to its IP. The **server** holds
     the queue and moves on when the TV reports the song finished, so the phone can sleep. The phone
-    becomes a remote. Three modes:
+    becomes a remote. Two modes:
     - **Song:** the m4a with music metadata (cover, title, artist).
     - **Lyrics:** a live video ffmpeg renders as it streams. It shows a slowly drifting, blurred cover
-      with the sharp cover and the synced lyrics drawn by libass (720p24, x264 veryfast).
-    - **Music video:** the downloaded video.
-    
-    Without synced lyrics or a video, a mode falls back to the next one, with a note. Only one cast runs at
-    a time across films and music.
+      with the sharp cover and the synced lyrics drawn by libass (720p24, x264 veryfast) in Mona Sans: the
+      current line bright, the next ones faded below, the last one fading out above, sliding up on each change.
+      It's sent with generic metadata, not music metadata: the Default Media Receiver draws its own music
+      screen (cover, title, progress) over a MusicTrack's video and hides it. The stream's moov carries the
+      song's length, so the TV's progress bar is the song's, not the download's.
+
+    A song without synced lyrics shows its title and artist large instead. Only one cast runs at a time
+    across films and music.
+    - **Music videos were dropped (2026-11-15)** at the owner's request; the TV shows lyrics instead.
 - **Fades.** Locally, songs crossfade. The page keeps two `<audio>` elements and starts the next song on the
   second one. Its volume rises along an equal-power curve while the old one falls. The crossfade length is
   set in the player (off, 3, 6 or 10 seconds; 6 by default). There's no crossfade:
@@ -112,6 +116,6 @@ song, and nothing goes through the cloud.
 - Taste is per profile and, when signed in, follows the account to every computer; songs still play
   from each computer's own downloads.
 - Without AI, mood mixes lean English (Deezer's playlists); artist and daily mixes don't.
-- Names like "Earth, Wind & Fire" are split into several artists. Music videos play only on the TV for now.
+- Names like "Earth, Wind & Fire" are split into several artists.
 - If YouTube changes in a way yt-dlp can't follow, songs stop playing until yt-dlp catches up. Mixes, search
   and lyrics keep working.

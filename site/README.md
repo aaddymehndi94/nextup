@@ -32,22 +32,21 @@ one-week cache for `/fonts` and `/img`.
 
 **Signing in and creating an account (`cloud.js`).** `/account` and `/watch` are the only pages that talk to
 anything: they call `https://api.nexttupp.com` (CSP `connect-src` allows exactly that origin). Both show the same
-form, with **Sign in** and **Create account** tabs. Creating an account makes a random 16-byte salt and stretches
-the password with PBKDF2-SHA256 (WebCrypto, 600,000 rounds), exactly as the app does, then calls
-`/v1/auth/signup` and signs in; signing in calls `/v1/auth/prelogin` and `/v1/auth/login`. The password never
-leaves the page. The session token is kept in this site's `localStorage` (`nexttupp:cloud`), so signing in on one
-page signs in on the others. An email that already has an account switches the form to Sign in with a plain
-message. The cloud allows 5 sign-ups an hour from one network.
+form: an email (and, from /account#create, an optional name), then the 6-digit code sent to it
+(`/v1/auth/code`, then `/v1/auth/code/verify`, which creates the account the first time). Six digits typed or
+pasted sign in straight away; a wrong code stays selected so the next one replaces it. The session token is kept in this site's `localStorage` (`nexttupp:cloud`), so signing in on one
+page signs in on the others. The cloud allows 5 sign-ups an hour from one network.
 
 **Your account (`/account`).** Once signed in, the page lists the account's computers (`/v1/devices`). None yet:
 “Almost there.” and three steps (get the app, sign in to it with this email, start watching), with the download
-button on a computer and “go to nexttupp.com on your laptop” on a phone; it checks every 5 seconds, so it moves
-on by itself once the app signs in. At least one: “You’re all set.”, each computer with “Open now” or when it was
-last open, and on a phone a big “Watch on this phone” button.
+button on a computer and “go to nexttupp.com on your laptop” on a phone; it looks again when it comes back into view
+(no polling), so it moves on once the app is signed in. At least one: “You’re all set.”, each computer with when
+it was last seen, and on a phone a big “Watch on this phone” button.
 
-**Watch on this phone (`/watch`).** Signs in (or creates an account) as above. It lists the account's computers seen in the last two minutes; the API marks those whose last
-call came from the phone's network. With no computer on the account yet, it says “Set up your computer first.” and
-how; with computers but none open, “Open nexttupp on your computer.” With exactly one there, one big "Connect to <name>" button. Tapping asks the API
+**Watch on this phone (`/watch`).** Signs in (or creates an account) as above. It lists the account's computers with an address on a home network (the cloud can't tell
+which are on: computers only call it when something changes); the API marks those whose last call came from the
+phone's network. With no computer on the account yet, it says “Set up your computer first.” and how; with
+computers but none with a home address yet, “Open nexttupp on your computer.” With exactly one there, one big "Connect to <name>" button. Tapping asks the API
 for a one-time code (60 s, single use, bound to that computer) and navigates the tab to
 `http://<computer's LAN address>:<port>/handoff?code=…`. A page on https can't fetch an http address on the LAN
 (mixed content), so a top-level navigation is the only way; the computer redeems the code with its own session and

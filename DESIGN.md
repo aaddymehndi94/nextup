@@ -170,7 +170,8 @@ components:
 
 The room goes dark and the film's own artwork does the talking. nexttupp plays the streaming canon straight,
 at the finish of the Apple TV app, Netflix, Mubi and A24: full-bleed backdrops, the title's own logo art set
-large, one white action, and chrome that is only black, white and grey. Colour belongs to the artwork. The
+large, one action in the profile's action colour (white unless they pick another), and chrome that is only
+black, white and grey. Colour belongs to the artwork. The
 interface adds hierarchy, spacing and restraint, never ornament.
 
 Density changes by job. Browsing surfaces (Home, the title hero) are cinematic and spacious. The source table
@@ -181,7 +182,7 @@ The whole interface scales with the screen: the root size is fluid from 16px at 
 at 1920px, so a 1080p TV reads from the sofa without a separate layout.
 
 **Key Characteristics:**
-- Projection-room black ground, lifted graphite surfaces, white as the only action colour.
+- Projection-room black ground, lifted graphite surfaces, one action colour: white, or the profile's pick.
 - Artwork-first: backdrops, posters and logo art carry every colour on screen.
 - One typeface, Mona Sans, in two widths: Expanded for titling, standard width for interface.
 - Pill actions, 10px-radius artwork with a 1px inner hairline.
@@ -189,14 +190,21 @@ at 1920px, so a 1080p TV reads from the sofa without a separate layout.
 
 ## Colors
 
-A neutral near-black world with white actions; hue appears only in artwork and in swarm health.
+A neutral near-black world with one action colour; hue appears only in artwork, swarm health and that colour.
 
 ### Primary
-- **Action White** (#ffffff): the primary button, the active filter chip, the active season tab, the pressed
-  round button, the focus ring, the scrubber fill. It is the only action colour.
+- **Action** (`--accent`, Action White #ffffff by default): the primary button, the active filter chip, the
+  active season tab, the pressed round button, the scrubber fill and meters. It is the only action colour.
+  In Appearance a profile can swap it for one of five soft tints: Sun #ffd166, Peach #ffb48a, Mint #7ee2b8,
+  Sky #8ecbff, Lilac #c8b4ff, or any colour they pick. A pick too dark for Ink on Light text is lightened towards
+  white until its luminance reaches 0.3 (`web/src/colour.ts`), with a note saying so. The focus ring stays white.
 
 ### Neutral
 - **Projection Black** (#0a0a0b): the page ground and the base of every scrim and gradient.
+  - The ground, Raised and Lifted Graphite come as a set (`--theme-bg`, `--bg-1`, `--bg-2`), so a profile can
+    pick another near-black family: True black #000, Midnight #080b12, Espresso #0f0b09, Forest #08100c or
+    Plum #0e0a10.
+  - Every family stays near black. There is no light theme: the chrome's whites and greys assume a dark ground.
 - **Raised Graphite** (#131315): artwork placeholders and skeletons before images decode.
 - **Lifted Graphite** (#1b1b1e): the hovered or recommended source row and other lifted surfaces.
 - **Hairline** (8% white) and **Strong Hairline** (16% white): rules, inner card edges and keyboard-hint
@@ -214,11 +222,14 @@ A neutral near-black world with white actions; hue appears only in artwork and i
   destructive Delete chip.
 
 ### Named Rules
-**The Artwork Owns Colour Rule.** Chrome is black, white and grey. Green, amber and red appear only as swarm
-health, honest playback warnings, and a destructive confirmation. Nothing is green because it is good news.
+**The Artwork Owns Colour Rule.** Chrome is black, white and grey, plus the one action colour. Green, amber
+and red appear only as swarm health, honest warnings (playback, a firewall or VPN keeping phones out), and a
+destructive confirmation. Nothing is green because it is good news. A Mint or Sun action colour is the
+profile's choice of action colour, not a state.
 
-**The One White Action Rule.** Each screen has one filled white action (More info, Play). Everything else is a
-translucent pill, a ring, or plain text.
+**The One Action Rule.** Each screen has one filled action in the action colour (More info, Play). Everything
+else is a translucent pill, a ring, or plain text. The bottom-left banner is the exception: it floats over the
+page with its own single filled action ("Get the update"), because it's the most urgent thing on any screen.
 
 ## Typography
 
@@ -316,17 +327,20 @@ Series tag, the scrubber time tip).
 
 ### Buttons
 - **Shape:** full pill (999px), 3rem tall; the icon sits before the label.
-- **Primary:** Action White with Ink on Light text, weight 620. Hover drops to 84% white; press scales to 0.97.
+- **Primary:** the action colour with Ink on Light text, weight 620. Hover drops it to 84%; press scales to 0.97.
   While busy it shows a spinner with a progress label ("Finding sources…").
 - **Secondary:** 14% white with Screen White text.
 - **Round buttons:** 3rem circles, 10% white with a 24% white inner ring. The pressed state turns solid white.
   The hero action group is a wrapping row with room for two of these beside Play.
+- **Links:** in running text, `.inline-link`: Screen White with a hairline underline that firms on hover
+  ("terms", "Show all", "Read the terms"). The 14% white `.link` pill is only for an action in a toast or a
+  banner ("Undo", "Release page", "Later").
 - **Icon buttons (player):** 2.75rem, transparent until hover. A small dot under the icon marks "on"; a
   translucent fill marks the open panel.
 
 ### Chips and tabs
 - **Style:** 2.25rem pills, 7% white with Silver text. A count follows the label at 60% opacity.
-- **State:** the active chip or tab is solid white with Ink text. The destructive chip is Dying Swarm red.
+- **State:** the active chip or tab is solid in the action colour with Ink text. The destructive chip is Dying Swarm red.
 
 ### Cards
 - **Poster:** 2:3 art with the art radius and hairline edge, then the name (label) and year (meta). An optional
@@ -385,12 +399,30 @@ Series tag, the scrubber time tip).
 
 ### The phone app (nexttupp.com/watch)
 
-- One column, one heading that says the state ("Living room laptop is ready.", "Pick your computer.",
-  "Can’t reach nexttupp right now."), and one white button for what to do next.
+- One column, one heading that says the state ("Watch from Living room laptop.", "Pick your computer.",
+  "Can’t reach nexttupp right now."), and one white button for what to do next. The page can't know
+  whether a computer is on (computers don't check in), so it never claims "ready"; Connect finds out.
 - A second way in sits under a hairline as a secondary button, for example "Open <computer>" under the
   sign-in form when the phone was signed out.
 - "Add to home screen" is the last thing on the page: a small line in the quietest grey and a small
   secondary button. It appears on phones only, never inside the installed app.
+
+### Sign-in (nexttupp.com/account, /watch, and the app's Account)
+- **One form for signing in and creating an account:** an email, then the 6-digit code sent to it. No
+  password, no Sign in / Create account tabs. The website's create mode (/account#create) only adds an optional
+  name.
+- **Step 1:** the Email field and one white "Email me a code".
+- **Step 2:** "We sent a code to <email>. It works for 10 minutes." (the address in Screen White at 620), the
+  Code field (1.5rem, 620, 0.3em tracking, proportional figures), and a white Continue. Six digits typed or
+  pasted sign in at once. A wrong code stays selected under "That code isn’t right. 4 tries left.", so the
+  next one replaces it.
+- **Quiet ways out, as text links, never pills:** "Nothing yet? Check your spam folder, or send a new code."
+  (busy text on the link itself), then "Use a different email". The page's intro ("We’ll email you a code…")
+  hides on step 2.
+- **Errors** are Screen White at 560–620 on both surfaces, never red: red is only for destructive actions.
+- **Terms:** a fine-print line under the first step's button, "By continuing, you agree to the terms" (inline
+  link). The app's Account page ends with a hairline footer: "nexttupp hosts no films or music: what you play
+  is your call. Terms of use".
 
 ### Storage page
 - **Shape:** one reading column at 40rem, like Account.
@@ -409,6 +441,14 @@ Series tag, the scrubber time tip).
 - No filled white action: nothing on this page is the screen's main act.
 
 ### Feedback
+- **Bottom-left banner:** a glass card (icon, title, one line, actions) that floats over every page. One shows at
+  a time, in this order:
+  1. a desktop update downloading or ready;
+  2. **Update needed**, when the cloud says this version is too old to sync: "Get the update" (filled) and
+     "Later", which hides it until the app starts again;
+  3. the cloud's one-line notice (megaphone icon, a Dismiss ×), gone once dismissed;
+  4. on Home, **Phones can't reach this computer** (Windows Firewall, with "Let phones in") or **Your VPN may
+     keep phones out**, dismissible.
 - **Snackbar:** one at a time, bottom centre, glass with an optional white text action ("Undo"). It lasts 7 s
   with an action and 4 s without. Every removal ("Not interested", "Remove from My List") offers Undo.
 
@@ -427,6 +467,57 @@ Series tag, the scrubber time tip).
 - **Play, Download and Preview:** every row shows its Play disc (a 16% white ring that fills white when the row
   is pointed at or focused), then Download and Preview (an eye) rings to its left. The whole row plays too. On
   phones Play sits top right, Download under it, and Preview bottom left, under the quality badge.
+
+### Ratings
+- **On a poster:** the meta line reads "1995 · IMDb 8.3" in Ash. There are no stars or yellow badges: the number
+  is enough.
+- **The rating filter:** an "IMDb" pill in the masthead, before the profile menu (on phones, at the start of the
+  right-hand group).
+  - With a minimum set, it reads "IMDb 7+", filled in the action colour.
+  - Its menu has a quiet "Show titles rated" heading and radio items (Any rating, 6+, 7+, 8+) with a check.
+  - The minimum is per profile on this device.
+- **Filtered search** ends its heading with a Silver line: "25 more below IMDb 7 or without a rating. Show all".
+  "Show all" is an inline link.
+- **Recommendation rows and Popular** drop titles under the minimum silently. Continue watching, My List and
+  the rating onboarding never filter.
+
+### Terms page (nexttupp.com/terms)
+- The join page's narrow reading column. A display title "Terms of use.", a Silver short version, and the date
+  in Ash at 0.875rem.
+- Sections are h2s set off by hairlines. Body and list text in Silver at a 1.65 line height. Disc lists have Ash
+  markers. Links are inline.
+- The footer of every site page links Terms.
+
+### Before you play
+- **The Preview dialog's card, once per browser,** before the first play, download or quick look of a source.
+  - The title is "Before you play", followed by two Silver paragraphs: where sources come from, and whose call
+    it is.
+  - Actions: "I understand" (filled), "Not now" (secondary) and "Read the terms" (inline link).
+  - Esc or a click outside counts as Not now.
+
+### Appearance (per profile, from the profile menu)
+- **The settings page column:**
+  - **Themes:** six preset tiles (Projection room, Lights out, Midnight, Matinee, Greenroom, Velvet). Each
+    tile is a miniature of its ground, two graphite cards and an action-colour pill. The picked one gets a
+    2px action-colour ring and a check after its name.
+  - **Colour:** two rows of 2.75rem round swatches, for the action colour and the background family. The action
+    row ends with a rainbow swatch, "Your own colour", that opens the system colour picker. The
+    picked swatch gets a white ring set off by a ground-coloured gap. A sample strip on Raised Graphite
+    shows a primary button, an active chip and a meter.
+  - **Text and shapes:** chips for text size (92%, 100%, 110%, 122% of the fluid root) and poster corners
+    (3px, 10px, 18px).
+  - **Motion and colour from artwork:** switches. **Calm motion** stops slides, fades and hover lifts.
+    **Tint title pages** turns the artwork-colour wash on or off.
+- **Every change shows at once.** "Back to the default look" is secondary, and disabled at the default.
+- **The look is per profile on this device.** It's applied before the first paint and again on switching
+  profile.
+
+### Phones settings: Windows Firewall
+- A VPN that's on gets its own amber note, naming it: "NordVPN is on, and most VPNs keep phones out…", then
+  where to turn on LAN access.
+- When Windows Firewall keeps phones out, the Phones section shows one amber note under the switch, then a
+  secondary "Let phones in" button. While Windows' prompt is up, the button reads "Choose Yes in Windows' prompt…".
+  If it doesn't take, the note gives the manual path. When phones can get in, nothing shows.
 
 ### Source quick look (Preview)
 - **Purpose:** judge a file in seconds, before playing it. It uses the Quick view's dialog and card, at 60rem.
@@ -452,14 +543,15 @@ Series tag, the scrubber time tip).
 
 ### Do:
 - **Do** let artwork carry colour: full-bleed backdrops, logo art cropped to its mark, posters at 2:3.
-- **Do** keep one white filled action per screen and make everything else translucent.
+- **Do** keep one filled action per screen, in the action colour, and make everything else translucent.
 - **Do** align every screen's left edge to the gutter (clamp(1rem, 4vw, 4.5rem)).
 - **Do** give every focusable element a visible white ring. Use 3–4px rings on screens 1800px and wider.
-- **Do** honour reduced motion: no backdrop settle, no hover lift.
+- **Do** honour reduced motion and the profile's Calm motion: no backdrop settle, no hover lift, no slides.
 
 ### Don't:
-- **Don't** add accent colours, gradient text, glows or coloured buttons; white is the only action colour.
-- **Don't** use green, amber or red for anything but swarm health, honest playback warnings and destructive
+- **Don't** add a second action colour, gradient text or glows. The one action colour is white or the
+  profile's pick, and nothing else is filled with it.
+- **Don't** use green, amber or red as states for anything but swarm health, honest warnings and destructive
   confirmation.
 - **Don't** set body text, buttons or tables in Mona Sans Expanded.
 - **Don't** put small labels or kickers above headings; meta sits below the title art.

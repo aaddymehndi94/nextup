@@ -47,8 +47,16 @@ the two merge: the newer row wins per title, the local twin is retired, and the 
 account's profile. Profiles that belong to another account stay on the computer and don't sync. Profiles
 deleted before they were ever synced never upload.
 
-**When it syncs.** Push, then pull: a few seconds after start-up, every 60 s, and 2 s after a taste or
-profile change (not after the player's 10 s progress pings, which the minute timer carries). Offline is
+**When it syncs: on events only, never on a timer** (since 2026-11-15; before, every 60 s, which with a
+heartbeat made two requests a minute per running app, about 3,000 a day, nearly all of them "nothing new").
+- Up: 5 s after a taste or profile change, in one push however many changes land in those seconds. Watch
+  progress and listens wait for the player to close (its final save), the person to leave the app window,
+  the next push, or quitting.
+- Down: at start-up, on "Sync now", and when the person comes back to the app window (the web app reports
+  focus and blur to `POST /api/account/focus`), at most once per 10 minutes.
+- The device record (below) goes up when the computer's name or home addresses change, and at most once a
+  day alongside a sync that happens anyway, so the 90-day clean-up doesn't drop a computer in use.
+A computer nobody is using makes no requests at all (`server/sync/requests.test.ts`). Offline is
 normal: the status says so, changes wait in the outbox, and retries back off from 5 s to 5 minutes. A row
 the cloud refuses is set aside so it can't block the rest.
 
@@ -66,8 +74,8 @@ fallback that signs up in the browser with WebCrypto.
   accounts keep theirs until the password changes, and prelogin then reveals which accounts are older.
 - Hard limits from the cloud apply: 50 profiles per account (deleted ones included), 500 rows per push.
 - Since [0006](0006-watch-at-home.md), a signed-in computer also registers itself as a device (id, name, OS
-  family, last seen, an HMAC of its public IP, and with phones on its LAN URLs), as a heartbeat on the sync
-  loop. That is the only non-taste data the cloud holds about a computer; signing out deletes it.
+  family, last seen, an HMAC of its public IP, and with phones on its LAN URLs), sent with a sync when it
+  changes or once a day. That is the only non-taste data the cloud holds about a computer; signing out deletes it.
 
 ## Testing
 
@@ -131,3 +139,25 @@ a mood mix asked for in private mode plays without being saved.
 Tests: `server/sync/music.test.ts` (outbox, backfill, merge, the service against an old and a new cloud),
 `cloud/test/music.test.ts`, and `scripts/sync-e2e.mjs`, which now also checks music between the two laptops
 (give it the servers' data dirs as `A_DATA` and `B_DATA`).
+
+## Update, 2026-11-15: sign in with a code by email
+
+**Decision.** Everyone signs in, and new people sign up, with a 6-digit code sent to their email: the same on
+nexttupp.com, the phone page and the app. No passwords, so there is nothing to forget and no reset flow.
+The code creates the account the first time (`created: true`), so sign-in and sign-up are one form.
+
+**Why.** There was no way back into an account with a forgotten password except an admin's reset link. The
+alternatives:
+- Email reset links on top of passwords: two flows to build and explain, for the same cost.
+- "Sign in with Google": free, but it leaves out anyone without a Google account (one friend uses Yahoo) and
+  hands a third party the sign-in.
+
+**Cost.** Cloudflare Email Service needs the Workers Paid plan ($5 a month; 3,000 emails a month included).
+Taken on 2026-11-15; the plan also lifts the free plan's 100,000-requests-a-day ceiling.
+
+**Existing accounts** keep working: same email, same data, sessions untouched. They keep their password
+verifier for apps before 0.5.5, whose password endpoints stay until those apps are gone. New accounts have
+none (`password_hash` is empty, which no key matches).
+
+**Guessing** is bounded by limits rather than code length; see `cloud/README.md`, "Auth and account".
+

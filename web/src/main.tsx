@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import './music/music.css'
 import './trailer.css'
+import { api } from './api.ts'
 import { loadProfiles, useProfiles } from './profiles.ts'
 import { restoreScroll, useLocation } from './router.ts'
 import { PageActive } from './hooks.ts'
@@ -10,6 +11,8 @@ import { Account } from './pages/Account.tsx'
 import { DownloadsPage } from './pages/DownloadsPage.tsx'
 import { MyList } from './pages/MyList.tsx'
 import { Storage } from './pages/Storage.tsx'
+import { Appearance } from './pages/Appearance.tsx'
+import { applyProfileTheme } from './theme.ts'
 import { Ai } from './pages/Ai.tsx'
 import { Home } from './pages/Home.tsx'
 import { Profiles } from './pages/Profiles.tsx'
@@ -19,6 +22,7 @@ import { Watch } from './pages/Watch.tsx'
 import { Preview } from './components/Preview.tsx'
 import { Toaster } from './components/Toaster.tsx'
 import { UpdateBanner } from './components/UpdateBanner.tsx'
+import { PlayNotice } from './components/PlayNotice.tsx'
 import { Music } from './pages/Music.tsx'
 import { MusicCollection } from './pages/MusicCollection.tsx'
 import { MiniPlayer, NowPlaying } from './music/NowPlaying.tsx'
@@ -31,6 +35,7 @@ function page (path: string, query: URLSearchParams): ReactElement {
   if (path === '/taste') return <Taste />
   if (path === '/account') return <Account />
   if (path === '/storage') return <Storage />
+  if (path === '/appearance') return <Appearance />
   if (path === '/list') return <MyList />
   if (path === '/downloads') return <DownloadsPage />
   if (path === '/ai') return <Ai />
@@ -77,22 +82,41 @@ function Pages () {
 function App () {
   const profiles = useProfiles()
   useEffect(() => { void loadProfiles() }, [])
+  const key = profiles.status === 'ready' ? profiles.active?.id ?? 'none' : 'offline'
+  // Each profile has its own look (Appearance).
+  useLayoutEffect(() => { applyProfileTheme() }, [key])
 
   // Nothing is fetched for a profile until we know who's watching.
   if (profiles.status === 'loading') return <div className="boot" aria-busy="true" />
   if (profiles.status === 'ready' && profiles.picking) return <><Profiles mode="pick" /><Toaster /></>
 
   // Switching profile remounts the page, so every screen refetches as the new profile.
-  const key = profiles.status === 'ready' ? profiles.active?.id ?? 'none' : 'offline'
   return (
     <>
       <Fragment key={key}><Pages /></Fragment>
       <MiniPlayer />
       <NowPlaying />
       <UpdateBanner />
+      <PlayNotice />
       <Toaster />
     </>
   )
 }
 
+// Coming back to the app fetches your other computers' changes; leaving it uploads what's waiting. Sent only when
+// it flips, so switching windows stays cheap (the computer also spaces out its fetches).
+let focused: boolean | null = null
+const onFocusChange = () => {
+  const now = !document.hidden && document.hasFocus()
+  if (now === focused) return
+  focused = now
+  api.focus(now)
+}
+window.addEventListener('focus', onFocusChange)
+window.addEventListener('blur', onFocusChange)
+document.addEventListener('visibilitychange', onFocusChange)
+onFocusChange()
+
+// The last profile's look before the first paint, so nothing flashes from the default.
+applyProfileTheme()
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

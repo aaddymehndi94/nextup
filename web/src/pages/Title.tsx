@@ -18,12 +18,15 @@ import { DismissLine, TasteButtons } from '../components/TitleActions.tsx'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { TopBar } from '../components/TopBar.tsx'
 import { showPreview } from '../components/Preview.tsx'
+import { askToPlay, playAcknowledged } from '../components/PlayNotice.tsx'
 import { TrailerButton, TrailerVideo, useTrailer } from '../components/Trailer.tsx'
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; message: string }
 
 /** Hands the chosen source to the player. Trackers ride in sessionStorage to keep the URL short. */
 export function watchSource (s: Pick<Source, 'infoHash' | 'fileIdx' | 'fileName'> & { trackers?: string[] }, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }, opts: { replace?: boolean } = {}) {
+  // The first time on this device, say where sources come from (PlayNotice).
+  if (!playAcknowledged()) { void askToPlay().then(ok => { if (ok) watchSource(s, ctx, opts) }); return }
   // Without trackers (following a cast to the next episode), the computer already has the torrent.
   if (s.trackers) writeSessionKey(`trackers:${s.infoHash}`, JSON.stringify(s.trackers))
   const q = new URLSearchParams({ ih: s.infoHash, type: ctx.type, id: ctx.imdbId, s: ctx.streamId, n: ctx.name })
@@ -33,7 +36,8 @@ export function watchSource (s: Pick<Source, 'infoHash' | 'fileIdx' | 'fileName'
 }
 
 /** Keep a source to watch later without playing it. Resolves once the server has it on the list. */
-export function downloadSource (s: Source, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }): Promise<void> {
+export async function downloadSource (s: Source, ctx: { type: MediaType; imdbId: string; streamId: string; name: string }): Promise<void> {
+  if (!await askToPlay()) throw new Error('Not now')
   return api.download({ infoHash: s.infoHash, fileIdx: s.fileIdx, fileName: s.fileName, trackers: s.trackers, type: ctx.type, imdbId: ctx.imdbId, streamId: ctx.streamId, title: ctx.name })
     .then(item => {
       const home = { label: 'Downloads', run: () => navigate('/downloads') }
@@ -317,7 +321,7 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
                     <p className="notice">It may be too new or too obscure for the public indexes.</p>
                   </div>
                   )
-                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} onDownload={download} onPeek={setPeeking} onPeekSoon={s => { warmPeek(s, ctx).catch(() => {}) }} isSaved={s => saved.has(keyOf(s))} />}
+                : <SourceList sources={load.data.sources} health={health} onPick={s => watchSource(s, ctx)} onDownload={download} onPeek={s => { void askToPlay().then(ok => { if (ok) setPeeking(s) }) }} onPeekSoon={s => { if (playAcknowledged()) warmPeek(s, ctx).catch(() => {}) }} isSaved={s => saved.has(keyOf(s))} />}
               {Object.keys(load.data.errors).length > 0 && (
                 <p className="fine-print">Some indexes didn’t answer: {Object.entries(load.data.errors).map(([k, v]) => `${k} (${v})`).join(', ')}</p>
               )}

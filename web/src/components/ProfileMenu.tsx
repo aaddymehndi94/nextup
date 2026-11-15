@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, CircleArrowUp, CircleUserRound, HardDrive, Laptop, Pencil, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, VenetianMask } from 'lucide-react'
+import { Check, CircleArrowUp, CircleUserRound, HardDrive, Laptop, Palette, Pencil, RefreshCw, SlidersHorizontal, Smartphone, Sparkles, VenetianMask } from 'lucide-react'
 import { desktop, useDesktopUpdate } from '../desktop.ts'
 import { setPrivate, usePrivate } from '../private.ts'
 import { chooseProfile, useProfiles } from '../profiles.ts'
@@ -117,6 +117,10 @@ export function ProfileMenu () {
           <a href="/ai" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/ai') }}>
             <Sparkles className="menu-icon" aria-hidden />
             <span className="menu-label">AI settings</span>
+          </a>
+          <a href="/appearance" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/appearance') }}>
+            <Palette className="menu-icon" aria-hidden />
+            <span className="menu-label">Appearance</span>
           </a>
           <a href="/profiles" role="menuitem" className="menu-item" onClick={e => { e.preventDefault(); go('/profiles') }}>
             <Pencil className="menu-icon" aria-hidden />

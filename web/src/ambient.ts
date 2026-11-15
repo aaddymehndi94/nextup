@@ -52,7 +52,8 @@ function hsl (r: number, g: number, b: number): [number, number] {
  */
 export function useAmbient (src: string | undefined): void {
   useEffect(() => {
-    if (!src) return
+    // Off in Appearance: the page keeps the theme's background.
+    if (!src || document.documentElement.dataset.ambient === 'off') return
     let live = true
     const img = new Image()
     img.decoding = 'async'

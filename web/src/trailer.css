@@ -120,7 +120,7 @@ html:has(.preview[open]) { overflow: hidden; scrollbar-gutter: stable; }
   font-size: 0.8125rem; font-weight: 580; color: var(--text-2); font-variant-numeric: tabular-nums;
 }
 .peek-progress {
-  position: absolute; inset: auto 0 0; height: 3px; background: #fff;
+  position: absolute; inset: auto 0 0; height: 3px; background: var(--accent);
   transform-origin: left; transition: transform 300ms linear;
 }
 
@@ -174,3 +174,14 @@ html:has(.preview[open]) { overflow: hidden; scrollbar-gutter: stable; }
    keeps its rows' scroll; it takes no space and nothing in it can be reached. */
 .page-kept { content-visibility: hidden; }
 @supports not (content-visibility: hidden) { .page-kept { display: none; } }
+
+/* The one-time "Before you play" note (PlayNotice.tsx): a small card in the same dialog shell. */
+.play-notice { place-items: center; }
+.play-notice-card { width: min(30rem, 100%); padding: 1.75rem; display: grid; gap: 0.875rem; }
+.play-notice-card p { color: var(--text-2); line-height: 1.55; text-wrap: pretty; }
+.play-notice-title { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.play-notice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; margin-top: 0.5rem; }
+@media (max-width: 640px) {
+  .play-notice { padding: var(--gutter); place-items: center; }
+  .play-notice-card { min-height: 0; border-radius: 0.875rem; }
+}

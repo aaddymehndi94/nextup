@@ -3,19 +3,19 @@ import { b64url, HANDOFF_CODE, keyedHash, randomToken, sha256Hex } from './crypt
 import { bad, type Ctx, empty, type Env, HttpError, json, onlyKeys, readJson } from './http.ts'
 import { oneOf, plainText, UUID } from './validate.ts'
 
-// Watching on a phone. A computer running nexttupp registers itself while signed in (a heartbeat about once a
-// minute) with a name and its addresses on the home network. A phone signed in to the same account lists
-// them, sees which share its network, and asks for a one-time handoff code for one. It then opens
+// Watching on a phone. A computer running nexttupp registers itself while signed in, with a name and its
+// addresses on the home network: when those change, and at most once a day alongside a sync (apps before 0.5.5
+// did it every minute). So the cloud can't tell whether a computer is on right now; it doesn't try to. A phone
+// signed in to the same account lists them, sees which share its network, and asks for a one-time handoff
+// code for one, whether or not it has called lately. It then opens
 // http://<lan address>/handoff?code=… on that computer, which redeems the code here with its own session:
 // only the same account and the right device can, once, within 60 seconds.
 //
 // "Same network" compares HMACs of the caller's IP (an IPv6 address's /64), so no IP address is stored.
 
 export const HANDOFF_TTL_MS = 60_000
-/** A device counts as running if it called within this long (it calls about once a minute). */
+/** For apps before 0.5.5, which call about once a minute: "called just now". Newer apps call only on events. */
 export const ONLINE_MS = 2 * 60_000
-/** Handoffs are refused for a device that hasn't called in this long: it isn't there to redeem the code. */
-const REACHABLE_MS = 10 * 60_000
 const DEVICE_LIMIT = 20
 const DEVICE_RETENTION_MS = 90 * 24 * 3600_000
 const PENDING_HANDOFFS = 10
@@ -44,7 +44,7 @@ export interface DeviceJson {
   lan: boolean
   lanUrls: string[]
   lastSeenAt: number
-  /** Called within the last two minutes. */
+  /** Called within the last two minutes. Only meaningful for apps before 0.5.5; newer pages don't use it. */
   online: boolean
   /** Its last call came from the same network as this request. */
   sameNetwork: boolean
@@ -166,7 +166,6 @@ export async function createHandoff (ctx: Ctx): Promise<Response> {
   const device = devices.results[0] as DeviceRow | undefined
   if (!device) throw new HttpError(404, 'not_found', 'That computer isn’t signed in to this account any more')
   if (device.lan !== 1) throw new HttpError(409, 'lan_off', `Phones are turned off on ${device.name}. Turn on “Let phones play from this computer” in nexttupp there, under Account.`)
-  if (now - device.last_seen_at > REACHABLE_MS) throw new HttpError(409, 'device_offline', `${device.name} hasn’t been online for a while. Open nexttupp on it and try again.`)
   if ((pending.results[0] as { n: number }).n >= PENDING_HANDOFFS) {
     throw new HttpError(429, 'too_many_attempts', 'Too many tries at once. Wait a minute and try again.', { 'retry-after': '60' })
   }

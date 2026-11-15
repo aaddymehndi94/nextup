@@ -10,6 +10,8 @@ export interface TitleSummary {
   name: string
   year?: string
   poster?: string
+  /** IMDb's rating out of 10, one decimal ("7.8"), when known. */
+  imdbRating?: string
 }
 
 export interface Episode {
@@ -29,7 +31,6 @@ export interface TitleDetail extends TitleSummary {
   description?: string
   runtime?: string
   genres: string[]
-  imdbRating?: string
   cast: string[]
   director: string[]
   /** Only for series, sorted by season then episode. Season 0 = specials. */
@@ -241,6 +242,8 @@ export interface ProgressRequest {
   type: MediaType; id: string; streamId: string; position: number; duration: number
   /** Where the title was opened from: a home row id ("top", "because:tt…", "discover:g:Western"), "search", "similar". */
   from?: string
+  /** The player is closing: the last word on this position, so it syncs now (other saves wait for the next sync). */
+  final?: boolean
 }
 export interface ProgressResponse { progress: WatchProgress }
 
@@ -261,7 +264,6 @@ export interface RecItem extends TitleSummary {
   /** Trimmed to ~240 characters. */
   description?: string
   genres: string[]
-  imdbRating?: string
   runtime?: string
   reason: RecReason
   /** Continue watching: where the viewer is. */

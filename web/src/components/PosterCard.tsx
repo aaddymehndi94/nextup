@@ -12,6 +12,8 @@ import { warmYouTube } from '../youtube.ts'
  */
 export function PosterCard ({ title, showType = false, note, badge, onOpen }: { title: TitleSummary; showType?: boolean; note?: string; badge?: ReactNode; onOpen?: () => void }) {
   const [failed, setFailed] = useState(!title.poster)
+  // IMDb's rating, unless the note under it already says it ("IMDb 8.1 · Drama").
+  const rated = title.imdbRating && !note?.includes('IMDb') ? title.imdbRating : undefined
   const [loaded, onLoad] = useLoaded(title.poster)
   const hover = useRef<number | undefined>(undefined)
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
@@ -40,7 +42,12 @@ export function PosterCard ({ title, showType = false, note, badge, onOpen }: { 
       </div>
       <div className="poster-meta">
         <span className="poster-name">{title.name}</span>
-        {title.year && <span className="poster-year">{title.year}</span>}
+        {(title.year || rated) && (
+          <span className="poster-year">
+            {title.year}{title.year && rated && ' · '}
+            {rated && <span className="poster-rating">IMDb {rated}</span>}
+          </span>
+        )}
         {note && <span className="poster-note" title={note}>{note}</span>}
       </div>
     </a>

@@ -2,7 +2,9 @@
 //  1. www.nexttupp.com redirects to the apex (a host-based rule, which _redirects can't express).
 //  2. /invite, from when sign-up needed an invite, redirects to /join.
 //  3. The addresses people guess, like /login and /signup, redirect to /account (/account#create for sign-up).
-//  4. Security and cache headers on every response (worker-src: /watch's offline copy, watch-sw.js).
+//  4. Security headers on pages (worker-src: /watch's offline copy, watch-sw.js).
+// Files a page loads (scripts, styles, fonts, images) don't run this: see run_worker_first in wrangler.jsonc.
+// They get their headers, and watch-sw.js its own CSP, from public/_headers.
 // Unknown paths get 404.html with a 404 status from the assets binding (not_found_handling).
 
 const APEX = 'nexttupp.com'
@@ -44,14 +46,6 @@ export default {
     for (const [k, v] of Object.entries(SECURITY)) out.headers.set(k, v)
     const dev = typeof env.DEV_CONNECT_SRC === 'string' && /^(http:\/\/(localhost|127\.0\.0\.1):\d{2,5} ?)+$/.test(env.DEV_CONNECT_SRC) ? env.DEV_CONNECT_SRC : ''
     out.headers.set('content-security-policy', dev ? csp(`${API} ${dev}`) : CSP)
-    // Fonts and images change rarely; pages, CSS and JS revalidate so a deploy shows up at once.
-    if (res.ok && /^\/(fonts|img)\//.test(url.pathname)) out.headers.set('cache-control', 'public, max-age=604800')
-    // The phone app's service worker: always checked for a new version. A worker's own fetches follow the CSP
-    // sent with its script, so it gets one that lets it fetch this site's files (to keep /watch for offline).
-    if (url.pathname === '/watch-sw.js') {
-      out.headers.set('cache-control', 'no-cache')
-      out.headers.set('content-security-policy', "default-src 'none'; connect-src 'self'")
-    }
     return out
   },
 }

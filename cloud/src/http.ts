@@ -6,7 +6,24 @@ export { bad, HttpError }
 
 export interface Env {
   DB: D1Database
+  /** Cloudflare Email Service (wrangler.jsonc, send_email). Sign-in codes go out through it (codes.ts). */
+  EMAIL?: Mailer
+  /** Apps older than this are turned away with 426 update_required (index.ts). Unset: none are. */
+  MIN_APP_VERSION?: string
+  /** One line every app shows until it's cleared (index.ts). */
+  APP_NOTICE?: string
 }
+
+/** One message for Cloudflare Email Service's `send`. */
+export interface Mail {
+  from: { email: string; name?: string }
+  to: string
+  subject: string
+  text: string
+  html: string
+}
+
+export interface Mailer { send (message: Mail): Promise<{ messageId: string }> }
 
 
 const CORS: Record<string, string> = {

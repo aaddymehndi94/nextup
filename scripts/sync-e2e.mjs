@@ -3,6 +3,8 @@
 //
 //   node scripts/sync-e2e.mjs
 //   A=http://127.0.0.1:4550 B=http://127.0.0.1:4551 CLOUD=http://127.0.0.1:8799   (the defaults)
+//   CLOUD_LOG=<the local Worker's output, e.g. `wrangler dev --local > cloud.log`>: sign-in codes are read from
+//   it, since a local Worker only logs the emails it would send.
 //
 // Start each server with NEXTTUPP_DATA=<its own scratch dir> NEXTTUPP_CLOUD_URL=$CLOUD PORT=…, never the
 // real data dir, and pass those dirs as A_DATA and B_DATA (defaults /tmp/nx-a, /tmp/nx-b): the script puts a
@@ -11,7 +13,8 @@
 // account's). Likes, My List, music likes, listens and AI mixes, and profile deletions go both ways, and
 // removals reach the cloud as tombstones. Private mode sends nothing. Phase 2: a friend creates their own
 // account on B; the friend's account sees none of the owner's data.
-import { createHash, pbkdf2Sync } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -21,8 +24,28 @@ const CLOUD = process.env.CLOUD ?? 'http://127.0.0.1:8799'
 const A_DATA = process.env.A_DATA ?? '/tmp/nx-a'
 const B_DATA = process.env.B_DATA ?? '/tmp/nx-b'
 
-const OWNER = { email: `owner-${Date.now().toString(36)}@example.test`, password: 'owner password 123' }
-const FRIEND = { email: `friend-${Date.now().toString(36)}@example.test`, password: 'friend password 456' }
+const OWNER = { email: `owner-${Date.now().toString(36)}@example.test` }
+const FRIEND = { email: `friend-${Date.now().toString(36)}@example.test` }
+const CLOUD_LOG = process.env.CLOUD_LOG
+if (!CLOUD_LOG) throw new Error('Set CLOUD_LOG to the local Worker’s output file (sign-in codes are read from it)')
+
+/** Asks `send` for a code, then finds it in the local Worker's log: the newest one after the ask. */
+async function emailedCode (send) {
+  const from = readFileSync(CLOUD_LOG, 'utf8').length
+  await send()
+  for (let i = 0; i < 50; i++) {
+    const m = [...readFileSync(CLOUD_LOG, 'utf8').slice(from).matchAll(/(\d{6}) is your nexttupp code/g)].at(-1)
+    if (m) return m[1]
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('no sign-in code in CLOUD_LOG')
+}
+
+/** Signs a nexttupp server in (or up) the way the app does: email, then the code. */
+async function signIn (server, who, displayName) {
+  const code = await emailedCode(() => fetch(`${server}/api/account/code`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: who.email }) }))
+  return api(server, 'POST', '/api/account/verify', { email: who.email, code, ...(displayName ? { displayName } : {}) })
+}
 const GODFATHER = 'tt0068646'
 const MATRIX = 'tt0133093'
 const SHAWSHANK = 'tt0111161'
@@ -75,12 +98,11 @@ const listen = (base, profile, trackId, headers = {}) => fetch(`${base}/api/musi
 const songState = (base, profile, id) => api(base, 'GET', `/api/music/track/${id}`, undefined, profile)
 const count = (dir, sql, ...p) => local(dir, db => Number(db.prepare(sql).get(...p).n))
 
-/** Reads the account straight from the cloud, as a client would: prelogin, PBKDF2, login, pull everything. */
+/** Reads the account straight from the cloud, as a client would: a code by email, then pull everything. */
 async function cloudPull (who) {
   const post = (path, body, token) => fetch(CLOUD + path, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }).then(r => r.json())
-  const pre = await post('/v1/auth/prelogin', { email: who.email })
-  const key = pbkdf2Sync(who.password.normalize('NFC'), Buffer.from(pre.salt, 'base64url'), pre.iterations, 32, 'sha256').toString('base64url')
-  const { token } = await post('/v1/auth/login', { email: who.email, key })
+  const code = await emailedCode(() => post('/v1/auth/code', { email: who.email }))
+  const { token } = await post('/v1/auth/code/verify', { email: who.email, code })
   const all = async (path, out) => {
     for (let since = '0'; ;) {
       const page = await fetch(`${CLOUD}${path}?since=${since}`, { headers: { authorization: `Bearer ${token}` } }).then(r => r.json())
@@ -108,8 +130,8 @@ await listen(B, bMe.id, BROWN.id)
 local(B_DATA, db => db.prepare("INSERT INTO music_mixes (id, profile_id, kind, title, subtitle, tracks, model, at) VALUES (?, ?, 'ai', 'Late drive', 'Punjabi for the road', ?, 'gpt-5.1', ?)")
   .run(AI_MIX, bMe.id, JSON.stringify([{ id: BROWN.id, why: 'You love his flow' }, { id: KESARIYA.id }]), Date.now()))
 
-const joinedA = await api(A, 'POST', '/api/account/signup', { email: OWNER.email, password: OWNER.password, displayName: 'Owner' })
-check('A creates an account, no invite needed', joinedA.signedIn && joinedA.account.role === 'member' && joinedA.sync.state === 'synced', joinedA.sync?.state)
+const joinedA = await signIn(A, OWNER, 'Owner')
+check('A creates an account with a code by email, no invite or password', joinedA.signedIn && joinedA.account.role === 'member' && joinedA.sync.state === 'synced', joinedA.sync?.state)
 check('the session token never reaches the browser', !JSON.stringify(joinedA).includes('nxs_'))
 const kid = await api(A, 'POST', '/api/profiles', { name: 'Kid' })
 await api(A, 'PUT', `/api/me/rating/movie/${MATRIX}`, { value: 1, source: 'title' }, aMe.id)
@@ -119,7 +141,7 @@ await rate(A, aMe.id, 'track', TUM_HI_HO.id, 1)
 await listen(A, aMe.id, TUM_HI_HO.id)
 await sync(A)
 
-const signedB = await api(B, 'POST', '/api/account/login', OWNER)
+const signedB = await signIn(B, OWNER)
 check('B signs in to the same account', signedB.signedIn && signedB.account.email === OWNER.email && signedB.sync.state === 'synced', signedB.sync?.state)
 check('B’s own "Me" merges into the account’s "Me"', signedB.merged?.[bMe.id] === aMe.id, JSON.stringify(signedB.merged))
 const bNames = (await profiles(B)).map(p => p.name).sort()
@@ -178,7 +200,7 @@ check('music in the cloud is under the account’s "Me" only, with no files or v
 const out = await api(B, 'POST', '/api/account/logout', {})
 check('B signs out', out.signedIn === false)
 check('signed out, B keeps its local data', (await state(B, aMe.id, MATRIX)).rating === -1)
-const friend = await api(B, 'POST', '/api/account/signup', { email: FRIEND.email, password: FRIEND.password, displayName: 'Friend' })
+const friend = await signIn(B, FRIEND, 'Friend')
 check('the friend creates an account on B', friend.signedIn && friend.account.email === FRIEND.email && friend.account.role === 'member')
 const fp = await api(B, 'POST', '/api/profiles', { name: 'Friend' })
 await api(B, 'PUT', `/api/me/rating/movie/${SHAWSHANK}`, { value: 1 }, fp.id)
@@ -188,8 +210,9 @@ check('the friend’s account holds only the friend’s profile', friendCloud.pr
 check('the friend’s account holds none of the owner’s music', Object.values(friendCloud.music).every(rows => rows.length === 0))
 await sync(A)
 check('the owner never sees the friend’s profile', !(await profiles(A)).some(p => p.id === fp.id))
-const taken = await fetch(`${B}/api/account/signup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: FRIEND.email, password: FRIEND.password }) })
-check('an email can only have one account', taken.status === 409)
+const cloudPost = (path, body) => fetch(CLOUD + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
+const again = await cloudPost('/v1/auth/code/verify', { email: FRIEND.email, code: await emailedCode(() => cloudPost('/v1/auth/code', { email: FRIEND.email })) })
+check('an email has one account: a second code signs in to it, not a new one', again.created === false && again.account?.email === FRIEND.email)
 const csrf = await fetch(`${A}/api/account/logout`, { method: 'POST' })
 check('account writes need a JSON body (no cross-site sign-out)', csrf.status === 415)
 

@@ -1,9 +1,8 @@
-// Signing in to the nexttupp API from the website, and creating an account (/account and /watch).
+// Signing in to the nexttupp API from the website (/account and /watch), which also creates the account the
+// first time: type an email, get a 6-digit code by email, type it in. No password.
 //
 // The pages talk only to the nexttupp API (CORS, bearer token kept in this site's localStorage, so signing
-// in on one page signs in on the others). The password never leaves the page: it is stretched here with
-// PBKDF2-SHA256 (600,000 rounds, as in the app) and only the derived key is sent. An account made here is the
-// same as one made in the app: same salt size, same rounds, same key.
+// in on one page signs in on the others). An account made here is the same as one made in the app.
 
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
 
@@ -15,7 +14,6 @@ function apiBase () {
 }
 const API = apiBase()
 const STORE = 'nexttupp:cloud'
-const KDF_ITERATIONS = 600000 // cloud/src/crypto.ts; the API refuses sign-ups with any other number
 
 function loadSession () {
   try {
@@ -58,38 +56,18 @@ export async function api (method, path, body) {
   return data
 }
 
-const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-const fromB64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), c => c.charCodeAt(0))
+/** Emails a code to `email`. Answers the same whether or not the email has an account. */
+const sendCode = email => api('POST', '/v1/auth/code', { email })
 
-async function deriveKey (password, salt, iterations) {
-  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password.normalize('NFC')), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: fromB64url(salt), iterations }, base, 256)
-  return b64url(new Uint8Array(bits))
-}
-
-async function loginWithKey (email, key) {
-  const r = await api('POST', '/v1/auth/login', { email, key })
+/** Trades the code for a session; creates the account (with `displayName`) if there wasn't one. */
+async function verifyCode (email, code, displayName) {
+  session = null
+  const body = { email, code }
+  if (displayName) body.displayName = displayName
+  const r = await api('POST', '/v1/auth/code/verify', body)
   session = { api: API, token: r.token, expiresAt: r.expiresAt, email: r.account.email }
   saveSession(session)
-}
-
-async function signIn (email, password) {
-  session = null
-  const pre = await api('POST', '/v1/auth/prelogin', { email })
-  if (pre.kdf !== 'pbkdf2-sha256' || !Number.isInteger(pre.iterations) || pre.iterations < 100000 || pre.iterations > 5000000) {
-    throw new ApiError(400, 'unsupported_kdf', 'This page can’t sign in to this account. Try again later.')
-  }
-  await loginWithKey(email, await deriveKey(password, pre.salt, pre.iterations))
-}
-
-async function signUp (email, password, displayName) {
-  session = null
-  const salt = b64url(crypto.getRandomValues(new Uint8Array(16)))
-  const key = await deriveKey(password, salt, KDF_ITERATIONS)
-  const body = { email, salt, iterations: KDF_ITERATIONS, key }
-  if (displayName) body.displayName = displayName
-  await api('POST', '/v1/auth/signup', body)
-  await loginWithKey(email, key)
+  return r
 }
 
 export async function signOut () {
@@ -97,31 +75,31 @@ export async function signOut () {
   forgetSession()
 }
 
-// ---- The sign-in / create-account form -----------------------------------------------------
+// ---- The sign-in form: email, then the code ------------------------------------------------
 
 const FORM = `
-  <div class="auth-tabs" role="group" aria-label="Sign in or create an account">
-    <button type="button" data-mode="signin">Sign in</button>
-    <button type="button" data-mode="create">Create account</button>
-  </div>
-  <form class="watch-form" novalidate>
+  <form class="watch-form" data-step="email" novalidate>
     <label class="watch-field">
       <span>Email</span>
-      <input type="email" name="email" autocomplete="username" inputmode="email" spellcheck="false" autocapitalize="off" required>
-    </label>
-    <label class="watch-field">
-      <span data-pw-label>Password</span>
-      <span class="pw">
-        <input type="password" name="password" autocomplete="current-password" required>
-        <button type="button" class="pw-show" data-pw-show aria-pressed="false">Show</button>
-      </span>
+      <input type="email" name="email" autocomplete="email" inputmode="email" spellcheck="false" autocapitalize="off" required>
     </label>
     <label class="watch-field" data-name-field hidden>
       <span>Your name <em>(optional)</em></span>
       <input name="displayName" autocomplete="nickname" maxlength="40">
     </label>
     <p class="watch-error" role="alert" data-error></p>
-    <button class="button primary large" type="submit" data-submit>Sign in</button>
+    <button class="button primary large" type="submit" data-submit>Email me a code</button>
+    <p class="auth-terms">By continuing, you agree to the <a class="link" href="/terms">terms</a>.</p>
+  </form>
+  <form class="watch-form" data-step="code" novalidate hidden>
+    <p class="auth-sent" data-sent></p>
+    <label class="watch-field">
+      <span>Code</span>
+      <input class="code-input" name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" spellcheck="false" required>
+    </label>
+    <p class="watch-error" role="alert" data-error></p>
+    <button class="button primary large" type="submit" data-submit>Continue</button>
+    <p class="auth-switch" data-resend-line>Nothing yet? Check your spam folder, or <button type="button" class="link" data-resend>send a new code</button>.</p>
   </form>
   <p class="auth-switch" data-switch></p>`
 
@@ -129,95 +107,147 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** The API's messages, in plain words where its own are written for developers. */
 function friendly (err) {
-  if (err.code === 'invalid_credentials') return 'Wrong email or password.'
   if (err.status === 400 && /^email/.test(err.message)) return 'That email doesn’t look right. Check it and try again.'
+  if (err.status === 400 && /^code/.test(err.message)) return 'The code is the 6 digits in the email.'
   if (err.status === 400 && /^displayName/.test(err.message)) return 'That name can’t be used. Try a plain first name, or leave it empty.'
   return err.message
 }
 
 /**
- * Puts the sign-in / create-account form into `root`. Calls `onSignedIn()` once signed in, and `onMode(mode)`
- * when the visitor switches between 'signin' and 'create'. `path` is this page, for the "open it over https"
- * hint. Returns `{ setError, setMode }`.
+ * Puts the sign-in form into `root`: an email, then the code sent to it. The same form signs in and creates
+ * an account; 'create' mode only adds the optional name, and `onMode(mode)` lets the page change its heading.
+ * `onStep('email' | 'code')` says which step shows, so the page can drop an intro that no longer fits. Calls
+ * `onSignedIn()` once signed in. Returns `{ setError, setMode }`.
  */
-export function mountAuth (root, { onSignedIn, onMode = () => {}, path, mode: start = 'signin' }) {
+export function mountAuth (root, { onSignedIn, onMode = () => {}, onStep = () => {}, mode: start = 'signin' }) {
   root.innerHTML = FORM
-  const form = root.querySelector('form')
-  const errorLine = root.querySelector('[data-error]')
-  const submit = root.querySelector('[data-submit]')
+  const emailForm = root.querySelector('[data-step="email"]')
+  const codeForm = root.querySelector('[data-step="code"]')
   const nameField = root.querySelector('[data-name-field]')
-  const pwLabel = root.querySelector('[data-pw-label]')
-  const pwShow = root.querySelector('[data-pw-show]')
   const switchLine = root.querySelector('[data-switch]')
+  const sentLine = root.querySelector('[data-sent]')
+  const resend = root.querySelector('[data-resend]')
+  const errorOf = form => form.querySelector('[data-error]')
+  const submitOf = form => form.querySelector('[data-submit]')
   let mode = start
+  let email = ''
   let busy = false
 
-  const label = () => mode === 'create' ? 'Create my account' : 'Sign in'
-
-  function setMode (next, { keepError = false } = {}) {
+  function setMode (next) {
     mode = next
-    for (const b of root.querySelectorAll('[data-mode]')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode))
     nameField.hidden = mode !== 'create'
-    pwLabel.textContent = mode === 'create' ? 'Choose a password (8 or more characters)' : 'Password'
-    form.password.autocomplete = mode === 'create' ? 'new-password' : 'current-password'
-    if (!busy) submit.textContent = label()
     switchLine.replaceChildren()
+    if (!codeForm.hidden) { onMode(mode); return }
     const other = document.createElement('button')
     other.type = 'button'
     other.className = 'link'
     other.textContent = mode === 'create' ? 'Sign in' : 'Create a free account'
-    other.addEventListener('click', () => { setMode(mode === 'create' ? 'signin' : 'create'); form.email.focus() })
+    other.addEventListener('click', () => { setMode(mode === 'create' ? 'signin' : 'create'); emailForm.email.focus() })
     switchLine.append(mode === 'create' ? 'Already have an account? ' : 'New to nexttupp? ', other)
-    if (!keepError) errorLine.textContent = ''
     onMode(mode)
   }
 
-  for (const b of root.querySelectorAll('[data-mode]')) b.addEventListener('click', () => setMode(b.dataset.mode))
-  // An old error goes away as soon as the visitor starts fixing it.
-  form.addEventListener('input', () => { if (!busy) errorLine.textContent = '' })
+  function showEmail () {
+    codeForm.hidden = true
+    emailForm.hidden = false
+    codeForm.reset()
+    errorOf(codeForm).textContent = ''
+    onStep('email')
+    setMode(mode)
+    emailForm.email.focus()
+  }
 
-  pwShow.addEventListener('click', () => {
-    const show = form.password.type === 'password'
-    form.password.type = show ? 'text' : 'password'
-    pwShow.textContent = show ? 'Hide' : 'Show'
-    pwShow.setAttribute('aria-pressed', String(show))
-  })
+  function showCode () {
+    emailForm.hidden = true
+    codeForm.hidden = false
+    switchLine.replaceChildren()
+    const other = document.createElement('button')
+    other.type = 'button'
+    other.className = 'link'
+    other.textContent = 'Use a different email'
+    other.addEventListener('click', showEmail)
+    sentLine.replaceChildren('We sent a code to ', Object.assign(document.createElement('strong'), { textContent: email }), '. It works for 10 minutes.')
+    switchLine.append(other)
+    onStep('code')
+    codeForm.code.focus()
+  }
 
-  form.addEventListener('submit', async e => {
-    e.preventDefault()
+  async function run (form, busyLabel, work) {
     if (busy) return
-    const email = form.email.value.trim()
-    const password = form.password.value
-    const name = form.displayName.value.trim()
-    errorLine.textContent = ''
-    if (!email || !password) { errorLine.textContent = 'Enter your email and password.'; return }
-    if (mode === 'create' && !EMAIL.test(email)) { errorLine.textContent = 'That email doesn’t look right. Check it and try again.'; return }
-    if (mode === 'create' && [...password].length < 8) { errorLine.textContent = 'Choose a password with 8 or more characters.'; return }
-    if (!crypto.subtle) { errorLine.textContent = `This browser can’t sign in securely here. Open https://nexttupp.com${path}.`; return }
+    const submit = submitOf(form)
+    const label = submit.textContent
     busy = true
     submit.disabled = true
-    submit.textContent = mode === 'create' ? 'Creating your account…' : 'Signing in…'
-    try {
-      if (mode === 'create') await signUp(email, password, name)
-      else await signIn(email, password)
-      form.reset()
-      onSignedIn()
-    } catch (err) {
-      if (err.code === 'email_taken') {
-        setMode('signin', { keepError: true })
-        errorLine.textContent = 'You already have an account with that email. Enter its password to sign in.'
-        form.password.value = ''
-        form.password.focus()
-      } else {
-        errorLine.textContent = friendly(err)
-      }
+    submit.textContent = busyLabel
+    errorOf(form).textContent = ''
+    try { await work() } catch (err) {
+      errorOf(form).textContent = friendly(err)
+      // A wrong code stays selected, so typing the right one replaces it.
+      if (form === codeForm) codeForm.code.select()
     } finally {
       busy = false
       submit.disabled = false
-      submit.textContent = label()
+      submit.textContent = label
+    }
+  }
+
+  // An old error goes away as soon as the visitor starts fixing it.
+  for (const form of [emailForm, codeForm]) form.addEventListener('input', () => { if (!busy) errorOf(form).textContent = '' })
+
+  emailForm.addEventListener('submit', e => {
+    e.preventDefault()
+    const typed = emailForm.email.value.trim()
+    if (!typed) { errorOf(emailForm).textContent = 'Enter your email.'; return }
+    if (!EMAIL.test(typed)) { errorOf(emailForm).textContent = 'That email doesn’t look right. Check it and try again.'; return }
+    void run(emailForm, 'Sending your code…', async () => {
+      await sendCode(typed)
+      email = typed
+      showCode()
+    })
+  })
+
+  const digits = () => codeForm.code.value.replace(/\D/g, '')
+  const verify = () => run(codeForm, 'Signing in…', async () => {
+    await verifyCode(email, digits(), mode === 'create' ? emailForm.displayName.value.trim() : '')
+    emailForm.reset()
+    codeForm.reset()
+    onSignedIn()
+  })
+  codeForm.addEventListener('submit', e => {
+    e.preventDefault()
+    if (digits().length !== 6) { errorOf(codeForm).textContent = 'The code is the 6 digits in the email.'; return }
+    void verify()
+  })
+  // Digits only, six at most ("123 456" pastes as 123456). Six typed or pasted, or filled in from the email by the
+  // phone: sign in straight away.
+  codeForm.code.addEventListener('input', () => {
+    const d = digits().slice(0, 6)
+    if (codeForm.code.value !== d) codeForm.code.value = d
+    if (d.length === 6 && !busy) void verify()
+  })
+
+  // Busy on the link itself, so Continue keeps its label. It stays: a code that ran out of tries needs another.
+  resend.addEventListener('click', async () => {
+    if (busy) return
+    busy = true
+    resend.disabled = true
+    resend.textContent = 'sending…'
+    errorOf(codeForm).textContent = ''
+    try {
+      await sendCode(email)
+      codeForm.reset()
+      sentLine.replaceChildren('We sent a new code to ', Object.assign(document.createElement('strong'), { textContent: email }), '. Use the newest one.')
+      codeForm.code.focus()
+    } catch (err) { errorOf(codeForm).textContent = friendly(err) } finally {
+      busy = false
+      resend.disabled = false
+      resend.textContent = 'send a new code'
     }
   })
 
   setMode(start)
-  return { setError: message => { errorLine.textContent = message || '' }, setMode }
+  return {
+    setError: message => { errorOf(codeForm.hidden ? emailForm : codeForm).textContent = message || '' },
+    setMode: next => { if (!codeForm.hidden) showEmail(); setMode(next) },
+  }
 }

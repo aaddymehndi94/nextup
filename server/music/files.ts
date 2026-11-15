@@ -4,10 +4,12 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { MusicTrack } from '../../shared/music.ts'
 import type { AudioSource } from './source.ts'
 
-// Songs (and music videos) saved on this computer, in data/music/{audio,video}. A song is fetched the first
+// Songs saved on this computer, in data/music/audio. A song is fetched the first
 // time it's played (or when it's next in the queue) and kept until the folder is over its size limit; then
 // the least recently played go first.
 
+// Music videos aren't fetched any more (ADR 0010); 'video' stays so ones saved by older versions still count
+// towards the limit and are cleared like songs.
 export type FileKind = 'audio' | 'video'
 
 const RETRY_AFTER_MS = 10 * 60_000

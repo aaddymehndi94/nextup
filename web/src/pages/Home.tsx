@@ -22,6 +22,8 @@ import { Wordmark } from '../components/Wordmark.tsx'
 import { BrowseTabs, TABS } from '../components/BrowseTabs.tsx'
 import { Downloads } from '../components/Downloads.tsx'
 import { ProfileMenu } from '../components/ProfileMenu.tsx'
+import { RatingFilter } from '../components/RatingFilter.tsx'
+import { clears, setMinRating, useMinRating, type MinRating } from '../ratingFilter.ts'
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T } | { state: 'error'; message: string }
 
@@ -32,12 +34,18 @@ function useQueryResults (query: string): Load<TitleSummary[]> | null {
     if (!q) { setResult(null); return }
     setResult(prev => (prev?.state === 'ok' ? prev : { state: 'loading' }))
     const ctrl = new AbortController()
-    const t = setTimeout(() => {
-      api.search(q, ctrl.signal)
-        .then(data => setResult({ state: 'ok', data }))
-        .catch(err => { if (!ctrl.signal.aborted) setResult({ state: 'error', message: err.message }) })
-    }, 220)
-    return () => { clearTimeout(t); ctrl.abort() }
+    let again: ReturnType<typeof setTimeout> | undefined
+    // The server waits only briefly for IMDb ratings it doesn't have yet and keeps fetching them after it
+    // answers, so look again (up to 3 times) while more arrive: the rating filter needs them.
+    const look = (tries: number, rated: number) => api.search(q, ctrl.signal)
+      .then(data => {
+        setResult({ state: 'ok', data })
+        const now = data.filter(d => d.imdbRating).length
+        if (now < data.length && now > rated && tries < 3) again = setTimeout(() => look(tries + 1, now), 3000)
+      })
+      .catch(err => { if (!ctrl.signal.aborted && tries === 0) setResult({ state: 'error', message: err.message }) })
+    const t = setTimeout(() => look(0, -1), 220)
+    return () => { clearTimeout(t); clearTimeout(again); ctrl.abort() }
   }, [query])
   return result
 }
@@ -174,10 +182,10 @@ function useNearBottom (onVisible: () => void, active: boolean, deps: unknown) {
  * The billboard's title: one of the top picks once picks are personal, otherwise of the most popular films. They
  * take turns (billboard.ts), so Home doesn't open on the same film every time. Chosen once per visit to Home.
  */
-function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId: string } | null {
+function billboardOf (data: HomeResponse, min: MinRating): { item: RecItem; label: string; rowId: string } | null {
   const row = data.coldStart ? data.rows.find(r => r.id.startsWith('popular:')) : data.rows.find(r => r.kind === 'top')
   const profile = getActiveProfile()
-  const item = row && chooseFeatured(row.items.filter(i => i.background), featuredLately(profile))
+  const item = row && chooseFeatured(row.items.filter(i => i.background && clears(i, min)), featuredLately(profile))
   if (!row || !item) return null
   markFeatured(profile, item.id)
   return { item, label: data.coldStart ? 'Popular now' : item.reason.text, rowId: row.id }
@@ -185,6 +193,7 @@ function billboardOf (data: HomeResponse): { item: RecItem; label: string; rowId
 
 function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null; onAi: (a: AiPicksResponse) => void }) {
   const { load, refresh } = useHomeFeed(tab)
+  const min = useMinRating()
   const paging = useFeedPaging(tab, load.state === 'ok' ? load.data : null)
   const bottom = useNearBottom(paging.loadPage, paging.more, paging.extra.length)
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
@@ -259,8 +268,11 @@ function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null;
   }
 
   const data = load.data
-  if (!pinned.current || pinned.current.cold !== data.coldStart || (pinned.current.pick && hidden.has(pinned.current.pick.item.id))) {
-    pinned.current = { cold: data.coldStart, pick: billboardOf({ ...data, rows: data.rows.map(r => ({ ...r, items: r.items.filter(i => !hidden.has(i.id)) })) }) }
+  // Chosen again when its title is hidden or falls under the IMDb filter, or when none fitted until now.
+  const was = pinned.current?.pick
+  const stale = !was || hidden.has(was.item.id) || !clears(was.item, min)
+  if (!pinned.current || pinned.current.cold !== data.coldStart || stale) {
+    pinned.current = { cold: data.coldStart, pick: billboardOf({ ...data, rows: data.rows.map(r => ({ ...r, items: r.items.filter(i => !hidden.has(i.id)) })) }, min) }
   }
   const pick = pinned.current.pick
 
@@ -275,8 +287,8 @@ function Feed ({ tab, ai, onAi }: { tab?: MediaType; ai: AiPicksResponse | null;
     const items = all.filter(it => {
       if (row.kind === 'list') return !hidden.has(`list:${it.id}`)
       if (row.kind === 'continue') return !hidden.has(`continue:${it.id}`)
-      // The billboard's title isn't repeated just below it.
-      return !hidden.has(it.id) && !(pick && it.id === pick.item.id && row.id === pick.rowId)
+      // The billboard's title isn't repeated just below it; the IMDb filter thins the picks, not your own rows.
+      return !hidden.has(it.id) && !(pick && it.id === pick.item.id && row.id === pick.rowId) && (!isRecRow(row) || clears(it, min))
     })
     return { ...row, items, have: all.map(it => it.id) }
   }).filter(row => row.items.length > 0 || row.kind === 'onboarding')
@@ -368,13 +380,16 @@ function AiPicksRow ({ ai, onAi, tab, hidden, onRemove }: {
   ai: AiPicksResponse | null; onAi: (a: AiPicksResponse) => void; tab?: MediaType; hidden: Set<string>; onRemove: (it: RecItem) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const min = useMinRating()
   if (!ai || (!ai.available && !ai.picks)) return null
   const ask = async () => {
     setBusy(true)
     try { onAi(await api.makeAiPicks()) } catch (err) { toast(`No AI picks this time. ${(err as Error).message}`) }
     setBusy(false)
   }
-  const items = (ai.picks?.items ?? []).filter(it => (!tab || it.type === tab) && !hidden.has(it.id))
+  const mine = (ai.picks?.items ?? []).filter(it => (!tab || it.type === tab) && !hidden.has(it.id))
+  const items = mine.filter(it => clears(it, min))
+  if (mine.length && !items.length) return null // all under the IMDb filter: not the moment to offer new picks
   if (!items.length) {
     if (!ai.available) return null
     return (
@@ -581,11 +596,12 @@ function usePopular (type: 'movie' | 'series'): Load<TitleSummary[]> {
 }
 
 function PopularRow ({ title, load }: { title: string; load: Load<TitleSummary[]> }) {
+  const min = useMinRating()
   return (
     <Row title={title}>
       {load.state === 'error' && <p className="row-notice">Couldn’t load: {load.message}</p>}
       {load.state === 'loading' && Array.from({ length: 10 }, (_, i) => <PosterSkeleton key={i} />)}
-      {load.state === 'ok' && load.data.slice(0, 20).map(t => <TitleCard key={t.id} title={t} />)}
+      {load.state === 'ok' && load.data.filter(t => clears(t, min)).slice(0, 20).map(t => <TitleCard key={t.id} title={t} />)}
     </Row>
   )
 }
@@ -640,6 +656,9 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
   const base = TABS.find(t => t.tab === tab)?.href ?? '/'
   const [query, setQuery] = useState(initialQuery)
   const results = useQueryResults(query)
+  const min = useMinRating()
+  const shown = results?.state === 'ok' ? results.data.filter(t => clears(t, min)) : []
+  const filteredOut = results?.state === 'ok' ? results.data.length - shown.length : 0
   const [ai, setAi] = useAiPicks()
   const input = useRef<HTMLInputElement>(null)
   const scrolled = useScrolled()
@@ -676,7 +695,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
         <div className="masthead-end">
           <form className="search" role="search" onSubmit={e => {
             e.preventDefault()
-            const first = results?.state === 'ok' ? results.data[0] : undefined
+            const first = shown[0]
             if (first) navigate(`/title/${first.type}/${first.id}`)
           }}>
             <Search className="search-icon" aria-hidden />
@@ -698,6 +717,7 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
                 )
               : <kbd className="search-hint" aria-hidden>/</kbd>}
           </form>
+          <RatingFilter />
           <ProfileMenu />
         </div>
       </header>
@@ -708,6 +728,12 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
           {results.state === 'ok' && results.data.length > 0 && (
             <h2 className="page-heading">Results for <span className="quiet">“{q}”</span></h2>
           )}
+          {filteredOut > 0 && (
+            <p className="filtered-note" role="status">
+              {shown.length ? `${filteredOut} more below IMDb ${min} or without a rating.` : `All ${filteredOut} are below IMDb ${min} or have no rating.`}
+              <button type="button" className="inline-link" onClick={() => setMinRating(0)}>Show all</button>
+            </p>
+          )}
           {results.state === 'loading' && <div className="grid">{Array.from({ length: 12 }, (_, i) => <PosterSkeleton key={i} />)}</div>}
           {results.state === 'error' && <p className="notice">Search failed: {results.message}</p>}
           {results.state === 'ok' && results.data.length === 0 && (
@@ -716,8 +742,8 @@ export function Home ({ initialQuery, tab }: { initialQuery: string; tab?: Media
               <p className="notice">Try the original title, or fewer words.</p>
             </div>
           )}
-          {results.state === 'ok' && results.data.length > 0 && (
-            <div className="grid">{results.data.map(t => <TitleCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
+          {shown.length > 0 && (
+            <div className="grid">{shown.map(t => <TitleCard key={`${t.type}-${t.id}`} title={t} showType />)}</div>
           )}
         </section>
       ) : <Feed key={tab ?? 'all'} tab={tab} ai={ai} onAi={setAi} />}

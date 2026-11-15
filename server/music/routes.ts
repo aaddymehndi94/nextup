@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process'
-import { createReadStream, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, createReadStream, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { MusicCastMode, MusicHome } from '../../shared/music.ts'
 import { HttpError } from '../http.ts'
 import { parseRange } from '../engine/range.ts'
+import { declareLength } from '../playback/fmp4.ts'
 import { isLoopback } from '../lan/net.ts'
 import { hasPrivateHeader, refuseInPrivate } from '../private.ts'
 import type { TasteStore } from '../store.ts'
@@ -40,7 +41,7 @@ import type { MusicService } from './service.ts'
 //   POST /api/music/cast/control           { action, t?, index?, level?, muted?, mode? }
 //   POST /api/music/cast/queue             { queue, index? }
 //   POST /api/music/cast/stop
-//   GET  /cast/m/:token/{audio.m4a,video.mp4,lyrics.mp4}   for the TV (token-checked, no cookie)
+//   GET  /cast/m/:token/{audio.m4a,lyrics.mp4}   for the TV (token-checked, no cookie)
 
 export interface MusicRouteDeps {
   music: MusicService
@@ -50,9 +51,11 @@ export interface MusicRouteDeps {
   tasteStore: TasteStore
   ffmpeg: string
   dataDir: string
+  /** The app's font (Mona Sans), for the words on the TV; without it, the system's sans-serif. */
+  font?: string
 }
 
-const MODES: MusicCastMode[] = ['audio', 'lyrics', 'video']
+const MODES: MusicCastMode[] = ['audio', 'lyrics']
 
 /** A file on this computer, with HTTP Range (songs, and trailers in server/trailers.ts). */
 export function sendFile (req: FastifyRequest, reply: FastifyReply, path: string, type: string, extra: Record<string, string> = {}) {
@@ -224,16 +227,14 @@ export function registerMusicRoutes (app: FastifyInstance, d: MusicRouteDeps): v
   }
   const CORS = { 'access-control-allow-origin': '*' }
 
-  for (const [file, kind, type] of [['audio.m4a', 'audio', 'audio/mp4'], ['video.mp4', 'video', 'video/mp4']] as const) {
-    const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
-      const g = grant(req, kind)
-      const saved = d.files.saved(g.trackId, kind)
-      if (!saved) throw new HttpError(404, 'Not found')
-      return sendFile(req, reply, saved.path, type, CORS)
-    }
-    app.get(`/cast/m/:token/${file}`, handler)
-    app.head(`/cast/m/:token/${file}`, handler)
+  const audioFile = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
+    const g = grant(req, 'audio')
+    const saved = d.files.saved(g.trackId, 'audio')
+    if (!saved) throw new HttpError(404, 'Not found')
+    return sendFile(req, reply, saved.path, 'audio/mp4', CORS)
   }
+  app.get('/cast/m/:token/audio.m4a', audioFile)
+  app.head('/cast/m/:token/audio.m4a', audioFile)
 
   app.get<{ Params: { token: string } }>('/cast/m/:token/lyrics.mp4', async (req, reply) => {
     const g = grant(req, 'lyrics')
@@ -248,7 +249,11 @@ export function registerMusicRoutes (app: FastifyInstance, d: MusicRouteDeps): v
     const work = join(d.dataDir, 'music', 'render', req.params.token.slice(0, 16) + Date.now().toString(36))
     mkdirSync(work, { recursive: true })
     writeFileSync(join(work, 'lyrics.ass'), lyricsAss({ lines: words.synced, title: t.title, artist: t.credit ?? t.artist.name, duration, from: g.from }))
-    const proc = spawn(d.ffmpeg, lyricsVideoArgs({ bg: art.bg, art: art.art, audio: saved.path, from: g.from, length: duration - g.from }), { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] })
+    let fonts = false
+    if (d.font) {
+      try { mkdirSync(join(work, 'fonts')); copyFileSync(d.font, join(work, 'fonts', 'font.woff2')); fonts = true } catch { /* the system's sans-serif */ }
+    }
+    const proc = spawn(d.ffmpeg, lyricsVideoArgs({ bg: art.bg, art: art.art, audio: saved.path, from: g.from, length: duration - g.from, fonts }), { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] })
     let stderr = ''
     proc.stderr.on('data', c => { stderr = (stderr + c).slice(-1500) })
     proc.on('close', code => {
@@ -256,6 +261,7 @@ export function registerMusicRoutes (app: FastifyInstance, d: MusicRouteDeps): v
       if (code && code !== 255 && !reply.raw.destroyed) req.log.warn({ code, stderr: stderr.trim() }, 'lyrics picture: ffmpeg exited')
     })
     reply.raw.on('close', () => proc.kill('SIGKILL'))
-    return reply.headers({ ...CORS, 'content-type': 'video/mp4', 'cache-control': 'no-store' }).send(proc.stdout)
+    // The length goes in the header, or the TV's bar ends wherever it has loaded to.
+    return reply.headers({ ...CORS, 'content-type': 'video/mp4', 'cache-control': 'no-store' }).send(proc.stdout.pipe(declareLength(Math.max(1, duration - g.from))))
   })
 }

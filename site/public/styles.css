@@ -383,6 +383,21 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .path svg { width: 0.875rem; height: 0.875rem; color: var(--text-3); }
 .join-foot { margin-top: 1rem; padding-top: 1.75rem; border-top: 1px solid var(--line); font-size: 0.875rem; color: var(--text-3); }
 
+/* ---------- Terms: a page to read ---------- */
+.auth-terms { font-size: 0.8125rem; color: var(--text-3); text-align: center; }
+.auth-terms .link { color: var(--text-2); }
+.legal-date { margin-top: 0.75rem; font-size: 0.875rem; color: var(--text-3); }
+.legal h2 {
+  margin-top: 2.5rem; padding-top: 1.75rem; border-top: 1px solid var(--line);
+  font-size: 1.25rem; font-stretch: var(--wide); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25;
+}
+.legal h2 + p, .legal h2 + ul, .legal p + ul { margin-top: 0.75rem; }
+.legal p, .legal li { color: var(--text-2); line-height: 1.65; text-wrap: pretty; }
+.legal ul { display: grid; gap: 0.625rem; padding-left: 1.25rem; list-style: disc; }
+.legal li::marker { color: var(--text-3); }
+.legal .join-foot { margin-top: 2.5rem; }
+.legal :target { scroll-margin-top: 5rem; }
+
 /* ---------- Watch on this phone ---------- */
 .watch-form { margin-top: 2.25rem; display: flex; flex-direction: column; align-items: flex-start; gap: 1.125rem; }
 .watch-field { display: flex; flex-direction: column; gap: 0.4375rem; width: 100%; font-size: 0.875rem; font-weight: 600; color: var(--text-2); }
@@ -392,7 +407,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
   color: var(--text); font: inherit; font-size: 1.0625rem; font-weight: 480;
 }
 .watch-field input:focus { outline: none; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.7); }
-.watch-error { min-height: 1.5em; margin: -0.25rem 0 0; color: #ff8a7f; font-size: 0.9375rem; font-weight: 560; }
+.watch-error { min-height: 1.5em; margin: -0.25rem 0 0; color: var(--text); font-size: 0.9375rem; font-weight: 560; }
 .watch-error:empty { min-height: 0; margin: 0; }
 .watch-form .button { width: 100%; }
 .watch-primary:not(:empty) { margin-top: 2.25rem; }
@@ -415,16 +430,13 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .watch-install-text { margin: 0; font-size: 0.875rem; color: var(--text-3); text-wrap: pretty; }
 
 /* ---------- Sign in / create account (cloud.js) ---------- */
-.auth-tabs { display: inline-flex; gap: 0.25rem; margin-top: 2.25rem; padding: 0.25rem; border-radius: 999px; background: rgb(255 255 255 / 0.06); box-shadow: var(--edge); }
-.auth-tabs button { height: 2.5rem; padding-inline: 1.25rem; border-radius: 999px; font-size: 0.9375rem; font-weight: 620; color: var(--text-2); transition: background var(--dur), color var(--dur); }
-.auth-tabs button[aria-pressed="true"] { background: #fff; color: var(--on-light); }
-.auth-tabs button:not([aria-pressed="true"]):hover { color: var(--text); }
-.auth-tabs + .watch-form { margin-top: 1.75rem; }
 .watch-field em { font-style: normal; font-weight: 480; color: var(--text-3); }
-.pw { position: relative; display: block; }
-.pw input { padding-right: 4.75rem; }
-.pw-show { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); height: 2.25rem; padding-inline: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 620; color: var(--text-2); }
-.pw-show:hover { color: var(--text); background: rgb(255 255 255 / 0.08); }
+/* Sign-in step 2: where the code went, and the code itself, spaced so six digits read at a glance. */
+.auth-sent { margin: 0; font-size: 1rem; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.auth-sent strong { color: var(--text); font-weight: 620; }
+.watch-field .code-input { font-size: 1.5rem; font-weight: 620; letter-spacing: 0.3em; }
+.watch-field .code-input::placeholder { letter-spacing: normal; }
+.watch-form .auth-switch { margin-top: 0; }
 .auth-switch { margin-top: 1.25rem; font-size: 0.9375rem; color: var(--text-3); }
 .auth-switch .link { font-weight: 600; }
 .ready-note { margin-top: 1.25rem; color: var(--text-2); line-height: 1.6; }

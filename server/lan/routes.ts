@@ -2,14 +2,15 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { plainText } from '../../cloud/src/validate.ts'
 import { HttpError } from '../http.ts'
 import { CloudError } from '../sync/cloud.ts'
-import { clientLabel, defaultDeviceName, isLoopback, isLoopbackHost } from './net.ts'
+import { checkFirewall, letPhonesIn } from './firewall.ts'
+import { activeVpn, clientLabel, defaultDeviceName, defaultRouteAddress, isLoopback, isLoopbackHost, platformOf } from './net.ts'
 import type { LanService } from './service.ts'
 import { COOKIE, COOKIE_MAX_AGE_S, type LanClient, readCookie } from './store.ts'
 
 // The LAN gate, the phone handoff, and the Account page's "Phones and TVs" settings.
 //
 //   GET    /handoff?code=nxh_…          a phone arriving from nexttupp.com: redeem, set the cookie, go to /
-//   GET    /api/lan                     { local, signedIn, enabled, phonesEnabled, listening, name, defaultName, urls, clients }
+//   GET    /api/lan                     { local, signedIn, enabled, phonesEnabled, listening, name, defaultName, urls, clients, vpn }
 //   PATCH  /api/lan                     { enabled?, name? }          (on this computer only)
 //   DELETE /api/lan/clients/:id                                       (on this computer only)
 
@@ -134,14 +135,17 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
     if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403, 'Not allowed from another site')
   }
 
-  const status = (req: FastifyRequest) => ({
+  const status = async (req: FastifyRequest) => ({
     local: isLoopback(req.socket.remoteAddress),
+    // The VPN that's on here (it can keep phones out), told only to this computer.
+    vpn: isLoopback(req.socket.remoteAddress) ? activeVpn(await defaultRouteAddress()) : null,
     signedIn: account.signedIn(),
     enabled: lan.store.enabled !== false,
     phonesEnabled: lan.phonesEnabled(),
     listening: lan.listening,
     name: lan.name(),
     defaultName: defaultDeviceName(),
+    platform: platformOf(),
     urls: lan.urls(),
     clients: lan.clients().map(c => ({ ...c, current: c.id === req.lanClient?.id })),
   })
@@ -163,6 +167,12 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
     account.nudge()
     return status(req)
   })
+
+  // Windows Firewall (firewall.ts): is it keeping phones out on this network, and letting them in (asks via UAC).
+  // The program is this process's own executable: nexttupp.exe in the desktop app.
+  const firewall = async () => ({ exe: process.execPath, alias: (await lan.addresses())[0]?.iface ?? null })
+  app.get('/api/lan/firewall', async req => { localOnly(req, false); return { state: await checkFirewall(await firewall()) } })
+  app.post('/api/lan/firewall', async req => { localOnly(req); return { state: await letPhonesIn(await firewall()) } })
 
   app.delete<{ Params: { id: string } }>('/api/lan/clients/:id', async (req, reply) => {
     localOnly(req, false)

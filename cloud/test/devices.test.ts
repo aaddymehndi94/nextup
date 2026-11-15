@@ -164,11 +164,12 @@ describe('phone handoff', () => {
     expect(r.status).toBe(409)
     expect(r.body.error).toBe('lan_off')
 
-    const gone = crypto.randomUUID()
-    await register(admin, gone)
+    // Computers only call on events now, so one left on and unused for days hasn't called: the phone still tries it.
+    const quiet = crypto.randomUUID()
+    await register(admin, quiet)
     vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(Date.now() + 11 * 60_000)
-    expect((await handoff(admin, gone)).body.error).toBe('device_offline')
+    vi.setSystemTime(Date.now() + 3 * 24 * 3600_000)
+    expect((await handoff(admin, quiet)).status).toBe(201)
   })
 
   it('limits outstanding codes per account', async () => {

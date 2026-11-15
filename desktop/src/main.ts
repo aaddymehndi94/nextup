@@ -128,6 +128,8 @@ async function startServer (port: number): Promise<void> {
     NEXTTUPP_WEB_DIR: WEB_DIR,
     NEXTTUPP_FFMPEG: join(FFMPEG_DIR, 'bin', `ffmpeg${EXE}`),
     NEXTTUPP_FFPROBE: join(FFMPEG_DIR, 'bin', `ffprobe${EXE}`),
+    // Said on every cloud call, so the cloud can ask old versions to update (cloud/src/index.ts).
+    NEXTTUPP_VERSION: app.getVersion(),
   }
   // The Linux ffmpeg build's own RPATH is unusable, so point the loader at its libraries (only libav*, which
   // Electron doesn't use). ffmpeg inherits this from the server. Windows finds the DLLs next to the .exe.

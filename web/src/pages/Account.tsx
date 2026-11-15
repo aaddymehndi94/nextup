@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LogOut, RefreshCw, X } from 'lucide-react'
-import { type AccountStatus, api, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
+import { AlertTriangle, LogOut, RefreshCw, X } from 'lucide-react'
+import { vpnAdvice } from '../components/UpdateBanner.tsx'
+import { type AccountStatus, api, type FirewallState, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
 import { useDocumentTitle } from '../hooks.ts'
 import { chooseProfile, loadProfiles } from '../profiles.ts'
 import { toast } from '../toast.ts'
@@ -48,6 +49,9 @@ export function Account () {
         {load.state === 'ok' && (load.status.signedIn
           ? <SignedIn status={load.status} onStatus={status => setLoad({ state: 'ok', status })} />
           : <SignedOut status={load.status} onStatus={status => setLoad({ state: 'ok', status })} />)}
+        <p className="fine-print account-foot">
+          nexttupp hosts no films or music: what you play is your call. <a className="inline-link" href="https://nexttupp.com/terms" target="_blank" rel="noreferrer">Terms of use</a>
+        </p>
       </div>
     </main>
   )
@@ -64,65 +68,126 @@ async function adoptProfiles (status: AccountStatus) {
   if (target) chooseProfile(target)
 }
 
+/** Signing in, which also creates the account the first time: an email, then the 6-digit code sent to it. */
 function SignedOut ({ status, onStatus }: { status: AccountStatus; onStatus: (s: AccountStatus) => void }) {
-  const [mode, setMode] = useState<'signin' | 'create'>('signin')
-  const [form, setForm] = useState({ email: '', password: '', displayName: '' })
-  const [busy, setBusy] = useState(false)
+  const [email, setEmail] = useState('')
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [resent, setResent] = useState(false)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState<'send' | 'verify' | 'resend' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const create = mode === 'create'
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
-  const ready = form.email.trim() && form.password && (!create || [...form.password].length >= 8)
+  const codeInput = useRef<HTMLInputElement>(null)
+  const emailInput = useRef<HTMLInputElement>(null)
+  const started = useRef(false)
 
-  const submit = async (e: React.FormEvent) => {
+  const send = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!ready || busy) return
-    setBusy(true)
+    if (busy) return
+    if (!email.trim()) { setError('Enter your email.'); return }
+    setBusy('send')
     setError(null)
     try {
-      const next = create
-        ? await api.signup({ email: form.email.trim(), password: form.password, displayName: form.displayName.trim() || undefined })
-        : await api.login(form.email.trim(), form.password)
+      await api.sendCode(email.trim())
+      setSentTo(email.trim())
+      setResent(false)
+      setCode('')
+    } catch (err) { setError((err as Error).message) }
+    setBusy(null)
+  }
+
+  const verify = async (digits: string) => {
+    if (busy || !sentTo) return
+    if (digits.length !== 6) { setError('The code is the 6 digits in the email.'); return }
+    setBusy('verify')
+    setError(null)
+    try {
+      const next = await api.verifyCode({ email: sentTo, code: digits })
       await adoptProfiles(next)
-      toast(create ? 'Account created. You’re signed in.' : 'Signed in')
+      toast('You’re signed in')
       onStatus(next)
     } catch (err) {
       setError((err as Error).message)
-      setBusy(false)
+      setBusy(null)
+      // A wrong code stays selected, so typing the right one replaces it.
+      requestAnimationFrame(() => codeInput.current?.select())
     }
   }
+
+  const resend = async () => {
+    if (!sentTo || busy) return
+    setBusy('resend')
+    setError(null)
+    try {
+      await api.sendCode(sentTo)
+      setResent(true)
+      setCode('')
+      codeInput.current?.focus()
+    } catch (err) { setError((err as Error).message) }
+    setBusy(null)
+  }
+
+  // Digits only, six at most ("123 456" pastes as 123456); the sixth signs in straight away.
+  const onCode = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 6)
+    setCode(digits)
+    setError(null)
+    if (digits.length === 6) void verify(digits)
+  }
+
+  // Each step's field takes the focus when it shows (not on first load: the page itself has it then).
+  useEffect(() => {
+    if (sentTo) codeInput.current?.focus()
+    else if (started.current) emailInput.current?.focus()
+    started.current = true
+  }, [sentTo])
 
   return (
     <>
       {status.notice && <p className="account-notice" role="status">{status.notice}</p>}
-      <div className="account-tabs" role="group" aria-label="Sign in or create an account">
-        <button type="button" className="chip" aria-pressed={!create} onClick={() => { setMode('signin'); setError(null) }}>Sign in</button>
-        <button type="button" className="chip" aria-pressed={create} onClick={() => { setMode('create'); setError(null) }}>Create account</button>
-      </div>
-      <form className="account-form" onSubmit={submit} aria-label={create ? 'Create account' : 'Sign in'}>
-        <label className="field">
-          <span className="field-label">Email</span>
-          <input type="email" value={form.email} onChange={set('email')} autoComplete="email" spellCheck={false} required />
-        </label>
-        <label className="field">
-          <span className="field-label">{create ? 'Choose a password (8 or more characters)' : 'Password'}</span>
-          <input type="password" value={form.password} onChange={set('password')} autoComplete={create ? 'new-password' : 'current-password'} minLength={create ? 8 : undefined} maxLength={256} required />
-        </label>
-        {create && (
-          <label className="field">
-            <span className="field-label">Your name <span className="field-hint">(optional)</span></span>
-            <input value={form.displayName} onChange={set('displayName')} autoComplete="nickname" maxLength={40} />
-          </label>
-        )}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="actions">
-          <button type="submit" className="button primary" disabled={!ready || busy}>
-            {busy && <span className="spinner" aria-hidden />}
-            {busy ? (create ? 'Creating your account…' : 'Signing in…') : create ? 'Create account' : 'Sign in'}
-          </button>
-        </div>
-      </form>
+      {!sentTo
+        ? (
+          <form className="account-form" onSubmit={send} aria-label="Sign in" noValidate>
+            <label className="field">
+              <span className="field-label">Email</span>
+              <input ref={emailInput} type="email" value={email} onChange={e => { setEmail(e.target.value); setError(null) }} autoComplete="email" spellCheck={false} required />
+            </label>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <div className="actions">
+              <button type="submit" className="button primary" disabled={busy !== null}>
+                {busy && <span className="spinner" aria-hidden />}
+                {busy ? 'Sending your code…' : 'Email me a code'}
+              </button>
+            </div>
+            <p className="fine-print">By continuing, you agree to the <a className="inline-link" href="https://nexttupp.com/terms" target="_blank" rel="noreferrer">terms</a>.</p>
+          </form>
+          )
+        : (
+          <form className="account-form" onSubmit={e => { e.preventDefault(); void verify(code) }} aria-label="Enter your code" noValidate>
+            <p className="account-sent">
+              {resent ? 'We sent a new code to ' : 'We sent a code to '}<strong>{sentTo}</strong>{resent ? '. Use the newest one.' : '. It works for 10 minutes.'}
+            </p>
+            <label className="field">
+              <span className="field-label">Code</span>
+              <input ref={codeInput} className="code-input" value={code} onChange={onCode} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]*" spellCheck={false} required />
+            </label>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <div className="actions">
+              <button type="submit" className="button primary" disabled={busy !== null}>
+                {busy === 'verify' && <span className="spinner" aria-hidden />}
+                {busy === 'verify' ? 'Signing in…' : 'Continue'}
+              </button>
+            </div>
+            <p className="fine-print account-fine">
+              Nothing yet? Check your spam folder, or{' '}
+              <button type="button" className="inline-link" disabled={busy !== null} onClick={() => { void resend() }}>{busy === 'resend' ? 'sending…' : 'send a new code'}</button>.
+            </p>
+            <p className="fine-print account-fine">
+              <button type="button" className="inline-link" disabled={busy !== null} onClick={() => { setSentTo(null); setCode(''); setError(null) }}>Use a different email</button>
+            </p>
+          </form>
+          )}
       <p className="fine-print account-fine">
-        {create ? 'It’s free, and anyone can make one.' : 'Made your account on nexttupp.com? Sign in with it here. New to nexttupp? Choose Create account. It’s free.'}
+        Made your account on nexttupp.com? Use the same email. New to nexttupp? The code makes your free account.
         {' '}Only profiles, ratings, My List, watch progress and taste settings sync, by title id. What you search for and stream stays on this computer.
       </p>
     </>
@@ -206,6 +271,38 @@ function SignedIn ({ status, onStatus }: { status: AccountStatus; onStatus: (s: 
 
 // ---- Watch on your phone ------------------------------------------------------------------
 
+/**
+ * Windows Firewall can keep phones out without a word: the phone just waits (server/lan/firewall.ts). Shown only
+ * when it does, with the fix: Windows asks the person to confirm (UAC), then it's checked again.
+ */
+function FirewallNotice () {
+  const [state, setState] = useState<FirewallState | 'declined' | 'asking'>('unknown')
+  const [tried, setTried] = useState(false)
+  useEffect(() => { api.firewall().then(r => setState(r.state), () => {}) }, [])
+  const letIn = async () => {
+    setState('asking')
+    let next: FirewallState | 'declined' = 'unknown'
+    try { next = (await api.letPhonesIn()).state } catch { /* stays unknown */ }
+    setTried(true)
+    setState(next)
+    if (next === 'open') toast('Phones can reach this computer now.')
+  }
+  if (state === 'open' || state === 'n/a' || (state === 'unknown' && !tried)) return null
+  const text = state === 'declined'
+    ? 'Windows didn’t get the go-ahead. Choose Let phones in, then Yes.'
+    : tried && state !== 'asking'
+      ? 'That didn’t take. In Windows Security, open Firewall & network protection, then Allow an app through firewall, and tick Private and Public for nexttupp.'
+      : 'Windows Firewall is keeping phones out on this network. They’ll find this computer but never connect.'
+  return (
+    <div className="lan-firewall">
+      <p className="note warn" role="status"><AlertTriangle aria-hidden />{text}</p>
+      <button type="button" className="button secondary" disabled={state === 'asking'} aria-busy={state === 'asking' || undefined} onClick={() => { void letIn() }}>
+        {state === 'asking' ? 'Choose Yes in Windows’ prompt…' : 'Let phones in'}
+      </button>
+    </div>
+  )
+}
+
 function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void }) {
   const [name, setName] = useState(lan.name)
   const [busy, setBusy] = useState(false)
@@ -246,6 +343,8 @@ function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void
       </label>
       {lan.enabled && (
         <>
+          {lan.platform === 'windows' && lan.listening && <FirewallNotice />}
+          {lan.vpn && <p className="note warn lan-vpn" role="status"><AlertTriangle aria-hidden />{vpnAdvice(lan.vpn)}</p>}
           <div className="phone-qr">
             <img src="/watch-qr.svg" alt="QR code for nexttupp.com/watch" width={132} height={132} />
             <p className="account-note">

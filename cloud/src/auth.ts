@@ -117,18 +117,18 @@ export function clientIp (req: Request): string {
   return req.headers.get('cf-connecting-ip') ?? 'unknown'
 }
 
-async function lockedFor (env: Env, keys: string[], now: number): Promise<number> {
+export async function lockedFor (env: Env, keys: string[], now: number): Promise<number> {
   const placeholders = keys.map(() => '?').join(', ')
   const r = await env.DB.prepare(`SELECT MAX(locked_until) AS until FROM login_attempts WHERE key IN (${placeholders})`).bind(...keys).first<{ until: number | null }>()
   return Math.max(0, (r?.until ?? 0) - now)
 }
 
-function tooManyAttempts (waitMs: number, what = 'failed attempts'): HttpError {
+export function tooManyAttempts (waitMs: number, what = 'failed attempts'): HttpError {
   const s = Math.ceil(waitMs / 1000)
   return new HttpError(429, 'too_many_attempts', `Too many ${what}. Try again in ${Math.ceil(s / 60)} min.`, { 'retry-after': String(s) })
 }
 
-function failure (env: Env, key: string, limit: number, now: number, windowMs = THROTTLE.windowMs, lockMs = THROTTLE.lockMs): D1PreparedStatement {
+export function failure (env: Env, key: string, limit: number, now: number, windowMs = THROTTLE.windowMs, lockMs = THROTTLE.lockMs): D1PreparedStatement {
   // SET expressions all see the row as it was, so the "new failures" expression is repeated for the lock.
   return env.DB.prepare(`INSERT INTO login_attempts (key, failures, window_start, locked_until, updated_at)
                          VALUES (?1, 1, ?2, CASE WHEN ?4 <= 1 THEN ?2 + ?5 ELSE 0 END, ?2)

@@ -101,7 +101,7 @@ export interface MusicRadioRequest {
 
 export interface MusicRadioResponse { title: string; tracks: MusicTrack[] }
 
-export type MusicCastMode = 'audio' | 'lyrics' | 'video'
+export type MusicCastMode = 'audio' | 'lyrics'
 
 export interface MusicCastStatus {
   active: boolean

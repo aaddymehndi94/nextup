@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Cast, ChevronDown, Clapperboard, Disc3, ListMusic, MicVocal, Pause, Play, Radio, SkipBack, SkipForward, Tv, X,
+  Cast, ChevronDown, Disc3, ListMusic, MicVocal, Pause, Play, Radio, SkipBack, SkipForward, Tv, X,
 } from 'lucide-react'
 import type { LyricLine, MusicCastMode, MusicLyrics, MusicTrack } from '../../../shared/music.ts'
 import { api, type CastDevice } from '../api.ts'
@@ -187,7 +187,6 @@ function Crossfade () {
 const MODES: Array<{ mode: MusicCastMode; label: string; icon: React.ReactNode; note: string }> = [
   { mode: 'audio', label: 'Song', icon: <Disc3 aria-hidden />, note: 'The song with its cover' },
   { mode: 'lyrics', label: 'Lyrics', icon: <MicVocal aria-hidden />, note: 'Words in time, over moving artwork' },
-  { mode: 'video', label: 'Music video', icon: <Clapperboard aria-hidden />, note: 'Takes a few seconds to start' },
 ]
 
 function CastSheet ({ onClose }: { onClose: () => void }) {
@@ -195,7 +194,7 @@ function CastSheet ({ onClose }: { onClose: () => void }) {
   const [devices, setDevices] = useState<CastDevice[] | null>(null)
   const [scanning, setScanning] = useState(true)
   const [mode, setMode] = useState<MusicCastMode>(cast?.mode ?? 'lyrics')
-  const [modes, setModes] = useState<MusicCastMode[]>(cast?.modes ?? ['audio', 'lyrics', 'video'])
+  const [modes, setModes] = useState<MusicCastMode[]>(cast?.modes ?? ['audio', 'lyrics'])
   useEffect(() => {
     api.castDevices().then(r => setDevices(d => d ?? r.devices)).catch(() => {})
     api.castDevices(true).then(r => setDevices(r.devices)).catch(() => setDevices(d => d ?? [])).finally(() => setScanning(false))

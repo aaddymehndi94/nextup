@@ -12,6 +12,12 @@
     // Creates a DNS record and certificate for api.nexttupp.com in the nexttupp.com zone on first deploy.
     { "pattern": "api.nexttupp.com", "custom_domain": true }
   ],
+  // Cloudflare Email Service, for sign-in codes (src/codes.ts). Needs the Workers Paid plan and nexttupp.com
+  // onboarded under Email Service, Email Sending. `wrangler dev` and the tests don't send anything.
+  "send_email": [{ "name": "EMAIL" }],
+  // MIN_APP_VERSION and APP_NOTICE (src/index.ts) are set in the dashboard, Settings, Variables, so the owner
+  // can change them without a deploy; keep_vars stops a deploy from wiping them.
+  "keep_vars": true,
   "d1_databases": [
     {
       "binding": "DB",

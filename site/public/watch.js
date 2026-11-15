@@ -14,7 +14,6 @@ import { api, ApiError, currentSession, forgetSession, mountAuth, signedOutError
 import { detectOS } from './site.js'
 
 const LAN_URL = /^http:\/\/(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):\d{1,5}$/
-const POLL_MS = 5000
 const LAST_KEY = 'nexttupp:last-computer'
 const AUTO_KEY = 'nexttupp:auto-connected'
 
@@ -50,8 +49,8 @@ function lastComputer () {
 
 const SIGNIN_LEDE = $('[data-signin-lede]').textContent
 const auth = mountAuth($('[data-auth]'), {
-  path: '/watch',
   onSignedIn: () => showDevices(),
+  onStep: step => { $('[data-signin-lede]').hidden = step === 'code' },
   onMode: mode => {
     $('[data-signin-lede]').textContent = mode === 'create'
       ? 'Create your free account. Then get nexttupp on your computer and sign in there too, and films play here, streamed from it.'
@@ -60,7 +59,6 @@ const auth = mountAuth($('[data-auth]'), {
 })
 
 function showSignIn (message) {
-  clearTimeout(pollTimer)
   views.devices.hidden = true
   views.signin.hidden = false
   auth.setError(message)
@@ -84,9 +82,43 @@ $('[data-signout]').addEventListener('click', async () => {
 
 // ---- Devices ----------------------------------------------------------------------------
 
-let pollTimer
 let handingOff = false
 const status = $('[data-status]')
+/** Why the last attempt failed, kept on screen while the list refreshes, until the next attempt. */
+let notice = ''
+
+/** How long one of the computer's addresses gets to answer. At home it answers in well under a second; an address
+ *  a firewall drops never answers at all, and the phone's browser would wait minutes. */
+const ANSWER_MS = 8000
+let attempt
+
+/**
+ * Opens `path` on the first of the computer's addresses that answers. A top-level navigation is the only way from
+ * this https page to an http address, and nothing can watch it. But this page keeps running while the browser
+ * waits, so a timer gives up on an address that hasn't answered, and tries the next. `onFail` runs if none did.
+ */
+function reach (urls, path, onFail, i = 0) {
+  clearTimeout(attempt)
+  location.assign(`${urls[i]}${path}`)
+  attempt = setTimeout(() => {
+    window.stop()
+    if (i + 1 < urls.length) reach(urls, path, onFail, i + 1)
+    else onFail()
+  }, ANSWER_MS)
+}
+// Gone to the computer: a page kept for Back must not fire the timer when it comes back.
+window.addEventListener('pagehide', () => clearTimeout(attempt))
+
+/** What to tell someone whose phone couldn't reach the computer, by what's most likely in the way. */
+function cantReach (name, platform, url) {
+  const port = url.split(':').pop()
+  const why = {
+    windows: 'Windows Firewall is the usual cause. On the computer, open nexttupp, choose Watch on your phone in the profile menu, and let phones in.',
+    mac: 'The Mac’s firewall may be blocking it: in System Settings, Network, Firewall, allow incoming connections for nexttupp.',
+    linux: `A firewall on the computer may be blocking it (ufw or firewalld): allow port ${port}.`,
+  }[platform] ?? 'A firewall on the computer may be blocking it.'
+  return `This phone couldn’t reach ${name}. Is nexttupp open on it? If it is: ${why} A VPN on either one, or a guest Wi‑Fi, can also keep them apart.`
+}
 
 function showDevices () {
   views.signin.hidden = true
@@ -96,7 +128,6 @@ function showDevices () {
 }
 
 async function refresh () {
-  clearTimeout(pollTimer)
   if (!currentSession() || handingOff) return
   try {
     const r = await api('GET', '/v1/devices')
@@ -106,32 +137,35 @@ async function refresh () {
     if (err.status === 0 || err.status >= 500) unreachable(err.status === 0)
     else status.textContent = err.message
   }
-  if (!document.hidden) pollTimer = setTimeout(refresh, POLL_MS)
 }
 
 /** No internet, or the service is down. The computer on this Wi-Fi doesn't need either to let this phone in. */
 function unreachable (offline) {
   if (handingOff) return
   const last = lastComputer()
-  const still = last ? `You can still open ${last.name} while this phone is on the same Wi‑Fi.` : 'This page tries again by itself.'
+  const still = last ? `You can still open ${last.name} while this phone is on the same Wi‑Fi.` : 'Try again in a moment.'
   $('[data-heading]').textContent = offline ? 'This phone seems to be offline.' : 'nexttupp.com isn’t answering right now.'
   $('[data-lede]').textContent = offline ? `Check its internet connection. ${still}` : still
-  $('[data-primary]').replaceChildren(...(last ? [button(`Open ${last.name}`, 'primary large', () => openLast(last))] : []))
+  const again = button('Try again', last ? 'secondary large' : 'primary large', () => refresh(), '')
+  $('[data-primary]').replaceChildren(...(last ? [button(`Open ${last.name}`, 'primary large', () => openLast(last))] : []), again)
   $('[data-list]').replaceChildren()
   $('[data-list]').hidden = true
-  status.textContent = 'Trying again every few seconds…'
+  status.textContent = ''
 }
 
 /** Straight to the computer's address. Its cookie lets this phone in; nexttupp's service isn't asked. */
 function openLast (last) {
-  const msg = `Opening ${last.name}… If nothing opens, this phone isn’t on the same Wi‑Fi, or ${last.name} has a new address: sign in and connect again.`
-  if (views.signin.hidden) status.textContent = msg; else $('[data-last-text]').textContent = msg
-  location.assign(`${last.urls.find(u => LAN_URL.test(u))}/`)
+  const say = msg => { if (views.signin.hidden) status.textContent = msg; else $('[data-last-text]').textContent = msg }
+  const urls = last.urls.filter(u => LAN_URL.test(u))
+  say(`Opening ${last.name}…`)
+  reach(urls, '/', () => say(`${last.name} didn’t answer. This phone may not be on the same Wi‑Fi, or ${last.name} has a new address: sign in and connect again.`))
 }
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden && currentSession() && !views.devices.hidden) void refresh() })
 
-const canWatch = d => d.online && d.lan && d.lanUrls.some(u => LAN_URL.test(u))
+// Computers only tell the cloud about themselves when something changes, so it can't say which are on right now:
+// every one with an address on a home network is listed, and Connect finds out.
+const canWatch = d => d.lan && d.lanUrls.some(u => LAN_URL.test(u))
 
 const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>'
 const ADD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
@@ -151,21 +185,21 @@ function button (label, kind, onClick, icon = PLAY) {
 function render (devices) {
   const lastId = lastComputer()?.id
   // The one used last comes first.
-  const online = devices.filter(d => d.online).sort((a, b) => (b.id === lastId) - (a.id === lastId))
-  const here = online.filter(d => d.sameNetwork && canWatch(d))
-  const elsewhere = online.filter(d => !here.includes(d) && canWatch(d))
-  const off = online.filter(d => !d.lan)
+  const sorted = [...devices].sort((a, b) => (b.id === lastId) - (a.id === lastId))
+  const here = sorted.filter(d => d.sameNetwork && canWatch(d))
+  const elsewhere = sorted.filter(d => !here.includes(d) && canWatch(d))
+  const off = sorted.filter(d => !d.lan)
   const heading = $('[data-heading]')
   const lede = $('[data-lede]')
   const primary = $('[data-primary]')
   const list = $('[data-list]')
   primary.replaceChildren()
   list.replaceChildren()
-  if (!handingOff) status.textContent = ''
+  if (!handingOff) status.textContent = notice
 
   if (here.length === 1) {
-    heading.textContent = `${here[0].name} is ready.`
-    lede.textContent = 'It’s on this Wi-Fi. Connect, and anything you pick plays here on this phone, streamed from it.'
+    heading.textContent = `Watch from ${here[0].name}.`
+    lede.textContent = 'It’s on this Wi-Fi. With nexttupp open on it, connect, and anything you pick plays here on this phone, streamed from it.'
     const b = button(`Connect to ${here[0].name}`, 'primary large', b => watchOn(here[0], b))
     primary.append(b)
     if (autoConnect) {
@@ -176,7 +210,7 @@ function render (devices) {
   } else if (here.length > 1) {
     autoConnect = false // they're choosing; one going offline mustn't pick for them
     heading.textContent = 'Pick your computer.'
-    lede.textContent = 'These computers are on this Wi-Fi. Connect to one, and films play here, streamed from it.'
+    lede.textContent = 'These computers are on this Wi-Fi. Connect to one with nexttupp open, and films play here, streamed from it.'
   } else if (elsewhere.length) {
     heading.textContent = 'Pick your computer.'
     lede.textContent = 'We couldn’t confirm one on this Wi-Fi. If this phone is on the same Wi-Fi as one of these, tap Connect.'
@@ -185,10 +219,10 @@ function render (devices) {
     lede.textContent = `Phones are turned off on ${off.map(d => d.name).join(' and ')}. In nexttupp there, click your profile picture, choose Account, and turn on “Let phones play from this computer”.`
   } else if (devices.length) {
     heading.textContent = 'Open nexttupp on your computer.'
-    lede.textContent = `nexttupp isn’t open on ${devices.map(d => d.name).join(' or ')} right now. Open it there, and it shows up here in a few seconds.`
+    lede.textContent = `${devices.map(d => d.name).join(' and ')} ${devices.length > 1 ? 'have' : 'has'} no address on a home Wi‑Fi yet. Open nexttupp there while it’s on your Wi‑Fi, then come back to this page.`
   } else {
     heading.textContent = 'Set up your computer first.'
-    lede.textContent = `Films play from the nexttupp app on a computer. On your laptop or desktop, go to nexttupp.com, download nexttupp, open it and sign in as ${currentSession().email}. This page updates by itself once it’s ready.`
+    lede.textContent = `Films play from the nexttupp app on a computer. On your laptop or desktop, go to nexttupp.com, download nexttupp, open it and sign in as ${currentSession().email}. Then come back to this page.`
   }
 
   const rows = here.length === 1 ? elsewhere : [...here, ...elsewhere]
@@ -209,33 +243,31 @@ function render (devices) {
     list.append(li)
   }
   list.hidden = rows.length === 0
-  if (here.length || elsewhere.length || off.length) return
-  status.textContent = 'Checking every few seconds…'
 }
 
 async function watchOn (device, b) {
   if (handingOff) return
   handingOff = true
-  clearTimeout(pollTimer)
   b.disabled = true
+  notice = ''
   status.textContent = `Connecting to ${device.name}…`
   try {
     const r = await api('POST', `/v1/devices/${encodeURIComponent(device.id)}/handoff`)
-    const base = [...(r.lanUrls || []), ...device.lanUrls].find(u => LAN_URL.test(u))
-    if (!base || !/^nxh_[A-Za-z0-9_-]{43}$/.test(r.code)) throw new ApiError(0, 'bad_device', 'That computer didn’t give an address on your Wi-Fi.')
-    status.textContent = `Connecting to ${device.name}… If nothing happens, check that this phone is on the same Wi-Fi as the computer.`
-    const urls = [...(r.lanUrls || []), ...device.lanUrls].filter(u => LAN_URL.test(u))
-    store('local', LAST_KEY, JSON.stringify({ id: device.id, name: device.name, urls: [...new Set(urls)] }))
-    // A top-level navigation: the only way from an https page to the computer's http address.
-    location.assign(`${base}/handoff?code=${encodeURIComponent(r.code)}`)
-    // Coming back (Back button, or the page stays because the address didn't answer) re-enables everything.
-    setTimeout(() => { handingOff = false; b.disabled = false; void refresh() }, 15000)
+    const urls = [...new Set([...(r.lanUrls || []), ...device.lanUrls].filter(u => LAN_URL.test(u)))]
+    if (!urls.length || !/^nxh_[A-Za-z0-9_-]{43}$/.test(r.code)) throw new ApiError(0, 'bad_device', 'That computer didn’t give an address on your Wi-Fi.')
+    store('local', LAST_KEY, JSON.stringify({ id: device.id, name: device.name, urls }))
+    // The code works for 60 seconds, so every address gets its try with it.
+    reach(urls, `/handoff?code=${encodeURIComponent(r.code)}`, () => {
+      handingOff = false
+      b.disabled = false
+      notice = cantReach(device.name, device.platform, urls[0])
+      status.textContent = notice
+    })
   } catch (err) {
     handingOff = false
     b.disabled = false
     if (err.status === 401) { forgetSession(); showSignIn('Sign in again to continue.'); return }
     status.textContent = err.message
-    pollTimer = setTimeout(refresh, POLL_MS)
   }
 }
 

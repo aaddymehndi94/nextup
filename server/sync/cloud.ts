@@ -1,12 +1,7 @@
-import { pbkdf2, randomBytes } from 'node:crypto'
-import { promisify } from 'node:util'
-import { KDF, KDF_ITERATIONS } from '../../cloud/src/crypto.ts'
 import type { Batch, MusicBatch } from '../../cloud/src/wire.ts'
 
-// The nexttupp cloud API (cloud/README.md), as the local server calls it. Passwords are stretched here
-// with PBKDF2-SHA256 and never sent; the cloud only sees the derived key.
-
-export { KDF_ITERATIONS }
+// The nexttupp cloud API (cloud/README.md), as the local server calls it. Signing in is by a code sent by
+// email (no passwords); the session token stays on this computer.
 
 /** A failed cloud call. `status` 0 means the cloud couldn't be reached (offline, DNS, timeout). */
 export class CloudError extends Error {
@@ -29,27 +24,32 @@ export interface PullPage extends Batch {
 }
 export interface MusicPullPage extends MusicBatch { cursor: string; more: boolean; serverTime: number }
 
-const pbkdf2Async = promisify(pbkdf2)
-
-/** PBKDF2-SHA256(password, salt, iterations) → 32 bytes, base64url. Runs on libuv's pool, off the event loop. */
-export async function deriveKey (password: string, salt: string, iterations: number): Promise<string> {
-  const bytes = Buffer.from(salt, 'base64url')
-  return (await pbkdf2Async(password.normalize('NFC'), bytes, iterations, 32, 'sha256')).toString('base64url')
+/** The notice header is URI-encoded so any text survives it; shown as plain text, at most one short line. */
+function readNotice (raw: string | null): string | null {
+  if (!raw) return null
+  try { return decodeURIComponent(raw).replace(/\s+/g, ' ').trim().slice(0, 200) || null } catch { return null }
 }
-
-export const newSalt = (): string => randomBytes(16).toString('base64url')
 
 export class CloudClient {
   readonly baseUrl: string
   private readonly fetch: typeof fetch
+  private readonly appVersion?: string
+  /** The owner's one-line notice, from the last answer (x-nexttupp-notice); null when there is none. */
+  announcement: string | null = null
+  /** Set once the cloud says this version is too old: from then on, nothing is sent until the app is updated. */
+  updateRequired: string | null = null
 
-  constructor (baseUrl: string, fetchImpl: typeof fetch = fetch) {
+  constructor (baseUrl: string, fetchImpl: typeof fetch = fetch, appVersion?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
     this.fetch = fetchImpl
+    this.appVersion = appVersion
   }
 
   async request<T> (method: string, path: string, opts: { token?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+    if (this.updateRequired) throw new CloudError(426, 'update_required', this.updateRequired)
     const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'nexttupp' }
+    // The cloud's owner can turn away versions that are too old, and only apps say theirs (cloud/src/index.ts).
+    if (this.appVersion) headers['x-nexttupp-app'] = this.appVersion
     if (opts.token) headers.authorization = `Bearer ${opts.token}`
     if (opts.body !== undefined) headers['content-type'] = 'application/json'
     let res: Response
@@ -64,41 +64,29 @@ export class CloudClient {
       const timeout = (err as Error).name === 'TimeoutError'
       throw new CloudError(0, timeout ? 'timeout' : 'offline', timeout ? 'The sync service took too long to answer' : 'Can’t reach the sync service')
     }
+    this.announcement = readNotice(res.headers.get('x-nexttupp-notice'))
     if (res.status === 204) return undefined as T
     const text = await res.text()
     let body: Record<string, unknown> = {}
     try { body = text ? JSON.parse(text) as Record<string, unknown> : {} } catch { /* not JSON, e.g. a proxy's error page */ }
     if (!res.ok) {
-      throw new CloudError(res.status, typeof body.error === 'string' ? body.error : 'http_error', typeof body.message === 'string' ? body.message : `The sync service answered ${res.status}`)
+      const err = new CloudError(res.status, typeof body.error === 'string' ? body.error : 'http_error', typeof body.message === 'string' ? body.message : `The sync service answered ${res.status}`)
+      if (err.code === 'update_required') this.updateRequired = err.message
+      throw err
     }
     return body as T
   }
 
-  prelogin (email: string) {
-    return this.request<{ kdf: string; iterations: number; salt: string }>('POST', '/v1/auth/prelogin', { body: { email } })
+  /** Emails a 6-digit sign-in code. Answers the same whether or not the email has an account. */
+  sendCode (email: string) {
+    return this.request<{ sent: true; expiresAt: number }>('POST', '/v1/auth/code', { body: { email } })
   }
 
-  /** prelogin, derive the key, log in. Returns the session and the key (so a fresh sign-up needn't derive twice). */
-  async login (email: string, password: string): Promise<{ token: string; expiresAt: number; account: CloudAccount }> {
-    const pre = await this.prelogin(email)
-    if (pre.kdf !== KDF || !Number.isInteger(pre.iterations) || pre.iterations < 100_000 || pre.iterations > 5_000_000) {
-      throw new CloudError(400, 'unsupported_kdf', 'This version of nexttupp can’t sign in to this account. Update nexttupp.')
-    }
-    return this.loginWithKey(email, await deriveKey(password, pre.salt, pre.iterations))
-  }
-
-  loginWithKey (email: string, key: string) {
-    return this.request<{ token: string; expiresAt: number; account: CloudAccount }>('POST', '/v1/auth/login', { body: { email, key } })
-  }
-
-  /** Create an account. Returns the key it derived, for logging in straight after. */
-  async signup (email: string, password: string, displayName?: string): Promise<{ account: CloudAccount; key: string }> {
-    const salt = newSalt()
-    const key = await deriveKey(password, salt, KDF_ITERATIONS)
-    const body: Record<string, unknown> = { email, salt, iterations: KDF_ITERATIONS, key }
+  /** Trades the emailed code for a session, creating the account (with `displayName`) the first time. */
+  verifyCode (email: string, code: string, displayName?: string) {
+    const body: Record<string, unknown> = { email, code }
     if (displayName) body.displayName = displayName
-    const r = await this.request<{ account: CloudAccount }>('POST', '/v1/auth/signup', { body })
-    return { account: r.account, key }
+    return this.request<{ token: string; expiresAt: number; account: CloudAccount; created: boolean }>('POST', '/v1/auth/code/verify', { body })
   }
 
   logout (token: string) { return this.request<void>('POST', '/v1/auth/logout', { token, timeoutMs: 5000 }) }

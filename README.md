@@ -49,14 +49,14 @@ password). Details: [`docs/adr/0005`](docs/adr/0005-desktop-app.md).
 Everything works without an account. Signing in (profile menu → Account) keeps profiles, likes, My List,
 Continue watching and taste settings the same on every computer you use. Only those sync, by IMDb id:
 never what you search for, sources, torrents or file names. (Phones, below, also tell the cloud about the
-computer itself: its name and home-network addresses.) Anyone can create an account, on the same page under
-Create account or on the website at nexttupp.com/account; no invite is needed. The cloud limits sign-ups to 5 an
+computer itself: its name and home-network addresses.) Anyone can create an account, on the same page or on
+the website at nexttupp.com/account; no invite is needed. Signing in and signing up are the same: type your
+email, then the 6-digit code it gets. There are no passwords. The cloud limits sign-ups to 5 an
 hour from one network.
 
-The password never leaves this computer: the local server stretches it with PBKDF2-SHA256 (600,000
-rounds) and sends only the derived key. The session token is kept in `<NEXTTUPP_DATA>/account.json`
-(readable only by you), never in the browser. Sync runs in the background: at start-up, every minute and
-a couple of seconds after a change. Offline, changes wait and go out when the service is back. Signing
+The session token is kept in `<NEXTTUPP_DATA>/account.json`
+(readable only by you), never in the browser. Sync only runs on events, never on a timer: at start-up, a few
+seconds after a change, and when you come back to the app. Offline, changes wait and go out when the service is back. Signing
 out keeps everything on the computer. The service itself is in [`cloud/`](cloud/README.md); the design is
 [ADR 0004](docs/adr/0004-accounts-and-sync.md).
 

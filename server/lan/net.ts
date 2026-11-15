@@ -7,8 +7,18 @@ import { networkInterfaces } from 'node:os'
 export interface LanAddress { address: string; netmask: string; iface: string }
 
 const PRIVATE_V4 = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})$/
-/** Container, VM and VPN interfaces: not where a phone or TV on the Wi-Fi would find us. */
-const VIRTUAL = /^(docker|br-|veth|virbr|vmnet|vboxnet|lxc|lxd|cni|flannel|podman|tun|tap|utun|zt|tailscale|wg|ham|vEthernet)/i
+/**
+ * Container, VM, VPN and hotspot interfaces: not where a phone or TV on the Wi-Fi would find us. Linux and macOS
+ * names first, then Windows' adapter names ("Local Area Connection* 10" is Windows' own hotspot and Wi-Fi Direct).
+ */
+const VIRTUAL = new RegExp('^(' + [
+  'docker', 'br-', 'veth', 'virbr', 'vmnet', 'vboxnet', 'lxc', 'lxd', 'cni', 'flannel', 'podman', 'tun', 'tap', 'utun', 'zt', 'tailscale', 'wg', 'ham',
+  'vEthernet', 'VirtualBox', 'VMware', 'Hyper-V', 'Local Area Connection\\*', 'Bluetooth', 'Npcap',
+  'NordLynx', 'NordVPN', 'CloudflareWARP', 'WARP', 'OpenVPN', 'WireGuard', 'ProtonVPN', 'Proton', 'Mullvad', 'ExpressVPN', 'Surfshark',
+  'Windscribe', 'ZeroTier', 'Radmin', 'Hamachi',
+].join('|') + ')', 'i')
+/** A /32 is a point-to-point link (how VPNs hand out addresses): nothing else on it, so no phone either. */
+const POINT_TO_POINT = '255.255.255.255'
 
 export const isPrivateV4 = (ip: string): boolean => PRIVATE_V4.test(ip)
 
@@ -41,13 +51,37 @@ export function defaultRouteAddress (): Promise<string | null> {
   })
 }
 
+/** VPN adapters by name, and what to call them. Mesh networks (Tailscale, ZeroTier, Hamachi) leave home alone. */
+const VPNS: Array<[RegExp, string]> = [
+  [/^(NordLynx|NordVPN)/i, 'NordVPN'], [/^(CloudflareWARP|WARP)/i, 'Cloudflare WARP'], [/^OpenVPN/i, 'OpenVPN'],
+  [/^(WireGuard|wg)/i, 'WireGuard'], [/^Proton/i, 'Proton VPN'], [/^Mullvad/i, 'Mullvad'], [/^ExpressVPN/i, 'ExpressVPN'],
+  [/^Surfshark/i, 'Surfshark'], [/^Windscribe/i, 'Windscribe'], [/^(tun|utun|ppp|ipsec)/i, 'a VPN'],
+]
+const MESH = /^(tailscale|zt|ZeroTier|ham|Hamachi|Radmin)/i
+
+/**
+ * The VPN that's on, if any: most block the home network, so phones can't reach this computer while it is. A known
+ * VPN adapter with an IPv4 address, or the internet through an address on a point-to-point link.
+ */
+export function activeVpn (defaultAddr: string | null, ifaces = networkInterfaces()): string | null {
+  for (const [iface, list] of Object.entries(ifaces)) {
+    if (MESH.test(iface)) continue
+    const v4 = (list ?? []).filter(a => a.family === 'IPv4' && !a.internal)
+    if (!v4.length) continue
+    const known = VPNS.find(([re]) => re.test(iface))
+    if (known) return known[1]
+    if (!VIRTUAL.test(iface) && v4.some(a => a.address === defaultAddr && a.netmask === POINT_TO_POINT)) return 'a VPN'
+  }
+  return null
+}
+
 /** Private IPv4 addresses of real network interfaces, the default route's first. */
 export function lanAddresses (preferred: string | null, ifaces = networkInterfaces()): LanAddress[] {
   const out: LanAddress[] = []
   for (const [iface, list] of Object.entries(ifaces)) {
     if (VIRTUAL.test(iface)) continue
     for (const a of list ?? []) {
-      if (a.family !== 'IPv4' || a.internal || !isPrivateV4(a.address)) continue
+      if (a.family !== 'IPv4' || a.internal || !isPrivateV4(a.address) || a.netmask === POINT_TO_POINT) continue
       out.push({ address: a.address, netmask: a.netmask, iface })
     }
   }

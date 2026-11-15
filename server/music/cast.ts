@@ -7,9 +7,9 @@ import { CastError, type MediaReceiver, type MediaStatus, MediaReceiver as Recei
 import type { MusicFiles } from './files.ts'
 
 // Music on a TV (docs/adr/0010). The TV gets a queue and plays through it on its own: when a song finishes
-// this computer sends the next one, so the phone that started it can be locked or put away. Three ways to
-// show it: the song with its cover (audio), the lyrics picture (lyrics, drawn by ffmpeg; see render.ts),
-// or the music video (video). The TV fetches /cast/m/<token>/…, with a token valid only for its own address.
+// this computer sends the next one, so the phone that started it can be locked or put away. Two ways to
+// show it: the song with its cover (audio), or the lyrics picture (lyrics, drawn by ffmpeg; see render.ts).
+// Music videos were dropped: most songs had none to play. The TV fetches /cast/m/<token>/…, with a token valid only for its own address.
 // One cast at a time across films and music: starting one stops the other.
 
 export type MusicCastState = NonNullable<MusicCastStatus['state']>
@@ -86,7 +86,7 @@ export class MusicCast {
     this.log = opts.log ?? (() => {})
   }
 
-  get modes (): MusicCastMode[] { return this.o.lyrics ? ['audio', 'lyrics', 'video'] : ['audio', 'video'] }
+  get modes (): MusicCastMode[] { return this.o.lyrics ? ['audio', 'lyrics'] : ['audio'] }
 
   get active (): boolean { return Boolean(this.s && !DONE.includes(this.s.state)) }
 
@@ -198,7 +198,7 @@ export class MusicCast {
         case 'mode':
           if (arg.mode && this.modes.includes(arg.mode) && arg.mode !== s.mode) {
             s.mode = arg.mode
-            await this.load(s, s.index, arg.mode === 'video' ? 0 : this.position(s))
+            await this.load(s, s.index, this.position(s))
           }
           break
         case 'volume': {
@@ -297,16 +297,9 @@ export class MusicCast {
     s.note = undefined
     s.last = { currentTime: 0, playerState: 'BUFFERING', at: Date.now() }
     try {
-      let mode = s.mode
+      const mode = s.mode
       await this.o.files.ensure(track, 'audio').catch(err => { throw new CastError('no_media', (err as Error).message) })
-      if (mode === 'video') {
-        const ok = await this.o.files.ensure(track, 'video').then(() => true, () => false)
-        if (!ok) {
-          mode = this.o.lyrics ? 'lyrics' : 'audio'
-          s.note = `No music video for “${track.title}”, so the ${mode === 'lyrics' ? 'lyrics are' : 'song is'} showing instead.`
-        }
-      }
-      const file = this.o.files.saved(track.id, mode === 'video' ? 'video' : 'audio')
+      const file = this.o.files.saved(track.id, 'audio')
       s.duration = file?.duration ?? track.duration
       const from = mode === 'lyrics' ? Math.max(0, Math.min(t, s.duration - 1)) : 0
       const token = randomBytes(32).toString('base64url')
@@ -317,22 +310,23 @@ export class MusicCast {
       s.from = from
       const base = `http://${s.lanAddress}:${this.o.lan.port}/cast/m/${token}`
       const status = await s.receiver.load({
-        contentId: mode === 'audio' ? `${base}/audio.m4a` : mode === 'video' ? `${base}/video.mp4` : `${base}/lyrics.mp4`,
+        contentId: mode === 'audio' ? `${base}/audio.m4a` : `${base}/lyrics.mp4`,
         contentType: mode === 'audio' ? 'audio/mp4' : 'video/mp4',
         currentTime: mode === 'lyrics' ? 0 : t,
         duration: Math.max(1, s.duration - from),
         title: track.title,
         image: artSize(track.album?.cover ?? track.artist.picture, 1000),
-        music: { artist: track.credit ?? track.artist.name, album: track.album?.title },
+        // Called a song, the TV draws its own music screen (cover, title) over the picture, hiding the lyrics:
+        // so the lyrics picture goes as plain video.
+        ...(mode === 'audio'
+          ? { music: { artist: track.credit ?? track.artist.name, album: track.album?.title } }
+          : { subtitle: track.credit ?? track.artist.name }),
       })
       s.last = { currentTime: status.currentTime, playerState: status.playerState, at: Date.now() }
       s.state = status.playerState === 'PLAYING' ? 'playing' : 'buffering'
       // The next song gets ready while this one plays.
       const next = this.o.track(s.queue[index + 1] ?? '')
-      if (next) {
-        this.o.files.ensure(next, 'audio').catch(() => {})
-        if (mode === 'video') this.o.files.ensure(next, 'video').catch(() => {})
-      }
+      if (next) this.o.files.ensure(next, 'audio').catch(() => {})
     } finally {
       s.loading = false
     }

@@ -7,8 +7,15 @@ import { ackPush, applyPull, collectPush, dropOutbox, linkProfiles, pendingCount
 import { ackMusicPush, applyMusicPull, collectMusicPush, dropMusicOutbox, musicPendingCount, requeueProfiles } from './music.ts'
 
 // Optional sign-in and background taste sync. Signed out, nothing here touches the network and the app
-// works as before. Signed in, it pushes this device's changes and pulls the account's: on start-up, about
-// a minute apart, and a couple of seconds after a like, list change or profile edit. Offline is normal:
+// works as before. Signed in, the cloud is called only on an event, never on a timer:
+//  - a like, list change or profile edit goes up a few seconds later (nudge());
+//  - watch progress and listens wait for the player to close, the person to leave the app (focus(false)), the
+//    next upload, or quitting (flush());
+//  - the account's other computers' changes come down on start-up, on "Sync now", and when the person comes
+//    back to the app (focus(true)), at most once per PULL_GAP_MS;
+//  - this computer's name and home addresses (for phones) go up when they change (deviceChanged()), and at most
+//    once a day alongside a sync that happens anyway, so the cloud doesn't forget the computer.
+// A computer nobody is using makes no requests at all. Offline is normal:
 // changes wait in the outbox and the next attempt backs off up to 5 minutes. Nothing here blocks a request
 // except sign-in itself. Music likes, listens and asked-for mixes sync after the films, on their own
 // endpoints, and only once the cloud says it syncs music (an older cloud leaves them waiting quietly).
@@ -25,6 +32,10 @@ export interface AccountStatus {
   sync?: { state: SyncState; lastSyncAt: number | null; error: string | null; pending: number; retryAt: number | null }
   /** Why this device was signed out, when it wasn't the person's doing ("Your session ended…"). */
   notice?: string
+  /** The cloud owner's one-line notice to every app, until they clear it. */
+  announcement?: string
+  /** This version is too old for the cloud: syncing stopped until the app is updated. */
+  updateRequired?: string
 }
 
 interface Session {
@@ -46,17 +57,22 @@ export interface SyncOptions {
   log?: (msg: string) => void
   fetch?: typeof fetch
   now?: () => number
-  intervalMs?: number
   debounceMs?: number
-  /** This computer as the cloud's device list shows it; registered on every sync (about once a minute). */
+  /** This computer as the cloud's device list shows it; sent when it changes (deviceChanged()). */
   device?: () => { id: string; name: string; platform: string; lan: boolean; lanUrls: string[] }
   /** Called after signing in or out. */
   onSignInChange?: () => void
+  /** This app's version, said on every cloud call so the cloud can ask old apps to update. */
+  appVersion?: string
 }
 
 const CURSOR_KEY = 'cloud_cursor'
 const MUSIC_CURSOR_KEY = 'cloud_music_cursor'
 const MAX_BACKOFF_MS = 5 * 60_000
+/** Coming back to the app fetches the other computers' changes, unless the last fetch is more recent than this. */
+export const PULL_GAP_MS = 10 * 60_000
+/** A computer that hasn't changed still says it's there this often (with a sync it makes anyway). */
+export const DEVICE_EVERY_MS = 24 * 3600_000
 
 export class SyncService {
   readonly cloud: CloudClient
@@ -65,7 +81,6 @@ export class SyncService {
   private readonly file: string
   private readonly log: (msg: string) => void
   private readonly now: () => number
-  private readonly intervalMs: number
   private readonly debounceMs: number
   private session: Session | null = null
   private notice: string | null = null
@@ -76,7 +91,12 @@ export class SyncService {
   private retryAt: number | null = null
   private running: Promise<void> | null = null
   private again = false
-  private timers: { interval?: NodeJS.Timeout; debounce?: NodeJS.Timeout; retry?: NodeJS.Timeout } = {}
+  /** The next cycle should fetch, not only upload. */
+  private wantPull = false
+  private lastPullAt: number | null = null
+  /** What the cloud last heard about this computer, and when. */
+  private deviceSent: { json: string; at: number } | null = null
+  private timers: { debounce?: NodeJS.Timeout; retry?: NodeJS.Timeout } = {}
   private readonly device?: SyncOptions['device']
   private readonly onSignInChange: () => void
   private deviceError: string | null = null
@@ -93,11 +113,10 @@ export class SyncService {
     this.db = opts.db
     this.store = opts.store
     this.file = join(opts.dataDir, 'account.json')
-    this.cloud = new CloudClient(opts.cloudUrl, opts.fetch)
+    this.cloud = new CloudClient(opts.cloudUrl, opts.fetch, opts.appVersion)
     this.log = opts.log ?? (() => {})
     this.now = opts.now ?? Date.now
-    this.intervalMs = opts.intervalMs ?? 60_000
-    this.debounceMs = opts.debounceMs ?? 2000
+    this.debounceMs = opts.debounceMs ?? 5000
     this.device = opts.device
     this.onSignInChange = opts.onSignInChange ?? (() => {})
     this.session = this.readSession()
@@ -105,39 +124,77 @@ export class SyncService {
 
   // ---- Lifecycle ---------------------------------------------------------------------
 
-  /** Syncs shortly after start-up, then about once a minute while signed in. */
+  /** Syncs shortly after start-up; after that, only on events (see the top of this file). */
   start (): void {
     this.stop()
-    this.timers.interval = setInterval(() => {
-      if (this.session && !(this.retryAt && this.now() < this.retryAt)) void this.syncNow()
-    }, this.intervalMs)
-    this.timers.interval.unref()
-    if (this.session) this.later('debounce', 1500)
+    if (this.session) { this.wantPull = true; this.later('debounce', 1500) }
   }
 
   stop (): void {
-    clearInterval(this.timers.interval)
     clearTimeout(this.timers.debounce)
     clearTimeout(this.timers.retry)
     this.timers = {}
   }
 
-  /** Something changed locally: sync soon, unless we're waiting out an outage. */
+  /** Something changed locally: upload it soon, unless we're waiting out an outage. */
   nudge (): void {
-    if (!this.session || (this.retryAt && this.now() < this.retryAt)) return
+    if (this.waiting()) return
     this.later('debounce', this.debounceMs)
+  }
+
+  /**
+   * The person came back to the app (true: fetch the other computers' changes, unless that was done in the last
+   * PULL_GAP_MS) or left it (false). Either way, what's waiting goes up.
+   */
+  focus (focused: boolean): void {
+    if (this.waiting()) return
+    const pull = focused && (this.lastPullAt === null || this.now() - this.lastPullAt >= PULL_GAP_MS)
+    if (pull) this.wantPull = true
+    if (pull || this.pending() > 0) this.later('debounce', 1000)
+  }
+
+  /** This computer's name or home addresses may have changed: tell the cloud if they did. */
+  deviceChanged (): void {
+    if (!this.waiting() && this.deviceDiffers()) this.later('debounce', 1000)
+  }
+
+  /** Quitting: upload what's waiting, briefly. */
+  async flush (timeoutMs = 3000): Promise<void> {
+    if (this.waiting() || this.pending() === 0) return
+    await Promise.race([this.run(), new Promise(resolve => setTimeout(resolve, timeoutMs).unref())])
+  }
+
+  private waiting (): boolean {
+    return !this.session || this.cloud.updateRequired !== null || (this.retryAt !== null && this.now() < this.retryAt)
+  }
+
+  /** The cloud's copy of this computer is out of date: its name or addresses changed. */
+  private deviceDiffers (): boolean {
+    if (!this.device) return false
+    const sent = this.deviceSent
+    return !sent || sent.json !== JSON.stringify(this.device())
+  }
+
+  /** Worth sending with a sync that's happening anyway: changed, or not refreshed for a day. */
+  private deviceDue (): boolean {
+    return this.deviceDiffers() || (this.deviceSent !== null && this.now() - this.deviceSent.at >= DEVICE_EVERY_MS)
   }
 
   private later (which: 'debounce' | 'retry', ms: number): void {
     clearTimeout(this.timers[which])
-    this.timers[which] = setTimeout(() => { void this.syncNow() }, ms)
+    this.timers[which] = setTimeout(() => { void this.run() }, ms)
     this.timers[which].unref()
   }
 
   status (): AccountStatus {
     const s = this.session
-    if (!s) return { signedIn: false, cloudUrl: this.cloud.baseUrl, ...(this.notice ? { notice: this.notice } : {}) }
+    const owner = {
+      ...(this.cloud.announcement ? { announcement: this.cloud.announcement } : {}),
+      ...(this.cloud.updateRequired ? { updateRequired: this.cloud.updateRequired } : {}),
+    }
+    if (!s) return { signedIn: false, cloudUrl: this.cloud.baseUrl, ...(this.notice ? { notice: this.notice } : {}), ...owner }
     return {
+      ...owner,
       signedIn: true,
       cloudUrl: this.cloud.baseUrl,
       account: { email: s.account.email, displayName: s.account.displayName, role: s.account.role },
@@ -152,16 +209,14 @@ export class SyncService {
 
   // ---- Account -----------------------------------------------------------------------
 
-  async login (email: string, password: string): Promise<AccountStatus> {
-    const r = await this.cloud.login(email.trim(), password)
-    return this.begin(r)
+  /** Emails a sign-in code to `email`. The same for a new account: the code creates it. */
+  async sendCode (email: string): Promise<void> {
+    await this.cloud.sendCode(email.trim())
   }
 
-  /** Create an account, then sign in. */
-  async signup (email: string, password: string, displayName?: string): Promise<AccountStatus> {
-    const mail = email.trim()
-    const { key } = await this.cloud.signup(mail, password, displayName?.trim() || undefined)
-    return this.begin(await this.cloud.loginWithKey(mail, key))
+  /** Signs in with the emailed code, creating the account (with `displayName`) the first time. */
+  async verifyCode (email: string, code: string, displayName?: string): Promise<AccountStatus> {
+    return this.begin(await this.cloud.verifyCode(email.trim(), code, displayName?.trim() || undefined))
   }
 
   private async begin (r: { token: string; expiresAt: number; account: CloudAccount }): Promise<AccountStatus> {
@@ -176,6 +231,8 @@ export class SyncService {
     this.musicSkip.clear()
     this.notice = null
     this.lastMerge = {}
+    this.lastPullAt = null
+    this.deviceSent = null
     this.failures = 0
     this.retryAt = null
     this.lastSyncAt = null
@@ -207,6 +264,8 @@ export class SyncService {
     this.error = null
     this.retryAt = null
     this.failures = 0
+    this.wantPull = false
+    this.deviceSent = null
     clearTimeout(this.timers.retry)
     clearTimeout(this.timers.debounce)
     rmSync(this.file, { force: true })
@@ -244,18 +303,26 @@ export class SyncService {
 
   // ---- Sync --------------------------------------------------------------------------
 
-  /** Runs one push-then-pull cycle now, or joins the one already running (and runs once more after it). */
+  /** Uploads and fetches now ("Sync now", sign-in and -out), or joins the cycle already running and runs once more after it. */
   syncNow (): Promise<void> {
-    if (!this.session) return Promise.resolve()
+    this.wantPull = true
+    return this.run()
+  }
+
+  /** One cycle: uploads what's waiting, and fetches if one was asked for since the last fetch. */
+  private run (): Promise<void> {
+    if (!this.session || this.cloud.updateRequired) return Promise.resolve()
     if (this.running) { this.again = true; return this.running }
-    this.running = this.cycle().finally(() => {
+    const pull = this.wantPull
+    this.wantPull = false
+    this.running = this.cycle(pull).finally(() => {
       this.running = null
       if (this.again && this.session) { this.again = false; this.later('debounce', 250) }
     })
     return this.running
   }
 
-  private async cycle (): Promise<void> {
+  private async cycle (pull: boolean): Promise<void> {
     const s = this.session!
     this.state = 'syncing'
     try {
@@ -267,11 +334,14 @@ export class SyncService {
         this.writeSession()
       }
       await this.pushAll(s)
-      await this.pullAll(s)
+      if (pull) {
+        await this.pullAll(s)
+        this.lastPullAt = this.now()
+      }
       if (this.session !== s) return
-      await this.music(s)
+      await this.music(s, pull)
       if (this.session !== s) return
-      await this.heartbeat(s)
+      if (this.deviceDue()) await this.heartbeat(s)
       if (this.session !== s) return
       this.state = 'synced'
       this.lastSyncAt = this.now()
@@ -283,11 +353,20 @@ export class SyncService {
       this.onAuthError(err)
       if (!this.session) return
       const e = err as CloudError
+      if (this.cloud.updateRequired) {
+        // Too old for the cloud: stop here. What's waiting stays here and goes up after the update.
+        this.state = 'error'
+        this.error = this.cloud.updateRequired
+        this.retryAt = null
+        this.log(`sync: ${this.cloud.updateRequired}`)
+        return
+      }
       const transient = !(e instanceof CloudError) || e.status === 0 || e.status === 429 || e.status >= 500
       this.state = e instanceof CloudError && e.status === 0 ? 'offline' : 'error'
       this.error = e.message
       this.failures++
-      const wait = transient ? Math.min(MAX_BACKOFF_MS, 5000 * 2 ** (this.failures - 1)) : this.intervalMs
+      if (pull) this.wantPull = true
+      const wait = transient ? Math.min(MAX_BACKOFF_MS, 5000 * 2 ** (this.failures - 1)) : MAX_BACKOFF_MS
       this.retryAt = this.now() + wait
       this.later('retry', wait)
       if (this.failures <= 3 || !transient) this.log(`sync: ${e.message}; retrying in ${Math.round(wait / 1000)} s`)
@@ -297,8 +376,10 @@ export class SyncService {
   /** Registers this computer with the cloud (name, home-network addresses). Never fails the sync. */
   private async heartbeat (s: Session): Promise<void> {
     if (!this.device) return
+    const device = this.device()
     try {
-      await this.cloud.putDevice(s.token, this.device())
+      await this.cloud.putDevice(s.token, device)
+      this.deviceSent = { json: JSON.stringify(device), at: this.now() }
       if (this.deviceError) this.log('sync: device registered again')
       this.deviceError = null
     } catch (err) {
@@ -360,7 +441,7 @@ export class SyncService {
    * musicHead). An older cloud gets no music calls at all, and one log line per run. A music failure never
    * fails the sync: it's logged once per distinct message, and the rows wait in the music outbox.
    */
-  private async music (s: Session): Promise<void> {
+  private async music (s: Session, pull: boolean): Promise<void> {
     if (this.musicHead === null) {
       if (!this.musicNoted) this.log('sync: the sync service doesn’t sync music yet; music likes and listens wait on this computer')
       this.musicNoted = true
@@ -368,7 +449,7 @@ export class SyncService {
     }
     try {
       await this.pushMusic(s)
-      await this.pullMusic(s)
+      if (pull) await this.pullMusic(s)
       if (this.musicError) this.log('sync: music is syncing again')
       this.musicError = null
     } catch (err) {
