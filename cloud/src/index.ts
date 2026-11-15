@@ -1,6 +1,5 @@
 import { adminDisable, adminEnable, adminListAccounts, adminResetLink } from './admin.ts'
 import { changePassword, getAccount, login, logout, patchAccount, prelogin, resetPassword, signup } from './auth.ts'
-import { sendCode, verifyCode } from './codes.ts'
 import { googleCallback, googleStart, redeemTicket } from './google.ts'
 import { createHandoff, deleteDevice, listDevices, putDevice, redeemHandoff } from './devices.ts'
 import { type Env, HttpError, errorResponse, json, Router } from './http.ts'
@@ -19,8 +18,6 @@ const router = new Router()
   .on('GET', '/v1/auth/google', googleStart)
   .on('GET', '/v1/auth/google/callback', googleCallback)
   .on('POST', '/v1/auth/ticket', redeemTicket)
-  .on('POST', '/v1/auth/code', sendCode)
-  .on('POST', '/v1/auth/code/verify', verifyCode)
   // Passwords: for apps before 0.5.5 and accounts made before codes. New clients sign in with a code.
   .on('POST', '/v1/auth/signup', signup)
   .on('POST', '/v1/auth/prelogin', prelogin)

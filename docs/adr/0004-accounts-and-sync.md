@@ -188,3 +188,7 @@ whose hash went out as `challenge`, so a ticket seen in a URL is worth nothing.
 
 **Order.** Apps before 0.5.6 only know codes, so codes stay until `MIN_APP_VERSION` is 0.5.6; then the code
 routes, the email binding and the paid plan go.
+
+**Done, 2026-11-15.** 0.5.5 never reached anyone, so codes went the same day: `MIN_APP_VERSION` is 0.5.6, the
+code routes and the `EMAIL` binding are gone, and migration 0008 drops `email_codes`. Apps before 0.5.5 still
+sign in with their password (they send no version, so the gate lets them through).

@@ -88,25 +88,13 @@ Google). See ADR 0004, "sign in with Google instead".
   callback's `code` is the email, or `email|First name`. `wrangler dev` needs `--local-upstream 127.0.0.1:<port>`
   for that, or the Worker sees the `api.nexttupp.com` route as its host (see `scripts/sync-e2e.mjs`).
 
-**Sign-in codes (2026-11-15, apps 0.5.5 only; `src/codes.ts`).** A 6-digit code sent by email. These routes and
-the `EMAIL` binding go once `MIN_APP_VERSION` is 0.5.6. The password endpoints below the first two rows stay
-only for apps before 0.5.5.
+**The other auth routes.** Sign-in codes by email (0.5.5 only) were removed on 2026-11-15, when
+`MIN_APP_VERSION` became 0.5.6; migration 0008 drops their table. The password routes (prelogin, login,
+signup, reset, password change) stay for apps before 0.5.5, which don't send `x-nexttupp-app` and so aren't
+turned away.
 
 | Method and path | Auth | Request | Response |
 |---|---|---|---|
-| `POST /v1/auth/code` | – | `{ email }` | `200 { sent: true, expiresAt }`, the same whether or not the email has an account · `429 too_many_attempts` · `503 email_unavailable` · `422 email_undeliverable` |
-| `POST /v1/auth/code/verify` | – | `{ email, code, displayName? }` | `200 { token, expiresAt, account: Account, created }`; `created` is true when this made the account, and `displayName` is only used then · `401 invalid_code` (wrong, expired, used, or out of tries) · `403 account_disabled` · `429 too_many_attempts` |
-
-- A code lasts 10 minutes, works once, and takes 5 tries. Asking again replaces it.
-- An email gets at most 5 codes an hour and 10 a day; a network, 20 codes an hour. Wrong tries share login's
-  per-network budget. So a stranger gets at most 50 guesses a day at a million codes, and the inbox's owner
-  sees every code arrive.
-- `email_codes` (migration 0006) keeps HMACs of the email and the code, so it holds no address of someone
-  who asked and never signed in.
-- Mail goes out through Cloudflare Email Service: the `EMAIL` binding (`send_email` in `wrangler.jsonc`) from
-  `sign-in@nexttupp.com`, which needs the Workers Paid plan and nexttupp.com onboarded under Email Service,
-  Email Sending. `wrangler dev` and the tests send nothing: the local Worker logs the message.
-
 | `POST /v1/auth/prelogin` | – | `{ email }` | `200 { kdf: "pbkdf2-sha256", iterations: 600000, salt }` (see [Passwords](#passwords-stretched-by-the-client)) |
 | `POST /v1/auth/login` | – | `{ email, key }` | `200 { token: "nxs_…", expiresAt, account: Account }` · `401 invalid_credentials` · `403 account_disabled` · `429 too_many_attempts` |
 | `POST /v1/auth/logout` | bearer | none, or `{ all: true }` to end every session | `204` |
@@ -494,8 +482,8 @@ iterations (the most Workers' WebCrypto allows) and measured 13–26 ms per logi
 limit. A flood of login attempts now costs the Worker microseconds each; the per-email and per-IP locks
 still limit online guessing.
 
-**Sign-in codes** need the Workers Paid plan ($5 a month) for Cloudflare Email Service: 3,000 emails a
-month are included, then $0.35 per 1,000.
+**Google sign-in** fits the free plan: the callback's CPU is a few hashes and a JSON parse, and the call to
+Google is waiting, not CPU. Nothing here needs Workers Paid since the emailed codes went (2026-11-15).
 
 **Other limits:** a push is one D1 batch (one transaction) plus one ownership read. A pull is one batch.
 D1 counts a batch as one query against the 50-queries-per-request free limit, and no request here makes

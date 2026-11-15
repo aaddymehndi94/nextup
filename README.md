@@ -50,8 +50,8 @@ Everything works without an account. Signing in (profile menu → Account) keeps
 Continue watching and taste settings the same on every computer you use. Only those sync, by IMDb id:
 never what you search for, sources, torrents or file names. (Phones, below, also tell the cloud about the
 computer itself: its name and home-network addresses.) Anyone can create an account, on the same page or on
-the website at nexttupp.com/account; no invite is needed. Signing in and signing up are the same: type your
-email, then the 6-digit code it gets. There are no passwords. The cloud limits sign-ups to 5 an
+the website at nexttupp.com/account; no invite is needed. Signing in and signing up are the same: "Continue with
+Google", and the account is your Google email (an account made before with that email is the same one). The cloud limits sign-ups to 5 an
 hour from one network.
 
 The session token is kept in `<NEXTTUPP_DATA>/account.json`
