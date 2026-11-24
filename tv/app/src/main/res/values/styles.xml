@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Nexttupp" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">#0a0a0b</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:colorAccent">#ffffff</item>
+        <item name="android:textColorPrimary">#f5f5f7</item>
+        <item name="android:textColorSecondary">#b4b4bb</item>
+    </style>
+</resources>

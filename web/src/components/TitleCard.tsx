@@ -2,6 +2,7 @@ import type { MouseEvent, ReactNode } from 'react'
 import { Check, Plus, ThumbsDown, ThumbsUp, X } from 'lucide-react'
 import type { TitleSummary } from '../../../shared/types.ts'
 import { rateTitle, setTitleInList, useMark } from '../marks.ts'
+import { inTvApp } from '../tv.ts'
 import { PosterCard } from './PosterCard.tsx'
 import { showPreview } from './Preview.tsx'
 
@@ -13,6 +14,10 @@ const sourceOf = (e: MouseEvent<HTMLElement>) => e.currentTarget.closest('[data-
  * quick view (Preview.tsx) with its trailer. `onRemove` adds a fourth button at the end that takes the title off the screen ("Not interested", or "Remove from My List").
  * The buttons sit below the art rather than over it, so a remote's Down key reaches them and Left/Right still
  * move from poster to poster.
+ *
+ * In the TV app the poster is just a link to the title page, which has the same buttons: on a TV's slow chip
+ * they made up most of the page (three in five elements), and even on the selected card alone they slowed
+ * scrolling and got in the way of Down (owner, 2026-11-24). The quick view's trailer is too heavy there too.
  */
 export function TitleCard ({ title, note, showType, badge, onRemove, removeLabel = 'Not interested', listed = false }: {
   title: TitleSummary
@@ -26,6 +31,7 @@ export function TitleCard ({ title, note, showType, badge, onRemove, removeLabel
 }) {
   const { type, id, name } = title
   const mark = useMark(id)
+  if (inTvApp()) return <div className="card"><PosterCard title={title} note={note} showType={showType} badge={badge} /></div>
   return (
     <div className={`card${mark.rating === -1 ? ' is-disliked' : ''}`}>
       <PosterCard title={title} note={note} showType={showType} badge={badge} onOpen={() => showPreview(title)} />

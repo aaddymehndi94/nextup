@@ -300,6 +300,8 @@ export const api = {
   firewall: () => req<{ state: FirewallState }>('/api/lan/firewall'),
   letPhonesIn: () => req<{ state: FirewallState | 'declined' }>('/api/lan/firewall', json('POST', {})),
   removeLanClient: (id: string) => req<void>(`/api/lan/clients/${id}`, json('DELETE')),
+  /** A 4-digit code the nexttupp TV app asks for, for ten minutes (server/lan). */
+  tvCode: () => req<{ code: string; expiresAt: number }>('/api/lan/tv-code', json('POST', {})),
 
   // Recommendations.
   home: (type?: MediaType) => req<HomeResponse>(`/api/me/home${type ? `?type=${type}` : ''}`),

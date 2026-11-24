@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { addressFacing, defaultDeviceName, defaultRouteAddress, isLoopback, type LanAddress, lanAddresses, platformOf, type Platform } from './net.ts'
 import { type LanClient, LanStore } from './store.ts'
@@ -20,7 +21,12 @@ export interface LanOptions {
   addresses?: () => Promise<LanAddress[]>
   /** After each look at the settings and addresses: deviceInfo() may have changed (the cloud is told if it did). */
   onRefresh?: () => void
+  now?: () => number
 }
+
+/** A TV pairs with a code shown on this computer: it lasts ten minutes, works once, and five wrong tries use it up. */
+const TV_CODE_MS = 10 * 60_000
+const TV_CODE_TRIES = 5
 
 export class LanService {
   readonly store: LanStore
@@ -33,11 +39,14 @@ export class LanService {
   private castHolds = 0
   private refreshing: Promise<void> = Promise.resolve()
   private timer?: NodeJS.Timeout
+  private readonly now: () => number
+  private tvCode: { code: string; expiresAt: number; misses: number } | null = null
 
   constructor (opts: LanOptions) {
     this.opts = opts
     this.port = opts.port
-    this.store = new LanStore(opts.dataDir)
+    this.now = opts.now ?? Date.now
+    this.store = new LanStore(opts.dataDir, this.now)
     this.log = opts.log ?? (() => {})
   }
 
@@ -108,6 +117,25 @@ export class LanService {
   }
 
   clients (): LanClient[] { return this.store.clients() }
+
+  /** A new 4-digit code for "Add a TV", replacing any earlier one. */
+  newTvCode (): { code: string; expiresAt: number } {
+    const code = String(randomInt(0, 10_000)).padStart(4, '0')
+    this.tvCode = { code, expiresAt: this.now() + TV_CODE_MS, misses: 0 }
+    return { code, expiresAt: this.tvCode.expiresAt }
+  }
+
+  /** Lets a TV in with the code shown here. Null when there's no live code or it's wrong (a wrong try counts). */
+  pairTv (code: string, label: string): { token: string; client: LanClient } | null {
+    const c = this.tvCode
+    if (!c || this.now() > c.expiresAt) { this.tvCode = null; return null }
+    if (code !== c.code) {
+      if (++c.misses >= TV_CODE_TRIES) this.tvCode = null
+      return null
+    }
+    this.tvCode = null
+    return this.store.add(label)
+  }
 
   /** Re-reads the settings and the machine's addresses, then binds or unbinds to match. Serialised. */
   refresh (): Promise<void> {

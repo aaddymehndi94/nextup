@@ -14,6 +14,7 @@ import { isPrivate } from '../private.ts'
 import { TitleArt } from '../components/TitleArt.tsx'
 import { toast } from '../toast.ts'
 import { watchSource } from './Title.tsx'
+import { inTvApp, keepAwake } from '../tv.ts'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
@@ -124,6 +125,17 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const mode = info?.plan.mode
   const remote = Boolean(cast?.active && cast.sessionId === sessionId)
   const casting = remote || castPending !== null
+
+  // In the TV app: no screensaver while a film plays on this screen.
+  const playingHere = playing && !remote
+  useEffect(() => { keepAwake(playingHere) }, [playingHere])
+  useEffect(() => () => keepAwake(false), [])
+  // With nothing focused, the remote's arrows are the player's (seek, and Up/Down to the controls): see tvnav.ts.
+  useEffect(() => {
+    if (!inTvApp()) return
+    document.documentElement.dataset.tvKeys = 'player'
+    return () => { delete document.documentElement.dataset.tvKeys }
+  }, [])
 
   // Where this profile left off, asked for straight away so it's known by the time the file is.
   const savedOnServer = useRef<Promise<WatchProgress | null | undefined> | null>(null)
@@ -606,9 +618,19 @@ export function Watch ({ query }: { query: URLSearchParams }) {
   const poke = useCallback(() => {
     setChrome(true)
     window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setChrome(false), 2800)
+    // On the TV, a little longer while the remote is on a control, to read it and press on.
+    const onControl = inTvApp() && document.activeElement instanceof HTMLElement && document.activeElement.closest('.player') !== null
+    hideTimer.current = window.setTimeout(() => setChrome(false), onControl ? 5000 : 2800)
   }, [])
   useEffect(() => () => window.clearTimeout(hideTimer.current), [])
+  // On the TV, controls that hide let go of focus, so the arrows seek again; Up or Down comes back to the same one.
+  const chromeShown = chrome || !playing || panel !== 'none' || casting
+  const lastControl = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (chromeShown || !inTvApp()) return
+    const el = document.activeElement
+    if (el instanceof HTMLElement && el.closest('.player-bottom')) { lastControl.current = el; el.blur() }
+  }, [chromeShown])
 
   useEffect(() => {
     const onFs = () => {
@@ -621,10 +643,28 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The TV remote moved focus between controls (tvnav.ts): keep them showing.
+      if (e.defaultPrevented) { poke(); return }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
       const v = video.current
       if (!v) return
       const k = e.key.toLowerCase()
+      const idle = !(document.activeElement instanceof HTMLElement) || document.activeElement === document.body
+      if (inTvApp() && idle) {
+        // The TV's own remote: OK plays or pauses, Up and Down bring the controls up (the TV has its own volume).
+        if (k === 'enter') { e.preventDefault(); togglePlay(); poke(); return }
+        if (k === 'arrowup' || k === 'arrowdown') {
+          e.preventDefault()
+          poke()
+          requestAnimationFrame(() => {
+            // The control bar's play button: the one in the middle of the picture is for touch screens, hidden here.
+            const shown = (el: HTMLElement | null | undefined) => (el?.isConnected && el.getClientRects().length ? el : null)
+            const play = [...document.querySelectorAll<HTMLElement>('.player .icon-button.play')].find(shown)
+            ;(shown(lastControl.current) ?? play)?.focus()
+          })
+          return
+        }
+      }
       if (k === ' ' || k === 'k') { e.preventDefault(); togglePlay() }
       else if (k === 'arrowright' || k === 'l') { e.preventDefault(); seekTo(now() + 10) }
       else if (k === 'arrowleft' || k === 'j') { e.preventDefault(); seekTo(now() - 10) }
@@ -735,7 +775,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
 
   return (
     <div
-      className={`player${chrome || !playing || panel !== 'none' || casting ? ' show-chrome' : ''}${phase === 'ready' ? ' is-ready' : ''}${casting ? ' is-casting' : ''}`}
+      className={`player${chromeShown ? ' show-chrome' : ''}${phase === 'ready' ? ' is-ready' : ''}${casting ? ' is-casting' : ''}`}
       onMouseMove={poke}
       onTouchStart={poke}
     >

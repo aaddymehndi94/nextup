@@ -1262,6 +1262,15 @@ button.inline-link { font: inherit; color: var(--text); padding: 0; background: 
 .lan-list-title { margin-top: 0.5rem; font-size: 0.9375rem; font-weight: 600; }
 .lan-row { align-items: center; }
 .lan-client { display: flex; flex-direction: column; gap: 0.125rem; }
+/* Add a TV (Account.tsx AddTv): the code is read off this screen and typed with a remote, so it's set large. */
+.tv-pair { display: grid; justify-items: start; gap: 0.875rem; width: 100%; margin-top: 0.75rem; }
+.tv-pair .lan-list-title, .tv-pair .account-note { margin: 0; }
+.tv-pair .account-note { max-width: 52ch; }
+.tv-code { margin: 0; font-size: 2.75rem; font-weight: 700; line-height: 1; letter-spacing: 0.16em; color: var(--text); }
+.tv-waiting { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1.25rem; row-gap: 0.5rem; }
+.tv-waiting-line { display: flex; align-items: center; gap: 0.5rem; color: var(--text-3); }
+.tv-pair .inline-link { padding-block: 0.625rem; margin-block: -0.625rem; }
+.tv-waiting .spinner { width: 0.875rem; height: 0.875rem; }
 
 /* ---------- Tablet ---------- */
 @media (max-width: 900px) {
@@ -1594,3 +1603,20 @@ html.calm .profile-tile:hover .profile-art, html.calm .profile-tile:focus-visibl
 .theme-sample { display: flex; flex-wrap: wrap; align-items: center; gap: 0.875rem; padding: 1rem; border-radius: 0.875rem; background: var(--bg-1); width: 100%; pointer-events: none; }
 .theme-sample .meter { flex: 1 1 6rem; min-width: 6rem; }
 .appearance-body .switch-label + .chips, .appearance-body .switch-label + .theme-swatches { margin-top: -0.375rem; }
+
+/* ---------- The TV app (tv/, web/src/tv.ts): driven by a remote, no mouse ----------
+   The TV's page is 960 px wide, where the masthead's tabs and a full search field don't fit side by side:
+   search is a round button until it's focused or holds a query, then opens out over the tabs. */
+.tv .search-hint { display: none; }
+.tv .search { width: 2.75rem; padding: 0; transition: width 240ms var(--ease), background 200ms var(--ease), box-shadow 200ms var(--ease); }
+.tv .search .search-icon { position: absolute; left: 0.8125rem; pointer-events: none; }
+.tv .search input { padding: 0 0.75rem 0 2.75rem; text-overflow: ellipsis; }
+.tv .search input::placeholder { color: transparent; }
+/* Open, it stops short of the tabs (they end about 13rem from the right on a TV's 960 px). */
+.tv .search:focus-within, .tv .search:has(input:not(:placeholder-shown)) { width: 12rem; }
+.tv .search:focus-within input::placeholder { color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .tv .search { transition: none; } }
+/* A card in a shelf is one stop for the remote: its remove/delete button lives on the title or Downloads page. */
+.tv .row-scroller .download-delete { display: none; }
+/* The player: the TV's remote has its own volume, and the slider would keep Left and Right for itself. */
+.tv .player .volume { display: none; }

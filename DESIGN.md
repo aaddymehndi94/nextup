@@ -273,6 +273,8 @@ to change, and the licence sits beside it at `web/public/fonts/OFL.txt`.
 - **Caption** (600–620, 0.75rem): column headers, key hints, a card's reason line.
 - **Micro** (650–800, 0.6875rem, +0.01em): badges and tags (Recommended, Series, IMDb, Matches release).
   This is the floor; nothing functional is set smaller.
+- **Pairing code** (700, 2.75rem, +0.16em, standard width, proportional figures): the TV pairing code on Account,
+  the one large figure that isn't titling.
 
 ### Named Rules
 **The Two Widths Rule.** Expanded is for the brand and for titling. Standard width is for everything you read
@@ -380,6 +382,33 @@ Series tag, the scrubber time tip).
 - **Watch on your phone (Account):** the phones switch, then a QR code for nexttupp.com/watch on a white
   8.25rem tile beside the address in words. The tile is the one white surface allowed that isn't an action:
   a camera needs the contrast. Shown only while phones are on.
+- **On your TV (Account, under the phone block):** a secondary "Add a TV" pill (Tv icon; "Getting a code…" while busy)
+  shows a one-time 4-digit pairing code for the TV app. The code is the one large figure that isn't a title
+  (below), because it's read across the room and typed with a remote. Under it, one line with where to get the app
+  (nexttupp.com/tv) and how long the code lasts, then a waiting line (small spinner, Ash) with an inline Cancel
+  beside it. Focus moves to Cancel when the code shows and back to the button when it goes. When a TV pairs, a
+  snackbar names it ("Living Room TV is connected.") and it joins "Connected phones and TVs"; a code that runs
+  out turns the button into "Get a new code".
+- **In the TV app (`.tv` on `<html>`, web/src/tvnav.ts):** the same pages, driven by the remote. The page stays at
+  the TV's own 960 px width (Android TV's 960×540 layout, so type reads across the room). Up/Down go to the
+  nearest line of controls; Left/Right stay in their row. A shelf (a row of cards, a series' episodes) is one stop
+  on the way up and down: focus lands on the card it was last on there, else the first in view, and the shelf
+  lines up just under the masthead with its heading, the same place on every page. Anything else is centred, and
+  controls on the first screen scroll the page to its top. A shelf's links (See all, Why these?) come after its
+  last card (Right); reaching a line of buttons lands on its main one, tabs on the selected one, the masthead on
+  the current tab, and Left from a row's start jumps there. Focus moves instantly, never animated, with the
+  ordinary focus rings, and Back to a page puts it on the control it was on (the poster that was opened). Pages
+  change without a view transition (too heavy for a TV's chip). Each move and OK plays the TV's own navigation
+  sound (silent when the TV's sound effects are off). The masthead's search is a round button (same size as the
+  IMDb and profile buttons) that opens out to a 12rem field (stopping short of the tabs) when focused or holding
+  a query; the "/" hint is hidden. OK on the search field brings up the TV's keyboard, so arrowing past it
+  doesn't. Back closes the open dialog, panel or menu first, then goes back a page. Cards are one stop each:
+  posters are plain links to the title page (no My List/Like/Dislike/Not interested under them, no quick view)
+  and shelf cards have no remove/delete button; the title and Downloads pages have those. A TV's chip is slow,
+  and the buttons slowed scrolling and got in the way (the owner tried them on the selected card only, and
+  preferred none). In the player, with nothing focused, OK plays or pauses, Left/Right seek 10 s, and Up/Down
+  bring up the controls on the last control used (else play). The controls stay 5 s while one is focused; the
+  bar has no volume (the TV's remote has its own), and Left/Right on the progress bar seek.
 - **Who's watching:** large avatar tiles centred on Projection Black, the title in Mona Sans Expanded. Shown
   only when there is more than one profile. Manage mode adds a pencil to each tile and an inline form; delete
   asks again with a red chip, and the last profile can't be deleted.

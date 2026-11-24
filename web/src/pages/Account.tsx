@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { desktop } from '../desktop.ts'
-import { AlertTriangle, LogOut, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, LogOut, RefreshCw, Tv, X } from 'lucide-react'
 import { vpnAdvice } from '../components/UpdateBanner.tsx'
 import { type AccountStatus, api, type FirewallState, getActiveProfile, type LanStatus, setActiveProfile } from '../api.ts'
 import { useDocumentTitle } from '../hooks.ts'
@@ -280,6 +280,86 @@ function FirewallNotice () {
   )
 }
 
+/**
+ * "Add a TV": a 4-digit code for the nexttupp TV app. While it shows, this page asks this computer (never the
+ * cloud) every 2 seconds whether a new phone or TV has joined, and names the one that did.
+ */
+function AddTv ({ clients, onLan }: { clients: string[]; onLan: (l: LanStatus) => void }) {
+  const [code, setCode] = useState<{ code: string; expiresAt: number } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [expired, setExpired] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const before = useRef(new Set(clients))
+  // The pressed button goes away when the code arrives, and Cancel when it goes: keep keyboard focus in this block.
+  const add = useRef<HTMLButtonElement>(null)
+  const cancel = useRef<HTMLButtonElement>(null)
+  const hadFocus = useRef(false)
+  const close = (next: { expired?: boolean } = {}) => {
+    hadFocus.current = document.activeElement === cancel.current
+    setCode(null)
+    setExpired(Boolean(next.expired))
+  }
+  useEffect(() => {
+    if (code) cancel.current?.focus()
+    else if (hadFocus.current) { add.current?.focus(); hadFocus.current = false }
+  }, [code])
+
+  const start = async () => {
+    setBusy(true); setError(null); setExpired(false)
+    try {
+      before.current = new Set(clients)
+      setCode(await api.tvCode())
+    } catch (err) { setError((err as Error).message) }
+    setBusy(false)
+  }
+
+  useEffect(() => {
+    if (!code) return
+    const id = setInterval(() => {
+      if (Date.now() > code.expiresAt) { close({ expired: true }); return }
+      api.lan().then(l => {
+        const joined = l.clients.find(c => !before.current.has(c.id))
+        if (!joined) return
+        close()
+        onLan(l)
+        toast(`${joined.label} is connected.`)
+      }).catch(() => {})
+    }, 2000)
+    return () => clearInterval(id)
+  }, [code, onLan])
+
+  const where = <strong className="phone-qr-url">nexttupp.com/tv</strong>
+  return (
+    <div className="tv-pair" aria-live="polite">
+      <h3 className="lan-list-title">On your TV</h3>
+      {code
+        ? (
+          <>
+            <p className="tv-code"><span aria-hidden>{code.code}</span><span className="sr-only">Code {code.code.split('').join(' ')}</span></p>
+            <p className="account-note">Type this in the nexttupp app on your TV (get it at {where}). It works once, for 10 minutes.</p>
+            <div className="tv-waiting">
+              <span className="tv-waiting-line"><span className="spinner" aria-hidden />Waiting for the TV…</span>
+              <button type="button" ref={cancel} className="inline-link" onClick={() => close()}>Cancel</button>
+            </div>
+          </>
+          )
+        : (
+          <>
+            <p className="account-note">
+              {expired
+                ? 'That code ran out. Get a new one when the TV is ready.'
+                : <>Get the app on an Android TV or Google TV at {where}, open it on the same Wi-Fi, and it asks for a code.</>}
+            </p>
+            <button type="button" ref={add} className="button secondary" disabled={busy} onClick={() => { void start() }}>
+              {busy ? <span className="spinner" aria-hidden /> : <Tv aria-hidden />}{busy ? 'Getting a code…' : expired ? 'Get a new code' : 'Add a TV'}
+            </button>
+          </>
+          )}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>
+  )
+}
+
 function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void }) {
   const [name, setName] = useState(lan.name)
   const [busy, setBusy] = useState(false)
@@ -297,7 +377,7 @@ function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void
     try {
       await api.removeLanClient(id)
       onLan({ ...lan, clients: lan.clients.filter(c => c.id !== id) })
-      toast('Removed. It can connect again from nexttupp.com/watch.')
+      toast('Removed.')
     } catch (err) { toast(`Couldn’t remove it. ${(err as Error).message}`) }
   }
 
@@ -313,7 +393,7 @@ function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void
         <span className="switch-text">
           <span className="switch-label">Let phones play from this computer</span>
           <span className="account-note">
-            Films play on a phone on the same Wi-Fi, streamed from this computer. For a TV, press Cast in the player.
+            Films play on a phone or TV on the same Wi-Fi, streamed from this computer. You can also press Cast in the player.
           </span>
         </span>
         <input type="checkbox" role="switch" className="switch" checked={lan.enabled} disabled={busy} onChange={e => { void save({ enabled: e.target.checked }) }} />
@@ -330,19 +410,20 @@ function Phones ({ lan, onLan }: { lan: LanStatus; onLan: (l: LanStatus) => void
             </p>
           </div>
           <label className="field lan-name">
-            <span className="field-label">This computer’s name, as your phone shows it</span>
+            <span className="field-label">This computer’s name, as your phone or TV shows it</span>
             <input value={name} maxLength={40} placeholder={lan.defaultName} onChange={e => setName(e.target.value)} onBlur={saveName}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
           </label>
           {lan.urls.length === 0 && <p className="fine-print">Not on a home network right now.</p>}
+          <AddTv clients={lan.clients.map(c => c.id)} onLan={onLan} />
         </>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <h3 className="lan-list-title">Connected phones</h3>
+      <h3 className="lan-list-title">Connected phones and TVs</h3>
       {lan.clients.length === 0
         ? <p className="account-note">None yet.</p>
         : (
-          <ul className="device-list" aria-label="Connected phones">
+          <ul className="device-list" aria-label="Connected phones and TVs">
             {lan.clients.map(c => (
               <li key={c.id} className="device-row lan-row">
                 <span className="lan-client">

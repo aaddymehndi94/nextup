@@ -21,14 +21,14 @@ const PHONE = '192.168.1.50'
 const CODE = `nxh_${'A'.repeat(43)}`
 const ANDROID = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36'
 
-async function setup (opts: { signedIn?: boolean; redeem?: (code: string, id: string) => Promise<void> } = {}) {
+async function setup (opts: { signedIn?: boolean; redeem?: (code: string, id: string) => Promise<void>; now?: () => number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'nx-lan-'))
   dirs.push(dir)
   const state = { signedIn: opts.signedIn ?? true, redeemed: [] as Array<[string, string]>, nudged: 0 }
-  const lan = new LanService({ dataDir: dir, port: 4552, host: '127.0.0.1', signedIn: () => state.signedIn, addresses: async () => [] })
+  const lan = new LanService({ dataDir: dir, port: 4552, host: '127.0.0.1', signedIn: () => state.signedIn, addresses: async () => [], now: opts.now })
   services.push(lan)
   const app = Fastify()
-  app.setErrorHandler((err: Error & { status?: number }, _req, reply) => { reply.code(err.status ?? 500).send({ error: err.message }) })
+  app.setErrorHandler((err: Error & { status?: number; statusCode?: number }, _req, reply) => { reply.code(err.status ?? err.statusCode ?? 500).send({ error: err.message }) })
   registerLanGate(app, lan)
   registerLanRoutes(app, lan, {
     signedIn: () => state.signedIn,
@@ -204,6 +204,71 @@ describe('phones and TVs settings', () => {
     const { lan, state } = await setup()
     state.signedIn = false
     expect(lan.deviceInfo()).toMatchObject({ lan: false, lanUrls: [] })
+  })
+})
+
+describe('TV pairing', () => {
+  const TV = '192.168.1.30'
+  const fromTv = (headers: Record<string, string> = {}) => ({ remoteAddress: TV, headers: { host: '192.168.1.20:4552', 'user-agent': 'nexttupp-tv/0.1 (Android 12; Living Room TV)', ...headers } })
+  const json = { 'content-type': 'application/json' }
+  const local = { remoteAddress: '127.0.0.1', headers: { host: 'localhost:4552', ...json } }
+  const newCode = async (app: Awaited<ReturnType<typeof setup>>['app']) => {
+    const r = await app.inject({ method: 'POST', url: '/api/lan/tv-code', payload: '{}', ...local })
+    expect(r.statusCode).toBe(200)
+    return r.json() as { code: string; expiresAt: number }
+  }
+  const pair = (app: Awaited<ReturnType<typeof setup>>['app'], code: string, name = 'Living Room TV') =>
+    app.inject({ method: 'POST', url: '/tv/pair', payload: { code, name }, ...fromTv(json) })
+
+  it('the TV finds the computer, pairs with the code shown on it, and can then watch', async () => {
+    const { app, lan } = await setup()
+    const hello = await app.inject({ method: 'GET', url: '/tv/hello', ...fromTv() })
+    expect(hello.statusCode).toBe(200)
+    expect(hello.json()).toEqual({ app: 'nexttupp', id: lan.store.deviceId, name: lan.name(), on: true })
+
+    const { code, expiresAt } = await newCode(app)
+    expect(code).toMatch(/^\d{4}$/)
+    expect(expiresAt).toBeGreaterThan(Date.now() + 9 * 60_000)
+
+    const paired = await pair(app, code)
+    expect(paired.statusCode).toBe(200)
+    const { token, name } = paired.json() as { token: string; name: string }
+    expect(name).toBe(lan.name())
+    expect(String(paired.headers['set-cookie'])).toContain(`${COOKIE}=${token}`)
+    const cookie = `${COOKIE}=${token}`
+    expect((await app.inject({ method: 'GET', url: '/api/health', ...fromTv({ cookie }) })).statusCode).toBe(200)
+    expect(lan.clients()).toMatchObject([{ label: 'Living Room TV' }])
+
+    // A code works once.
+    expect((await pair(app, code, 'Bedroom TV')).statusCode).toBe(401)
+  })
+
+  it('five wrong tries use the code up, and it lasts ten minutes', async () => {
+    let now = Date.now()
+    const { app } = await setup({ now: () => now })
+    const { code } = await newCode(app)
+    const wrong = code === '0000' ? '1111' : '0000'
+    for (let i = 0; i < 5; i++) expect((await pair(app, wrong)).statusCode).toBe(401)
+    expect((await pair(app, code)).statusCode).toBe(401)
+
+    const fresh = await newCode(app)
+    now += 10 * 60_000 + 1
+    expect((await pair(app, fresh.code)).statusCode).toBe(401)
+  })
+
+  it('only this computer makes codes, a TV can’t pair while phones are off, and junk is refused', async () => {
+    const { app, state } = await setup()
+    const cookie = await connectPhone(app)
+    expect((await app.inject({ method: 'POST', url: '/api/lan/tv-code', payload: '{}', ...fromPhone({ ...json, cookie }) })).statusCode).toBe(403)
+
+    const { code } = await newCode(app)
+    expect((await app.inject({ method: 'POST', url: '/tv/pair', payload: `code=${code}`, ...fromTv({ 'content-type': 'application/x-www-form-urlencoded' }) })).statusCode).toBe(415)
+    expect((await pair(app, '12')).statusCode).toBe(400)
+    expect((await pair(app, code, 'x'.repeat(200))).statusCode).toBe(400)
+
+    state.signedIn = false
+    expect((await app.inject({ method: 'GET', url: '/tv/hello', ...fromTv() })).json()).toMatchObject({ on: false })
+    expect((await pair(app, code)).statusCode).toBe(403)
   })
 })
 

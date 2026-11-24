@@ -45,7 +45,9 @@ function show (update: () => void) {
   shownPath = location.pathname
   shownKey = pageKey()
   const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown }
-  if (!changed || !doc.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) { update(); return }
+  // Not on a TV (tvnav.ts): snapshotting and cross-fading the whole screen is too much for its chip.
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('tv')
+  if (!changed || !doc.startViewTransition || still) { update(); return }
   doc.startViewTransition(() => flushSync(update))
 }
 window.addEventListener('popstate', () => {
@@ -109,6 +111,11 @@ export function closePreview () {
   if (entry().preview) history.back()
 }
 
+let stopRestoring = () => {}
+
+/** Stops putting the scroll back: the TV's remote has put focus back on a control and scrolled to it (tvnav.ts). */
+export function stopScrollRestore () { stopRestoring() }
+
 /**
  * After Back or Forward: puts the page's scroll back. A page kept alive is already full height; one drawn again
  * grows as its data arrives, so this keeps trying for a moment, until it fits or the viewer scrolls.
@@ -122,8 +129,10 @@ export function restoreScroll () {
   const stop = () => {
     clearTimeout(timer)
     ro.disconnect()
+    stopRestoring = () => {}
     for (const ev of ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const) window.removeEventListener(ev, stop)
   }
+  stopRestoring = stop
   const ro = new ResizeObserver(() => {
     window.scrollTo(0, y)
     if (Math.abs(window.scrollY - y) < 2) stop()

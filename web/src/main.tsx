@@ -6,6 +6,7 @@ import './trailer.css'
 import { api } from './api.ts'
 import { loadProfiles, useProfiles } from './profiles.ts'
 import { restoreScroll, useLocation } from './router.ts'
+import { setUpTv } from './tv.ts'
 import { PageActive } from './hooks.ts'
 import { Account } from './pages/Account.tsx'
 import { DownloadsPage } from './pages/DownloadsPage.tsx'
@@ -115,6 +116,8 @@ const onFocusChange = () => {
 }
 // The last profile's look before the first paint, so nothing flashes from the default.
 applyProfileTheme()
+// Inside the TV app: the remote drives the page (web/src/tvnav.ts).
+setUpTv()
 if (location.pathname === '/auth/google') {
   // Back from Google, in the computer's browser: just finish signing in (no profiles, no syncing on focus).
   createRoot(document.getElementById('root')!).render(<StrictMode><AuthGoogle /></StrictMode>)

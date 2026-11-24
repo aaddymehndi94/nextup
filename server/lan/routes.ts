@@ -7,9 +7,12 @@ import { activeVpn, clientLabel, defaultDeviceName, defaultRouteAddress, isLoopb
 import type { LanService } from './service.ts'
 import { COOKIE, COOKIE_MAX_AGE_S, type LanClient, readCookie } from './store.ts'
 
-// The LAN gate, the phone handoff, and the Account page's "Phones and TVs" settings.
+// The LAN gate, the phone handoff, TV pairing, and the Account page's "Phones and TVs" settings.
 //
 //   GET    /handoff?code=nxh_…          a phone arriving from nexttupp.com: redeem, set the cookie, go to /
+//   GET    /tv/hello                    { app: 'nexttupp', id, name, on }: how the TV app finds this computer
+//   POST   /tv/pair                     { code, name } → { token, name }: the TV app, with the code shown here
+//   POST   /api/lan/tv-code             → { code, expiresAt }: "Add a TV"                  (on this computer only)
 //   GET    /api/lan                     { local, signedIn, enabled, phonesEnabled, listening, name, defaultName, urls, clients, vpn }
 //   PATCH  /api/lan                     { enabled?, name? }          (on this computer only)
 //   DELETE /api/lan/clients/:id                                       (on this computer only)
@@ -20,6 +23,8 @@ declare module 'fastify' {
 
 export const SITE_WATCH_URL = 'https://nexttupp.com/watch'
 const HANDOFF_CODE = /^nxh_[A-Za-z0-9_-]{43}$/
+const TV_CODE = /^\d{4}$/
+const TURN_ON = 'Turn on “Let phones play from this computer” in nexttupp on the computer, under Account.'
 
 export interface HandoffRedeemer {
   signedIn (): boolean
@@ -68,8 +73,9 @@ const wantsHtml = (req: FastifyRequest) => {
 
 /**
  * Must be registered before every route. A request from this computer must name it as localhost (DNS
- * rebinding). Any other request needs a phone's cookie, except /handoff (which issues one) and /cast/…
- * (whose routes check the cast token in the URL). Phones may watch, but account settings change only here.
+ * rebinding). Any other request needs a phone's (or TV's) cookie, except /handoff and /tv/pair (which issue one),
+ * /tv/hello, and /cast/… (whose routes check the cast token in the URL). Phones may watch, but account settings
+ * change only here.
  */
 export function registerLanGate (app: FastifyInstance, lan: LanService): void {
   app.decorateRequest('lanClient', null)
@@ -79,7 +85,7 @@ export function registerLanGate (app: FastifyInstance, lan: LanService): void {
       return reply.code(403).send({ error: 'Open nexttupp at http://localhost or http://127.0.0.1.' })
     }
     const path = req.url.split('?')[0]
-    if (path === '/handoff' || path.startsWith('/cast/')) return
+    if (path === '/handoff' || path === '/tv/hello' || path === '/tv/pair' || path.startsWith('/cast/')) return
     const client = lan.phonesEnabled() ? lan.store.verify(req.headers.cookie) : null
     if (!client) {
       if (wantsHtml(req)) return sendPage(reply, 401, 'Not connected yet', 'Open nexttupp.com on this phone and sign in to connect.')
@@ -128,6 +134,35 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
     return reply.code(303).headers({ location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }).send()
   })
 
+  // TVs: the app looks for this on every home-network address it can see, then pairs with the code from "Add a TV".
+  // JSON only, so a web page elsewhere can't post here without a preflight (which fails).
+  let tvWindow = { start: 0, n: 0 }
+  const allowTv = () => {
+    const now = Date.now()
+    if (now - tvWindow.start > 60_000) tvWindow = { start: now, n: 0 }
+    return ++tvWindow.n <= 10
+  }
+  app.get('/tv/hello', async (_req, reply) => {
+    reply.header('cache-control', 'no-store')
+    return { app: 'nexttupp', id: lan.store.deviceId, name: lan.name(), on: lan.phonesEnabled() }
+  })
+  app.post<{ Body: { code?: unknown; name?: unknown } }>('/tv/pair', async (req, reply) => {
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'Send JSON')
+    if (!lan.phonesEnabled()) throw new HttpError(403, TURN_ON)
+    const b = req.body ?? {}
+    const code = typeof b.code === 'string' ? b.code : ''
+    if (!TV_CODE.test(code)) throw new HttpError(400, 'Type the 4-digit code shown on the computer.')
+    const raw = typeof b.name === 'string' ? b.name.trim().replace(/\s+/g, ' ') : ''
+    let label = 'TV'
+    try { if (raw) label = plainText(raw, 'name', 60) } catch { throw new HttpError(400, 'name must be 1 to 60 characters') }
+    if (!allowTv()) throw new HttpError(429, 'Too many tries. Wait a minute, then try again.')
+    const paired = lan.pairTv(code, label)
+    if (!paired) throw new HttpError(401, 'That code didn’t work. On the computer, choose Add a TV again for a new one.')
+    req.log.info({ lanClient: paired.client.label }, 'TV connected')
+    reply.headers({ 'set-cookie': phoneCookie(paired.token), 'cache-control': 'no-store' })
+    return { token: paired.token, name: lan.name() }
+  })
+
   // PATCH and DELETE can't be sent cross-site without a preflight, which fails; the checks are belt and braces.
   const localOnly = (req: FastifyRequest, json = true) => {
     if (!isLoopback(req.socket.remoteAddress)) throw new HttpError(403, 'Change this on the computer that runs nexttupp.')
@@ -173,6 +208,13 @@ export function registerLanRoutes (app: FastifyInstance, lan: LanService, accoun
   const firewall = async () => ({ exe: process.execPath, alias: (await lan.addresses())[0]?.iface ?? null })
   app.get('/api/lan/firewall', async req => { localOnly(req, false); return { state: await checkFirewall(await firewall()) } })
   app.post('/api/lan/firewall', async req => { localOnly(req); return { state: await letPhonesIn(await firewall()) } })
+
+  app.post('/api/lan/tv-code', async (req, reply) => {
+    localOnly(req)
+    if (!lan.phonesEnabled()) throw new HttpError(409, TURN_ON)
+    reply.header('cache-control', 'no-store')
+    return lan.newTvCode()
+  })
 
   app.delete<{ Params: { id: string } }>('/api/lan/clients/:id', async (req, reply) => {
     localOnly(req, false)
