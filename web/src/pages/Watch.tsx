@@ -15,6 +15,7 @@ import { TitleArt } from '../components/TitleArt.tsx'
 import { toast } from '../toast.ts'
 import { watchSource } from './Title.tsx'
 import { inTvApp, keepAwake } from '../tv.ts'
+import { startingSubtitle, SUBS_OFF } from '../subtitles.ts'
 
 type Phase = 'connecting' | 'probing' | 'ready' | 'error'
 
@@ -537,7 +538,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     saveProgress(streamId, { t, d: duration, at: Date.now(), p: getActiveProfile() ?? undefined })
   }, [Math.floor(time / 5), duration, streamId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subtitles: list, restore the viewer's last language, fetch cues.
+  // Subtitles: list, turn on the viewer's language (subtitles.ts), fetch cues.
   useEffect(() => {
     if (!stats?.fileName || !imdbId) return
     let live = true
@@ -546,11 +547,8 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     const load = (attempt: number) => api.subtitles(type, streamId, stats.fileName).then(list => {
       if (!live) return
       setSubs(list)
-      const lang = readKey('subs-lang')
-      if (lang) {
-        const best = list.filter(s => s.lang === lang).sort((a, b) => b.match - a.match)[0]
-        if (best) setSubChoice(best)
-      }
+      const start = startingSubtitle(list, readKey('subs-lang'))
+      if (start) setSubChoice(start)
     }).catch(() => { if (live && attempt < 3) retry = window.setTimeout(() => load(attempt + 1), 2000 * 3 ** attempt) })
     load(0)
     return () => { live = false; window.clearTimeout(retry) }
@@ -586,7 +584,7 @@ export function Watch ({ query }: { query: URLSearchParams }) {
     setSubChoice(s)
     setSubOffset(0)
     castOffset.current = 0
-    writeKey('subs-lang', s ? s.lang : null)
+    writeKey('subs-lang', s ? s.lang : SUBS_OFF)
     setPanel('none')
     // On the TV only the subtitle track changes; the film plays on.
     if (castRef.current?.active) castControl({ action: 'subtitle', subtitle: s ? castSub(s) : null, subtitles: castSubs() }).then(follow).catch(err => toast(err.message))

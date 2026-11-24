@@ -569,6 +569,12 @@ Series tag, the scrubber time tip).
   on hover with a time tip, and two control groups.
 - **Panels:** subtitles, audio and info open as anchored glass panels: a title row with a close button, then
   items with a check for the active one.
+- **Subtitles start on** on every screen: the language last chosen on that screen, else the viewer's first
+  language (server `LANGS`), the best match to the file. Off only when turned off on that screen (saved as
+  "off"), or when there's none in a language the viewer reads.
+- **From a download:** on a title's page, Play plays the viewer's download of that episode or film (tip "From
+  your download", no wait for sources), and the round Download button becomes a pressed check, "Downloaded",
+  that opens Downloads.
 - **Connecting state:** a centred logo, an indeterminate hairline loader, the step name and its detail, over a
   dimmed backdrop.
 

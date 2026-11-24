@@ -8,7 +8,11 @@ import type {
 import type { StorageReport } from '../../shared/storage.ts'
 
 export interface Stats extends SessionStats { ranges: Array<[number, number]> }
-export interface SubtitleOption { id: string; lang: string; label: string; release?: string; url: string; match: number }
+export interface SubtitleOption {
+  id: string; lang: string; label: string; release?: string; url: string; match: number
+  /** In one of the viewer's languages (server LANGS): the player turns the first of these on by itself. */
+  preferred?: boolean
+}
 export interface Cue { start: number; end: number; text: string }
 export interface LibraryItem {
   id: string; infoHash: string; fileIdx: number; fileName: string; title: string

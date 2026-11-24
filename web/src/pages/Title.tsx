@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, Clapperboard, Download, Play } from 'lucide-react'
 import type { Episode, HealthResponse, MediaType, RecItem, Source, SourcesResponse, TitleDetail, TitleState, WatchProgress } from '../../../shared/types.ts'
-import { api } from '../api.ts'
+import { api, type LibraryItem } from '../api.ts'
 import { useAmbient } from '../ambient.ts'
 import { RES_LABEL } from '../format.ts'
 import { useDocumentTitle, useLoaded } from '../hooks.ts'
 import { navigate, replaceUrl } from '../router.ts'
+import { downloadOf } from '../library.ts'
 import { noteSource, writeSessionKey } from '../storage.ts'
 import { useTitleState } from '../taste.ts'
 import { toast } from '../toast.ts'
@@ -212,6 +213,9 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
 
   const streamId = type === 'movie' ? id : episode?.id ?? null
   const { load, health } = useSources(type, streamId)
+  // The viewer's downloads: Play plays one of this episode or film instead of streaming it anew.
+  const [library, setLibrary] = useState<LibraryItem[]>([])
+  useEffect(() => { api.library().then(setLibrary).catch(() => {}) }, [id])
   useDocumentTitle(detail.state === 'ok' ? detail.data.name : undefined)
   const trailer = useTrailer(type, id, { enabled: detail.state === 'ok' && Boolean(detail.data.background && detail.data.trailers?.length) })
 
@@ -236,9 +240,11 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
 
   const t = detail.data
   const best = load?.state === 'ok' ? load.data.sources[0] : undefined
+  const own = streamId ? downloadOf(library, streamId) : null
   const ctx = { type, imdbId: id, streamId: streamId ?? id, name: episode ? `${t.name} · S${episode.season}E${episode.episode} ${episode.name}` : t.name }
   const meta = [t.year, t.runtime, t.genres.slice(0, 3).join(', ')].filter(Boolean)
-  const searching = load?.state === 'loading' || !load
+  // A download plays at once, without waiting for the sources.
+  const searching = !own && (load?.state === 'loading' || !load)
   const resume = resumable(taste.state, streamId)
   const verb = resume ? 'Resume' : 'Play'
   const keyOf = (s: Source) => `${s.infoHash}:${s.fileIdx ?? ''}`
@@ -267,13 +273,22 @@ export function Title ({ type, id, season, episode: askedEpisode }: { type: Medi
           </p>
           {t.description && <p className="hero-desc">{t.description}</p>}
           <div className="hero-actions actions">
-            <button className="button primary" disabled={!best} aria-busy={searching || undefined} onClick={() => best && watchSource(best, ctx)}>
+            <button className="button primary" disabled={!best && !own} aria-busy={searching || undefined} data-tip={own ? 'From your download' : undefined}
+              onClick={() => { if (own) watchSource({ infoHash: own.infoHash, fileIdx: own.fileIdx >= 0 ? own.fileIdx : undefined, fileName: own.fileName }, ctx); else if (best) watchSource(best, ctx) }}>
               {searching ? <span className="spinner" aria-hidden /> : <Play aria-hidden fill="currentColor" />}
-              {searching ? 'Finding sources…' : best ? (episode ? `${verb} S${episode.season} E${episode.episode}` : verb) : 'No sources found'}
+              {searching ? 'Finding sources…' : best || own ? (episode ? `${verb} S${episode.season} E${episode.episode}` : verb) : 'No sources found'}
             </button>
-            <button type="button" className="round-button" disabled={!best} aria-pressed={bestSaved} aria-label={bestSaved ? 'Downloading' : 'Download to watch later'} data-tip={bestSaved ? 'Downloading' : 'Download'} onClick={() => best && download(best)}>
-              {bestSaved ? <Check aria-hidden /> : <Download aria-hidden />}
-            </button>
+            {own
+              ? (
+                <button type="button" className="round-button" aria-pressed aria-label="Downloaded: see Downloads" data-tip="Downloaded" onClick={() => navigate('/downloads')}>
+                  <Check aria-hidden />
+                </button>
+                )
+              : (
+                <button type="button" className="round-button" disabled={!best} aria-pressed={bestSaved} aria-label={bestSaved ? 'Downloading' : 'Download to watch later'} data-tip={bestSaved ? 'Downloading' : 'Download'} onClick={() => best && download(best)}>
+                  {bestSaved ? <Check aria-hidden /> : <Download aria-hidden />}
+                </button>
+                )}
             <button type="button" className="round-button" aria-label={`Watch the trailer for ${t.name}`} data-tip="Trailer"
               onClick={() => showPreview(t, { trailerOnly: true })}>
               <Clapperboard aria-hidden />

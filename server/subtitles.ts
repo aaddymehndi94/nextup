@@ -12,6 +12,8 @@ export interface SubtitleOption {
   url: string
   /** Higher is a better match for the release being played. */
   match: number
+  /** In one of the viewer's languages (LANGS): the player turns the first of these on by itself. */
+  preferred: boolean
 }
 
 const LANG_LABEL: Record<string, string> = {
@@ -51,8 +53,13 @@ interface AddonSub { id: string; url: string; lang: string; movieReleaseName?: s
 export async function listSubtitles (type: 'movie' | 'series', streamId: string, fileName?: string): Promise<SubtitleOption[]> {
   const extra = fileName ? `/filename=${encodeURIComponent(fileName)}` : ''
   const data = await fetchJson<{ subtitles?: AddonSub[] }>(`${config.openSubtitlesUrl}/subtitles/${type}/${streamId}${extra}.json`, { timeoutMs: 15_000, cacheMs: 3600_000 })
-  const wanted = config.preferredLanguages.map(l => ISO2_TO_639_2[l] ?? l)
-  return (data.subtitles ?? [])
+  return rankSubtitles(data.subtitles ?? [], fileName, config.preferredLanguages)
+}
+
+/** The subtitles worth offering, the viewer's languages first (in their order), best match to the file within each. */
+export function rankSubtitles (subs: AddonSub[], fileName: string | undefined, languages: string[]): SubtitleOption[] {
+  const wanted = languages.map(l => ISO2_TO_639_2[l] ?? l)
+  return subs
     .filter(s => isAllowedSubtitleUrl(s.url))
     .map(s => ({
       id: s.id,
@@ -61,6 +68,7 @@ export async function listSubtitles (type: 'movie' | 'series', streamId: string,
       release: s.movieReleaseName ?? s.subtitleFileName,
       url: s.url,
       match: releaseMatch(s.movieReleaseName ?? s.subtitleFileName, fileName),
+      preferred: wanted.includes(s.lang),
     }))
     .sort((a, b) => {
       const la = wanted.indexOf(a.lang); const lb = wanted.indexOf(b.lang)

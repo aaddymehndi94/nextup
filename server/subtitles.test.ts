@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAllowedSubtitleUrl, parseSubtitles, releaseMatch } from './subtitles.ts'
+import { isAllowedSubtitleUrl, parseSubtitles, rankSubtitles, releaseMatch } from './subtitles.ts'
 
 describe('parseSubtitles', () => {
   it('parses CRLF SRT with styling tags', () => {
@@ -29,5 +29,18 @@ describe('releaseMatch', () => {
     const file = 'Interstellar.2014.1080p.BluRay.x264-SPARKS.mkv'
     expect(releaseMatch('Interstellar.2014.1080p.BluRay.x264-SPARKS', file)).toBe(100)
     expect(releaseMatch('Interstellar.2014.720p.BluRay.x264-SPARKS', file)).toBeGreaterThan(releaseMatch('Interstellar.2014.720p.HDTS.x264-Pimp4003', file))
+  })
+})
+
+describe('rankSubtitles', () => {
+  const url = (n: number) => `https://subs5.strem.io/en/download/file/${n}`
+  it('puts the preferred languages first and marks them, so the player can turn one on by itself', () => {
+    const list = rankSubtitles([
+      { id: '1', url: url(1), lang: 'spa', movieReleaseName: 'Film.2020.1080p-GRP' },
+      { id: '2', url: url(2), lang: 'eng', movieReleaseName: 'Film.2020.720p-OTHER' },
+      { id: '3', url: url(3), lang: 'eng', movieReleaseName: 'Film.2020.1080p-GRP' },
+      { id: '4', url: 'https://evil.example/x.srt', lang: 'eng' },
+    ], 'Film.2020.1080p-GRP.mkv', ['en'])
+    expect(list.map(s => [s.id, s.preferred])).toEqual([['3', true], ['2', true], ['1', false]])
   })
 })
