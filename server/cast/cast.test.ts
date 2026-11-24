@@ -1,9 +1,10 @@
+import { createServer as createHttpServer } from 'node:http'
 import { connect, createServer, type Server, type Socket } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { PlaybackPlan, ProbeResult } from '../../shared/types.ts'
 import { castPlan } from '../playback/plan.ts'
 import { toWebVtt } from '../subtitles.ts'
-import { CastDiscovery, parseStaticDevices } from './discovery.ts'
+import { CastDiscovery, ipv4FromSetupInfo, parseStaticDevices } from './discovery.ts'
 import { CastChannel, type CastMessage, DEFAULT_MEDIA_RECEIVER, decodeMessage, encodeFrame, MediaReceiver, NS, readFrames } from './protocol.ts'
 import { type CastMedia, type CastProgress, CastService } from './service.ts'
 
@@ -661,7 +662,7 @@ describe('the cast plan (H.264 8-bit + AAC in MP4)', () => {
 describe('finding TVs', () => {
   it('assembles a device from PTR, SRV, TXT and A records arriving in separate packets', () => {
     const queries: unknown[] = []
-    const d = new CastDiscovery({ mdns: () => ({ on () {}, query (q: unknown) { queries.push(q) }, destroy () {} }) })
+    const d = new CastDiscovery({ interfaces: () => ({}), mdns: () => ({ on () {}, query (q: unknown) { queries.push(q) }, destroy () {} }) })
     void d.browse(0)
     const instance = 'Chromecast-abc123._googlecast._tcp.local'
     d.onResponse({ answers: [{ name: '_googlecast._tcp.local', type: 'PTR', data: instance }] })
@@ -680,10 +681,84 @@ describe('finding TVs', () => {
 
   it('asks twice, in case the first question or its answer is lost on the Wi-Fi', async () => {
     const queries: Array<{ questions: Array<{ type: string }> }> = []
-    const d = new CastDiscovery({ mdns: () => ({ on () {}, query (q: { questions: Array<{ name: string; type: string }> }) { queries.push(q) }, destroy () {} }) })
+    const d = new CastDiscovery({ interfaces: () => ({}), mdns: () => ({ on () {}, query (q: { questions: Array<{ name: string; type: string }> }) { queries.push(q) }, destroy () {} }) })
     await d.browse(60)
     expect(queries.filter(q => q.questions[0].type === 'PTR')).toHaveLength(2)
     d.close()
+  })
+
+  // A real home: the Wi-Fi drops IPv4 multicast on its way to the computer, and a Sony Google TV answers only over
+  // IPv6, naming a host with no IPv4 address. Phones still find it; the computer has to ask over IPv6 too.
+  it('finds a TV that answers only over IPv6, and asks the TV for its IPv4 address', async () => {
+    type Handler = (p: { answers?: Array<{ name: string; type: string; data: unknown }> }) => void
+    const sockets: Array<{ opts: { type: string; interface?: string }; respond?: Handler; queries: unknown[] }> = []
+    const asked: string[] = []
+    const d = new CastDiscovery({
+      interfaces: () => ({
+        lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true, netmask: '255.0.0.0', mac: '', cidr: null }],
+        wlan0: [
+          { address: '192.168.1.13', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: null },
+          { address: 'fe80::13', family: 'IPv6', internal: false, netmask: 'ffff:ffff:ffff:ffff::', mac: '', cidr: null, scopeid: 3 },
+        ],
+        veth1: [{ address: 'fe80::99', family: 'IPv6', internal: false, netmask: 'ffff:ffff:ffff:ffff::', mac: '', cidr: null, scopeid: 9 }],
+      }),
+      mdns: opts => {
+        const s: (typeof sockets)[number] = { opts: opts as { type: string; interface?: string }, queries: [] }
+        sockets.push(s)
+        return { on (event: string, fn: (arg: never) => void) { if (event === 'response') s.respond = fn as Handler }, query (q: unknown) { s.queries.push(q) }, destroy () {} }
+      },
+      ipv4Of: async ipv6 => { asked.push(ipv6); return ipv6 === '2001:db8::5' ? '192.168.1.5' : null },
+    })
+    const browsing = d.browse(20)
+    // IPv4 for the whole computer, IPv6 on the home network's interface (not on a container's virtual one).
+    expect(sockets.map(s => s.opts)).toEqual([{ type: 'udp4' }, { type: 'udp6', ip: 'ff02::fb', interface: process.platform === 'win32' ? '::%3' : '::%wlan0' }])
+    const v6 = sockets[1]
+    expect(v6.queries).toHaveLength(1)
+    const instance = 'BRAVIA-1a2b3c4d._googlecast._tcp.local'
+    v6.respond?.({ answers: [
+      { name: '_googlecast._tcp.local', type: 'PTR', data: instance },
+      { name: instance, type: 'SRV', data: { port: 8009, target: '1a2b3c4d.local' } },
+      { name: instance, type: 'TXT', data: [Buffer.from('id=1a2b3c4d'), Buffer.from('fn=Living Room TV'), Buffer.from('md=BRAVIA 4K VH2'), Buffer.from('ca=264709')] },
+      { name: '1a2b3c4d.local', type: 'AAAA', data: 'fe80::5' },
+      { name: '1a2b3c4d.local', type: 'AAAA', data: '2001:db8::5' },
+    ] })
+    expect(await browsing).toMatchObject([{ id: '1a2b3c4d', name: 'Living Room TV', model: 'BRAVIA 4K VH2', host: '192.168.1.5', port: 8009 }])
+    // A link-local address needs an interface to reach, so only the routable one is asked.
+    expect(asked).toEqual(['2001:db8::5'])
+    d.close()
+  })
+
+  it('leaves out speakers and speaker groups: Cast devices without a screen', () => {
+    const d = new CastDiscovery({ interfaces: () => ({}), mdns: () => ({ on () {}, query () {}, destroy () {} }) })
+    void d.browse(0)
+    const record = (id: string, fn: string, ca: string, ip: string) => {
+      const instance = `${id}._googlecast._tcp.local`
+      d.onResponse({ answers: [
+        { name: instance, type: 'SRV', data: { port: 8009, target: `${id}.local` } },
+        { name: instance, type: 'TXT', data: [`id=${id}`, `fn=${fn}`, ca].filter(Boolean).map(s => Buffer.from(s)) },
+        { name: `${id}.local`, type: 'A', data: ip },
+      ] })
+    }
+    record('nest', 'Bathroom speaker', 'ca=198660', '192.168.1.4')
+    record('group', 'Home Speakers', 'ca=198692', '192.168.1.4')
+    record('tv', 'Living Room TV', 'ca=264709', '192.168.1.5')
+    record('old', 'Bedroom TV', '', '192.168.1.6')
+    expect(d.list().map(x => x.name)).toEqual(['Bedroom TV', 'Living Room TV'])
+    d.close()
+  })
+
+  it('reads a TV’s IPv4 address from its setup page, and nothing else', async () => {
+    let body = '{"ip_address":"192.168.1.5","name":"Living Room TV"}'
+    const server = createHttpServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(body) })
+    await new Promise<void>(resolve => server.listen(0, '::1', resolve))
+    const port = (server.address() as { port: number }).port
+    try {
+      expect(await ipv4FromSetupInfo('::1', port)).toBe('192.168.1.5')
+      body = '{"ip_address":"evil.example"}'
+      expect(await ipv4FromSetupInfo('::1', port)).toBeNull()
+      body = 'not json'
+      expect(await ipv4FromSetupInfo('::1', port)).toBeNull()
+    } finally { server.close() }
   })
 
   it('takes a fixed list from NEXTTUPP_CAST_DEVICES', () => {

@@ -90,9 +90,15 @@ them. So casting works the same from the computer and from a connected phone, an
 page (the Web Sender SDK only works in Chrome, from an https origin).
 
 **Discovery:** mDNS `_googlecast._tcp`, with `multicast-dns` 7.2.5 (published May 2022, about 19 million
-weekly downloads; its three small dependencies are pinned in the lockfile). The socket opens when the Cast
-panel asks, and closes after a minute idle. `NEXTTUPP_CAST_DEVICES="Name@host:port,…"` adds TVs that
-discovery can't see, and is how the tests point at a fake receiver.
+weekly downloads; its three small dependencies are pinned in the lockfile). It asks over IPv4 and over IPv6
+(`ff02::fb`, one socket per interface that also has IPv4). Both are needed: some home Wi-Fi drops IPv4 multicast
+on its way to the computer, and a Sony Google TV answered only over IPv6, naming a host with no A record, while
+phones on the same Wi-Fi found it fine (2026-11). Casting stays IPv4 (the LAN address facing the TV, links
+locked to the TV's IPv4), so a TV known only by IPv6 is asked for its IPv4 address on its setup port
+(`http://[ipv6]:8008/setup/eureka_info`, `ip_address`). Devices whose TXT `ca` lacks the video bit (Nest
+speakers, speaker groups) aren't listed. The sockets open when the Cast panel asks, and close after a minute
+idle. `NEXTTUPP_CAST_DEVICES="Name@host:port,…"` adds TVs that discovery can't see, and is how the tests
+point at a fake receiver.
 
 **Control: Cast v2 written in-house** (`server/cast/protocol.ts`, about 400 lines with the media client): TLS
 to port 8009, length-prefixed protobuf `CastMessage` frames encoded by hand (a handful of string fields), JSON payloads on the
