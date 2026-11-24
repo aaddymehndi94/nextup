@@ -51,3 +51,13 @@ The release key lives outside the repo, at `~/.config/nexttupp-release/` (`tv-re
 `tv-signing.properties`, which `app/build.gradle.kts` reads). **Back both up.** Without that key a new version
 can't install over the old one: every TV would have to uninstall and pair again. A TV with a debug build (from
 `assembleDebug`) has to uninstall it once before installing the release APK, for the same reason.
+
+**Backup:** an encrypted copy of that folder is in the owner's Cloudflare account, in the Workers KV namespace
+`nexttupp-release-backup`, key `tv-signing.tar.gz.enc` (AES-256, passphrase in `backup-passphrase.txt` in the same
+folder, which the owner also keeps outside this computer). To restore, from `cloud/` with Node 24:
+
+```bash
+npx wrangler kv namespace list    # the id of nexttupp-release-backup
+npx wrangler kv key get tv-signing.tar.gz.enc --namespace-id <id> --remote > backup.enc
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in backup.enc | tar -C ~/.config -xzf -   # asks for the passphrase
+```
