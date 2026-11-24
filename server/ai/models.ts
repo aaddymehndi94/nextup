@@ -29,9 +29,12 @@ const PRICES: Record<string, { input: number; output: number }> = {
 export const priceOf = (id: string): { input: number; output: number } | undefined => PRICES[id]
 
 /** Cost in USD of a request, when the model's price is known. */
-export function costOf (id: string, inputTokens: number, outputTokens: number): number | null {
+/** What one web search costs on an API key: $10 per 1,000 on both Claude and OpenAI (the results are billed as input tokens). */
+const SEARCH_USD = 0.01
+
+export function costOf (id: string, inputTokens: number, outputTokens: number, searches = 0): number | null {
   const p = PRICES[id]
-  return p ? (inputTokens * p.input + outputTokens * p.output) / 1e6 : null
+  return p ? (inputTokens * p.input + outputTokens * p.output) / 1e6 + searches * SEARCH_USD : null
 }
 
 // ---- Claude ----

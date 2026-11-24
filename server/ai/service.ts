@@ -29,9 +29,18 @@ const MODELS_TTL_MS = 12 * 3600_000
 const EMPTY_MODELS_TTL_MS = 60_000
 const SEARCH_TTL_MS = 14 * 24 * 3600_000
 const DEFAULT_DAILY_LIMIT = 50
-/** Typical tokens per request, for estimates until this computer has its own averages. */
+/**
+ * Typical tokens and web searches per request, for estimates until this computer has its own averages. Search
+ * results come back as input tokens, so asking with search reads far more than the prompt itself.
+ */
 type AskKind = 'picks' | 'search' | 'music'
-const TYPICAL: Record<AskKind, { input: number; output: number }> = { picks: { input: 2500, output: 5000 }, search: { input: 1200, output: 2500 }, music: { input: 1500, output: 3000 } }
+const TYPICAL: Record<AskKind, { input: number; output: number; searches: number }> = {
+  picks: { input: 15_000, output: 5000, searches: 2 },
+  search: { input: 12_000, output: 2500, searches: 3 },
+  music: { input: 1500, output: 3000, searches: 0 },
+}
+/** At most this many web searches per request: enough to check what's new, not enough to wander. */
+const SEARCHES: Record<AskKind, number> = { picks: 3, search: 5, music: 0 }
 /** When both are connected, Automatic prefers a ChatGPT plan (already paid for) over per-request billing. */
 const PREFERENCE: AiProvider[] = ['chatgpt', 'anthropic', 'openai']
 const LABELS: Record<AiProvider, string> = { chatgpt: 'ChatGPT', anthropic: 'Claude', openai: 'OpenAI' }
@@ -258,9 +267,9 @@ export class AiService {
     }
     const { model } = use
     try {
-      const ans = await this.d.providers.ask(await this.credential(model.provider), model.id, q)
+      const ans = await this.d.providers.ask(await this.credential(model.provider), model.id, { ...q, search: SEARCHES[kind] })
       this.d.db.prepare('INSERT INTO ai_usage (at, provider, model, kind, input_tokens, output_tokens, cost) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(this.now(), model.provider, model.id, kind, ans.inputTokens, ans.outputTokens, model.provider === 'chatgpt' ? 0 : costOf(model.id, ans.inputTokens, ans.outputTokens))
+        .run(this.now(), model.provider, model.id, kind, ans.inputTokens, ans.outputTokens, model.provider === 'chatgpt' ? 0 : costOf(model.id, ans.inputTokens, ans.outputTokens, ans.searches))
       this.flag(model.provider, undefined)
       return { text: ans.text, model }
     } catch (err) {
@@ -280,10 +289,11 @@ export class AiService {
 
   private estimate (m: AiModel, kind: AskKind): string {
     if (m.provider === 'chatgpt') return 'uses your ChatGPT plan'
-    const avg = this.d.db.prepare('SELECT AVG(input_tokens) AS i, AVG(output_tokens) AS o, COUNT(*) AS n FROM (SELECT input_tokens, output_tokens FROM ai_usage WHERE model = ? AND kind = ? ORDER BY at DESC LIMIT 20)')
-      .get(m.id, kind) as { i: number | null; o: number | null; n: number }
-    const t = Number(avg.n) > 0 ? { input: Number(avg.i), output: Number(avg.o) } : TYPICAL[kind]
-    const cost = costOf(m.id, t.input, t.output)
+    // The cost logged for this model's recent requests (it includes web searches), else a typical request's.
+    const avg = this.d.db.prepare('SELECT AVG(cost) AS c, COUNT(*) AS n FROM (SELECT cost FROM ai_usage WHERE model = ? AND kind = ? ORDER BY at DESC LIMIT 20)')
+      .get(m.id, kind) as { c: number | null; n: number }
+    const t = TYPICAL[kind]
+    const cost = Number(avg.n) > 0 ? (avg.c === null ? null : Number(avg.c)) : costOf(m.id, t.input, t.output, t.searches)
     if (cost === null) return 'billed to your account per request'
     if (cost < 0.001) return 'under $0.001'
     return `about $${cost < 0.01 ? cost.toFixed(3) : cost.toFixed(2)}`

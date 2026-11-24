@@ -40,7 +40,7 @@ How to choose:
 - Work out what they respond to: tone, pacing, themes, craft, creators, countries and languages, era. Not just genres. Their dislikes and the titles they stopped early count as much as their likes.
 - Prefer titles that fit several of their likes at once. Mix titles a fan of their favourites probably missed with a few lesser-known ones a keen viewer would know. At most a quarter should be famous crowd-pleasers.
 - Cover the different sides of their taste rather than many titles of one kind. At most two titles from the same franchise or creator.
-- Include some recent titles (released in the last two years) where they fit.
+- Include some recent titles (released in the last two years) where they fit. You can search the web: use it to find what has come out since your training, not to look up titles you already know.
 - If they watch titles from a country or in a language other than English, include some from there.
 - Never suggest a title from their lists, and avoid repeating "Suggested before" titles unless one is clearly still among the best fits.
 - Respect "Never show" completely. Lean towards "More of".
@@ -52,6 +52,7 @@ export const SEARCH_SYSTEM = `You are the search assistant of nexttupp, a film a
 
 How to choose:
 - Read the request closely: films or series, mood, era, country or language, length, "like X" comparisons, anything to avoid. Every suggestion must fit all of it.
+- You can search the web. Search first when the request is about recent or new titles, names something you don't know, or asks for what's out now: your own knowledge stops at your training, and today's date is below.
 - If the request names one specific title, put that title first, then titles like it.
 - Their taste (below) only helps you choose among titles that fit the request. The request comes first.
 - Best match first. Up to 20 titles; fewer is fine when few fit well.

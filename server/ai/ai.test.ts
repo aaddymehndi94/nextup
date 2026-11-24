@@ -12,8 +12,8 @@ import { ItemCache } from '../taste/items.ts'
 import { RecoService } from '../taste/service.ts'
 import { ChatgptAuth } from './chatgpt.ts'
 import { claudeModels, openAiModels } from './models.ts'
-import { parseSuggestions, picksPrompt, type Suggestion, tasteText } from './prompts.ts'
-import { AiError, type Ask, type ProviderApi } from './providers.ts'
+import { parseSuggestions, picksPrompt, type Suggestion, SUGGESTIONS_SCHEMA, tasteText } from './prompts.ts'
+import { AiError, type Ask, makeProviders, type ProviderApi } from './providers.ts'
 import { matchScore, normTitle } from './resolve.ts'
 import { AiService } from './service.ts'
 
@@ -138,6 +138,7 @@ class FakeProvider implements ProviderApi {
   asks: Ask[] = []
   answer: Suggestion[] = PICKS
   fail: AiError | null = null
+  searches = 0
   async models (cred: { provider: string; secret: string }): Promise<AiModel[]> {
     if (cred.secret.includes('bad')) throw new AiError('auth', 'Claude turned down the API key.')
     return [
@@ -149,7 +150,7 @@ class FakeProvider implements ProviderApi {
   async ask (_cred: unknown, _model: string, q: Ask) {
     this.asks.push(q)
     if (this.fail) throw this.fail
-    return { text: JSON.stringify({ titles: this.answer }), inputTokens: 2000, outputTokens: 3000 }
+    return { text: JSON.stringify({ titles: this.answer }), inputTokens: 2000, outputTokens: 3000, searches: this.searches }
   }
 }
 
@@ -188,7 +189,7 @@ describe('AiService', () => {
     expect(JSON.stringify(status)).not.toContain('secret')
     expect(status.connections).toEqual([expect.objectContaining({ provider: 'anthropic', label: 'Key ending 4f2a' })])
     expect(status.active).toEqual({ model: expect.objectContaining({ id: 'claude-haiku-5-5' }), auto: true })
-    expect(status.estimate?.picks).toBe('about $0.003')
+    expect(status.estimate?.picks).toBe('about $0.02')
     expect(statSync(join(dir, 'ai.json')).mode & 0o777).toBe(0o600)
     expect(readFileSync(join(dir, 'ai.json'), 'utf8')).toContain('sk-ant-api03-secret-4f2a')
   })
@@ -240,6 +241,18 @@ describe('AiService', () => {
     expect(provider.asks).toHaveLength(2)
   })
 
+  it('lets the model search the web for Ask AI and picks, and counts the searches in the cost', async () => {
+    const { ai, me, provider } = await setup()
+    await ai.connectKey('anthropic', 'sk-ant-api03-secret-4f2a')
+    provider.searches = 3
+    await ai.search(me, 'the best new sci-fi series this year', false)
+    expect(provider.asks[0].search).toBeGreaterThan(0)
+    // Haiku 5.5: 2,000 tokens in and 3,000 out is $0.0017, and 3 searches at $10 per 1,000 add $0.03.
+    expect(ai.status(true).usage.month.costUsd).toBe(0.0317)
+    await ai.makePicks(me)
+    expect(provider.asks[1].search).toBeGreaterThan(0)
+  })
+
   it('stops at the daily limit and flags a connection that needs fixing', async () => {
     const { ai, me, provider, tick } = await setup()
     await ai.connectKey('anthropic', 'sk-ant-api03-secret-4f2a')
@@ -266,6 +279,109 @@ describe('AiService', () => {
 })
 
 // ---- Sign in with ChatGPT ----
+
+// ---- Web search, at the providers' HTTP boundary ----------------------------------------------------------
+
+type Sent = { url: string; body: Record<string, any> }
+/** A fake provider API: answers each request with the next reply (a JSON body, [status, body], or { events } streamed). */
+function fakeApi (...replies: Array<object | [number, object] | { events: object[] }>) {
+  const sent: Sent[] = []
+  const fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    sent.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+    const r = replies.shift()
+    if (!r) throw new Error('no more replies')
+    if ('events' in r) {
+      const sse = r.events.map(e => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`).join('')
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+    const [status, body] = Array.isArray(r) ? r : [200, r]
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  }
+  return { sent, fetch: fetch as typeof globalThis.fetch }
+}
+
+const ASK: Ask = { system: 'Pick films.', prompt: 'New sci-fi series?', schema: SUGGESTIONS_SCHEMA, effort: 'low', maxTokens: 8000, search: 5 }
+const claudeReply = (content: object[], usage: object, stop = 'end_turn') => ({
+  id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content, stop_reason: stop, stop_sequence: null, stop_details: null,
+  usage: { input_tokens: 0, output_tokens: 0, ...usage },
+})
+const searched = (id: string) => [
+  { type: 'server_tool_use', id, name: 'web_search', input: { query: 'best new sci-fi series' } },
+  { type: 'web_search_tool_result', tool_use_id: id, content: [{ type: 'web_search_result', url: 'https://news.test/a', title: 'New sci-fi', encrypted_content: 'x', page_age: null }] },
+]
+const cite = { type: 'web_search_result_location', url: 'https://news.test/a', title: 'New sci-fi', encrypted_index: 'i', cited_text: 'a strange new series' }
+
+describe('web search on Claude', () => {
+  it('searches with the web search tool and reads the titles it writes after searching', async () => {
+    const api = fakeApi(claudeReply([
+      { type: 'text', text: 'Let me check what came out recently.' },
+      ...searched('srvtoolu_1'),
+      // Search answers come with citations, which split the text into pieces.
+      { type: 'text', text: '{"titles":[{"title":"Pluribus","year":2025,"type":"series",' },
+      { type: 'text', text: '"imdbId":"","because":"","why":"A strange new series."}]}', citations: [cite] },
+    ], { input_tokens: 21000, output_tokens: 900, server_tool_use: { web_search_requests: 1 } }))
+    const ans = await makeProviders({ fetch: api.fetch }).ask({ provider: 'anthropic', secret: 'sk-ant-test' }, 'claude-sonnet-5-5', ASK)
+    expect(api.sent[0].body.tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }])
+    expect(parseSuggestions(ans.text).map(t => t.title)).toEqual(['Pluribus'])
+    expect(ans).toMatchObject({ inputTokens: 21000, outputTokens: 900, searches: 1 })
+  })
+
+  it('uses the basic search tool on models without the newer one, and carries on after a pause', async () => {
+    const api = fakeApi(
+      [400, { type: 'error', error: { type: 'invalid_request_error', message: 'tools.0: web_search_20260209 is not supported on claude-haiku-4-5' } }],
+      claudeReply(searched('srvtoolu_1'), { input_tokens: 9000, output_tokens: 100, server_tool_use: { web_search_requests: 1 } }, 'pause_turn'),
+      claudeReply([...searched('srvtoolu_2'), { type: 'text', text: '{"titles":[{"title":"Pluribus","year":2025,"type":"series","imdbId":"","because":"","why":"New."}]}' }],
+        { input_tokens: 12000, output_tokens: 400, server_tool_use: { web_search_requests: 1 } }),
+    )
+    const ans = await makeProviders({ fetch: api.fetch }).ask({ provider: 'anthropic', secret: 'sk-ant-test' }, 'claude-haiku-4-5', ASK)
+    expect(api.sent.map(s => s.body.tools[0].type)).toEqual(['web_search_20260209', 'web_search_20250305', 'web_search_20250305'])
+    // The paused turn goes back as it was, so the search picks up where it stopped.
+    expect(api.sent[2].body.messages[1]).toMatchObject({ role: 'assistant', content: [{ type: 'server_tool_use' }, { type: 'web_search_tool_result' }] })
+    expect(parseSuggestions(ans.text).map(t => t.title)).toEqual(['Pluribus'])
+    expect(ans).toMatchObject({ inputTokens: 21000, outputTokens: 500, searches: 2 })
+  })
+})
+
+const PLURIBUS = '{"titles":[{"title":"Pluribus","year":2025,"type":"series","imdbId":"","because":"","why":"A strange new series."}]}'
+/** A finished OpenAI response, streamed: what it searched for, then its answer. */
+const openAiStream = (queries: string[]) => ({
+  events: [
+    { type: 'response.output_text.delta', delta: PLURIBUS, item_id: 'msg_1', output_index: queries.length, content_index: 0, sequence_number: 1 },
+    {
+      type: 'response.completed',
+      sequence_number: 2,
+      response: {
+        id: 'resp_1', object: 'response', status: 'completed',
+        output: [
+          ...queries.map((query, i) => ({ id: `ws_${i}`, type: 'web_search_call', status: 'completed', action: { type: 'search', query } })),
+          { id: 'msg_1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: PLURIBUS, annotations: [] }] },
+        ],
+        usage: { input_tokens: 18000, output_tokens: 700, total_tokens: 18700 },
+      },
+    },
+  ],
+})
+
+describe('web search on OpenAI and ChatGPT', () => {
+  it('searches with the web_search tool, keeps the JSON schema, and counts the searches', async () => {
+    const api = fakeApi(openAiStream(['new sci-fi series 2026', 'Pluribus reviews']))
+    const ans = await makeProviders({ fetch: api.fetch }).ask({ provider: 'openai', secret: 'sk-test' }, 'gpt-6.2-sol', ASK)
+    expect(api.sent[0].body).toMatchObject({ tools: [{ type: 'web_search' }], max_tool_calls: 5, text: { format: { type: 'json_schema' } } })
+    expect(parseSuggestions(ans.text).map(t => t.title)).toEqual(['Pluribus'])
+    expect(ans).toMatchObject({ inputTokens: 18000, outputTokens: 700, searches: 2 })
+  })
+
+  it('answers without searching when the account doesn’t allow it', async () => {
+    const api = fakeApi(
+      [400, { error: { message: 'Tool web_search is not supported with this plan.', type: 'invalid_request_error', param: 'tools', code: null } }],
+      openAiStream([]),
+    )
+    const ans = await makeProviders({ fetch: api.fetch }).ask({ provider: 'chatgpt', secret: 'chatgpt-access-token' }, 'gpt-6.2-sol', ASK)
+    expect(api.sent[1].body.tools).toBeUndefined()
+    expect(parseSuggestions(ans.text).map(t => t.title)).toEqual(['Pluribus'])
+    expect(ans.searches).toBe(0)
+  })
+})
 
 describe('ChatgptAuth', () => {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })

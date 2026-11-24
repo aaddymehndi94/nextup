@@ -51,6 +51,16 @@ turning a search into filters, so this uses the big hosted models.
   as seen; a reason that names what links it to their taste. The user prompt lists likes, finishes, dislikes,
   stops and "more of"/"never" choices by name and year, and up to 40 earlier picks so Refresh brings new ones.
   Picks run at medium effort and Ask AI at low.
+- **Web search** (added 2026-11-24, at the owner's request: "I often want to search latest things which it won't
+  know of"). Picks may search up to 3 times and Ask AI up to 5; AI mixes don't search. Claude uses its web search
+  tool (`web_search_20260209`, or `web_search_20250305` on models without it) and OpenAI and ChatGPT the
+  Responses API's `web_search` tool, capped with `max_tool_calls`. Claude's search answers carry citations,
+  which can't be combined with a JSON schema, so a searching Claude is asked for the JSON in words; the answer is
+  read from what it wrote after its last search. A long search that pauses (`pause_turn`) is sent back to carry
+  on, up to 3 times. An account or plan that refuses the search tool gets the same request without it, so it
+  still answers, just not up to date. Searches cost $10 per 1,000 on an API key, on top of the search results'
+  tokens; they're added to each request's logged cost, and estimates come from logged costs. Requests that
+  search may take up to 5 minutes.
 - **Failures.** Errors are sorted into a few kinds (key turned down, out of credit, plan limit reached, busy,
   model gone, refused, network), each with a plain message. A key that's turned down or out of credit is
   flagged on the settings page until it works again. There's no silent switch to another provider.
