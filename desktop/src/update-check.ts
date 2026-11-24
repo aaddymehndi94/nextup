@@ -68,3 +68,27 @@ export function parseSums (text: string): Map<string, string> {
   }
   return sums
 }
+
+/** What a command started from nexttupp keeps of its environment when systemd starts it instead: enough to draw. */
+const DISPLAY_ENV = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'DBUS_SESSION_BUS_ADDRESS', 'LANG']
+
+/**
+ * The command to start from a process that may be `restricted` (Linux's no_new_privs, which Electron's
+ * app.relaunch() sets on the process it starts, as nexttupp's updater did up to 0.5.8). Nothing such a process
+ * starts can gain rights: pkexec can't ask for the password, an AppImage can't mount itself. Then systemd starts the
+ * command instead, as a fresh process of this user; `wait` passes its output and exit code back.
+ */
+export function outsideRestriction (cmd: string, args: string[], opts: { restricted: boolean; wait: boolean; env: Record<string, string | undefined> }): [string, string[]] {
+  if (!opts.restricted) return [cmd, args]
+  const env = DISPLAY_ENV.filter(k => opts.env[k]).map(k => `--setenv=${k}`)
+  return ['systemd-run', ['--user', '--collect', '--quiet', ...(opts.wait ? ['--wait', '--pipe'] : []), ...env, cmd, ...args]]
+}
+
+/** What to tell the person when `pkexec dpkg -i` exits with `code`, given the end of what it printed. */
+export function installFailure (code: number | null, stderr: string): string {
+  const why = stderr.trim().replace(/\s+/g, ' ')
+  // pkexec: 126 = the password prompt was dismissed, 127 = it couldn't ask (or wasn't allowed to).
+  if (code === 126) return 'Installing was cancelled.'
+  if (code === 127) return `nexttupp couldn't ask for the computer's password${why ? ` (${why})` : ''}.`
+  return `The installer stopped (${code}). ${why}`.trim()
+}

@@ -8,10 +8,10 @@
 import { app, Notification, net, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DesktopUpdate } from '../../shared/desktop.ts'
-import { assetName, compareVersions, parseRelease, parseSums, type InstallKind, type Release } from './update-check.ts'
+import { assetName, compareVersions, installFailure, outsideRestriction, parseRelease, parseSums, type InstallKind, type Release } from './update-check.ts'
 
 const FEED = process.env.NEXTTUPP_UPDATE_FEED ?? 'https://api.github.com/repos/aaddymehndi94/nextup/releases/latest'
 const FIRST_CHECK_MS = Number(process.env.NEXTTUPP_UPDATE_FIRST_MS) || 20_000
@@ -90,15 +90,15 @@ export class Updater {
     this.set(this.base('installing'))
     try {
       if (this.kind === 'deb') {
-        await run('pkexec', ['dpkg', '-i', file])
-        app.relaunch()
+        await run(...outsideRestriction('pkexec', ['dpkg', '-i', file], { restricted: restricted(), wait: true, env: process.env }))
+        restartAfterExit(process.execPath)
       } else if (this.kind === 'appimage') {
         const target = process.env.APPIMAGE!
         rmSync(`${target}.new`, { force: true })
         await copy(file, `${target}.new`)
         chmodSync(`${target}.new`, 0o755)
         renameSync(`${target}.new`, target)
-        app.relaunch({ execPath: target, args: process.argv.slice(1) })
+        restartAfterExit(target)
       } else {
         // NSIS one-click: silent, and it starts nexttupp again when done.
         spawn(file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref()
@@ -232,6 +232,23 @@ function installKind (): InstallKind | null {
   return process.execPath.startsWith('/opt/') ? 'deb' : null
 }
 
+/** This process may not gain rights (no_new_privs), and systemd can start commands for it instead. */
+function restricted (): boolean {
+  if (process.platform !== 'linux' || !existsSync('/usr/bin/systemd-run')) return false
+  try { return /^NoNewPrivs:\s*1$/m.test(readFileSync('/proc/self/status', 'utf8')) } catch { return false }
+}
+
+/**
+ * Starts nexttupp (`execPath`) again once this process has exited and let go of the single-instance lock. Not
+ * app.relaunch(): on Linux, Electron starts the new process with no_new_privs, so it could never ask for the password
+ * (pkexec) or mount an AppImage again. A process nexttupp starts itself keeps its rights.
+ */
+function restartAfterExit (execPath: string): void {
+  const script = 'while kill -0 "$0" 2>/dev/null; do sleep 0.2; done; exec "$@"'
+  const [cmd, args] = outsideRestriction('/bin/sh', ['-c', script, String(process.pid), execPath, ...process.argv.slice(1)], { restricted: restricted(), wait: false, env: process.env })
+  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref()
+}
+
 function run (cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] })
@@ -240,8 +257,7 @@ function run (cmd: string, args: string[]): Promise<void> {
     p.on('error', reject)
     p.on('exit', code => {
       if (code === 0) return resolve()
-      // pkexec: 126 = the password prompt was dismissed, 127 = not allowed.
-      reject(new Error(code === 126 || code === 127 ? 'Installing was cancelled.' : `The installer stopped (${code}). ${err.trim()}`.trim()))
+      reject(new Error(installFailure(code, err)))
     })
   })
 }
