@@ -95,7 +95,8 @@ Live since 2026-11. A deploy changes the owner's Cloudflare account, so each one
    curl -sI https://nexttupp.com/nope | head -1                  # 404
    ```
 
-To update, edit `public/` and run `npx wrangler deploy` again. Because the Worker runs first, every request counts
+To update, edit `public/` and run `npx wrangler deploy` again. `public/tv.apk` (nexttupp.com/tv.apk, the TV app)
+isn't in git: run `bash tv/scripts/release-apk.sh` before a deploy, or the deploy leaves `/tv.apk` missing. Because the Worker runs first, every request counts
 as a Worker request: up to 100,000 a day on the free plan.
 
 ## As deployed (2026-11-11)

@@ -37,4 +37,17 @@ cd tv
    `adb install -r tv/app/build/outputs/apk/debug/app-debug.apk`.
 3. The app is in the TV's apps row. Debug builds can be inspected from Chrome at `chrome://inspect`.
 
-For friends, the plan is the Downloader app and `nexttupp.com/tv`, with a release-signed APK (not built yet).
+## Release (nexttupp.com/tv)
+
+Friends install the release-signed APK from `nexttupp.com/tv.apk` with the Downloader app; `nexttupp.com/tv`
+(site/public/tv.html) walks them through it. The app takes nexttupp's version from the root `package.json`
+(0.5.8 is versionCode 508), so build it after the version bump:
+
+```bash
+bash tv/scripts/release-apk.sh   # signed APK → site/public/tv.apk (not in git), then deploy the site
+```
+
+The release key lives outside the repo, at `~/.config/nexttupp-release/` (`tv-release.jks` and
+`tv-signing.properties`, which `app/build.gradle.kts` reads). **Back both up.** Without that key a new version
+can't install over the old one: every TV would have to uninstall and pair again. A TV with a debug build (from
+`assembleDebug`) has to uninstall it once before installing the release APK, for the same reason.

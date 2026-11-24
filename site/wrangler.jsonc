@@ -26,7 +26,7 @@
     // The Worker runs first for pages (and unknown paths), to redirect www to the apex, follow the old and
     // guessed addresses, and set the CSP. Files a page loads skip it: they're free and don't count as Worker
     // requests, and public/_headers gives them their headers.
-    "run_worker_first": ["/*", "!/fonts/*", "!/img/*", "!/*.js", "!/*.css", "!/*.png", "!/*.ico", "!/*.svg", "!/*.webmanifest", "!/robots.txt"]
+    "run_worker_first": ["/*", "!/fonts/*", "!/img/*", "!/*.js", "!/*.css", "!/*.png", "!/*.ico", "!/*.svg", "!/*.webmanifest", "!/robots.txt", "!/*.apk"]
   },
   "observability": { "enabled": false }
 }

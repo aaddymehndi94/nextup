@@ -9,3 +9,6 @@ __pycache__/
 
 # Agent worktrees
 .claude/worktrees/
+
+# The TV app for nexttupp.com/tv.apk, built by tv/scripts/release-apk.sh
+site/public/tv.apk

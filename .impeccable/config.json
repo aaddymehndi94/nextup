@@ -16,6 +16,15 @@
         ],
         "createdAt": "2026-11-12T14:11:16.439Z",
         "reason": "Claude: false positive. The flagged .step rows have padding-block 1.75rem (28px) below their border-top in site/public/styles.css; the static scan doesn't apply the stylesheet, and the rendered page shows the gap"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "site/public/tv.html"
+        ],
+        "createdAt": "2026-11-24T08:15:47.674Z",
+        "reason": "agent: false positive; .step has padding-block 1.75rem in styles.css (static scan doesn't resolve it), render shows 28px under each hairline, same pattern as join.html"
       }
     ]
   }

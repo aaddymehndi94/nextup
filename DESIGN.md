@@ -521,6 +521,14 @@ Series tag, the scrubber time tip).
   markers. Links are inline.
 - The footer of every site page links Terms.
 
+### TV page (nexttupp.com/tv)
+- The join page's layout: display title "nexttupp on your TV.", a Silver lede that says what's needed (Android TV
+  or Google TV, the computer on with nexttupp open, the same Wi‑Fi), then four numbered steps: get Downloader,
+  type the address (with a hint for the double letters), allow installing (with the fallback when the TV hides the switch), open and connect with the code. The lede links /join for anyone without nexttupp yet.
+- The address to type sits in a larger `.path` pill (1.25rem, 650) so it can be read from across the room.
+- The foot line covers updating (same address, the TV stays connected) and an inline link to the file itself,
+  for installing another way.
+
 ### Before you play
 - **The Preview dialog's card, once per browser,** before the first play, download or quick look of a source.
   - The title is "Before you play", followed by two Silver paragraphs: where sources come from, and whose call

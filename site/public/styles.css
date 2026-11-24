@@ -389,6 +389,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer
 .path { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; margin-top: 0.875rem; }
 .path span { padding: 0.25rem 0.75rem; border-radius: 999px; background: rgb(255 255 255 / 0.08); font-size: 0.875rem; font-weight: 600; color: var(--text); }
 .path svg { width: 0.875rem; height: 0.875rem; color: var(--text-3); }
+/* /tv: the address to type on the TV, read off this page from across the room. */
+.tv-address span { padding: 0.5rem 1.125rem; font-size: 1.25rem; font-weight: 650; letter-spacing: 0.01em; }
 .join-foot { margin-top: 1rem; padding-top: 1.75rem; border-top: 1px solid var(--line); font-size: 0.875rem; color: var(--text-3); }
 
 /* ---------- Terms: a page to read ---------- */

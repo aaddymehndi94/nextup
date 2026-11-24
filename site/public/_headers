@@ -8,6 +8,12 @@
 /fonts/*
   Cache-Control: public, max-age=604800
 
+# The TV app (nexttupp.com/tv): always the newest, saved as a file wherever it's opened.
+/tv.apk
+  Content-Type: application/vnd.android.package-archive
+  Content-Disposition: attachment; filename="nexttupp-tv.apk"
+  Cache-Control: no-cache
+
 /img/*
   Cache-Control: public, max-age=604800
 
